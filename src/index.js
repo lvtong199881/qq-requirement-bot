@@ -74,6 +74,28 @@ log(`配置就绪：skill=${config.skillDir}`)
 log(`项目目录：${config.projectDir}`)
 log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
 
+/** 群成员角色缓存：`groupId:userId` → {role, at}。群管判定每条消息都要，缓存 5 分钟 */
+const memberRoles = new Map()
+const ROLE_TTL_MS = 5 * 60 * 1000
+
+async function memberRole(groupId, userId) {
+  if (!userId) return null
+  const key = `${groupId}:${userId}`
+  const hit = memberRoles.get(key)
+  if (hit && Date.now() - hit.at < ROLE_TTL_MS) return hit.role
+  const role = await bot.getMemberRole(groupId, userId)
+  if (role) memberRoles.set(key, { role, at: Date.now() })
+  return role
+}
+
+/** 只有群主/群管理员能驱动 bot；adminUsers 是额外放行的兜底名单 */
+async function canOperate(groupId, userId) {
+  const role = await memberRole(groupId, userId)
+  if (role === 'owner' || role === 'admin') return { ok: true, role }
+  if (config.adminUsers.includes(String(userId))) return { ok: true, role: role ?? 'listed' }
+  return { ok: false, role }
+}
+
 /** 运行期发现的群：群号 → {name, memberCount}，用于日志和「本群」查询 */
 const knownGroups = new Map()
 
@@ -588,12 +610,22 @@ bot.on('message', async (frame) => {
 
   await ensureGroupInfo(groupId)
 
+  // ── 权限闸门：只服务群主/群管理员，其他人的 @ 一律静默忽略 ──
+  // 静默是有意的：群成员发消息时 bot 不做任何回应，避免刷屏和误触发。
+  const speaker = frame.sender ?? {}
+  const speakerId = String(speaker.user_id ?? frame.user_id ?? '')
+  const gatePerm = await canOperate(groupId, speakerId)
+  if (!gatePerm.ok) {
+    detail(`忽略 ${speakerId}（角色=${gatePerm.role ?? '未知'}）在群 ${groupId} 的消息`)
+    return
+  }
+
   // 回复时引用用户这条消息，比 @ 自己更像真人
   const replyTo = frame.message_id
   let text = stripAt(frame.message)
 
   // 记录发起人（面板列表要显示「谁提的需求」）
-  const sender = frame.sender ?? {}
+  const sender = speaker
   const initiator = {
     userId: String(sender.user_id ?? frame.user_id ?? ''),
     nickname: sender.card || sender.nickname || String(sender.user_id ?? ''),
@@ -611,7 +643,8 @@ bot.on('message', async (frame) => {
   // ── /指令（白名单）────────────────────────────────────────────
   const cmd = parseCommand(text)
   if (cmd) {
-    const isAdmin = config.adminUsers.includes(initiator.userId)
+    // 入口已经保证是群主/群管理员；这里再区分 owner 级与群管级
+    const isAdmin = gatePerm.role === 'owner' || config.adminUsers.includes(initiator.userId)
 
     if (cmd.unknown || !cmd.def) {
       await sendPlain(groupId, `没有 /${cmd.name} 这条指令。发 /help 看可用的。`, { replyTo })
@@ -619,7 +652,7 @@ bot.on('message', async (frame) => {
     }
 
     if (cmd.def.scope === 'admin' && !isAdmin) {
-      await sendPlain(groupId, deniedText(cmd.name, config.adminUsers), { replyTo })
+      await sendPlain(groupId, deniedText(cmd.name), { replyTo })
       return
     }
 
@@ -812,8 +845,8 @@ bot.on('message', async (frame) => {
     await sendPlain(
       groupId,
       targetStage
-        ? `收到，要打回「${targetStage}」阶段。具体要改什么？直接说，我转给对应的人。\n（回「取消」可以撤销打回）`
-        : '收到打回。具体要改什么？直接说就行。',
+        ? `收到，打回${targetStage}阶段，请提供修改意见。\n（回「取消」可以撤销打回）`
+        : '收到，打回当前阶段，请提供修改意见。',
       { replyTo },
     )
     return

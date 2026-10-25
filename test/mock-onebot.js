@@ -137,6 +137,16 @@ export function startMockOneBot({ port = 0, selfId = 10000, token = '', groupId 
             member_count: 3,
             max_member_count: 200,
           }
+        } else if (frame.action === 'get_group_member_info') {
+          // 权限闸门依赖它：默认把发消息的人当成群主，测试才能驱动 bot
+          const uid = Number(frame.params?.user_id ?? 20000)
+          data = {
+            group_id: Number(frame.params?.group_id ?? api.groupId),
+            user_id: uid,
+            nickname: '你',
+            card: '',
+            role: uid === 20000 ? 'owner' : 'member',
+          }
         } else {
           data = { message_id: calls.length }
         }

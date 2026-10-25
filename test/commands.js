@@ -54,11 +54,8 @@ console.log('\n== 帮助文案 ==')
   check('列出 /stop', forUser.includes('/stop'))
   check('列出 /release', forUser.includes('/release'))
   check('标注管理员指令', forUser.includes('（管理员）'))
-  check('非管理员看到提示', forUser.includes('adminUsers'))
+  check('说明权限模型', forUser.includes('只有群主和群管理员'))
   check('带当前状态', forUser.includes('当前状态：开发阶段中。'))
-
-  const forAdmin = helpText({ isAdmin: true })
-  check('管理员不显示权限提示', !forAdmin.includes('标「管理员」的指令需要'))
 }
 
 console.log('\n== release 确认 ==')
@@ -73,12 +70,9 @@ console.log('\n== release 确认 ==')
 
 console.log('\n== 权限拒绝文案 ==')
 {
-  const d = deniedText('release', ['2293983846'])
-  check('说明需要管理员', d.includes('需要管理员权限'))
-  check('列出可用的人', d.includes('2293983846'))
-
-  const empty = deniedText('release', [])
-  check('未配置时给出指引', empty.includes('adminUsers'))
+  const d = deniedText('release')
+  check('说明需要群管权限', d.includes('群主或群管理员'))
+  check('带上指令名', d.includes('/release'))
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)

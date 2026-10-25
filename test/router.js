@@ -84,7 +84,7 @@ console.log('\n== 路由骨架 ==')
     bind: { ...bind, rejectReason: '主按钮改成蓝色' },
   })
   check('打回骨架带上修改意见', rj2.includes('主按钮改成蓝色'), rj2)
-  check('打回骨架说明用户要改什么', rj2.includes('用户要改的是'))
+  check('打回骨架用「修改意见如下」', rj2.includes('修改意见如下：'))
 
   const ct = routedPrompt({ intent: INTENT.CONTINUE, userText: '继续', bind })
   check('继续骨架指向编排记录', ct.includes('编排记录'))

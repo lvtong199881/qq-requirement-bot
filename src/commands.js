@@ -64,10 +64,8 @@ export function helpText({ isAdmin, statusLine }) {
     lines.push('')
     lines.push(statusLine)
   }
-  if (!isAdmin) {
-    lines.push('')
-    lines.push('标「管理员」的指令需要 adminUsers 名单里的 QQ 号才能用。')
-  }
+  lines.push('')
+  lines.push('只有群主和群管理员能让 bot 干活，其他成员的 @ 会被静默忽略。')
   return lines.join('\n')
 }
 
@@ -87,11 +85,6 @@ export function releaseConfirmText({ reqId, stage }) {
 }
 
 /** 指令权限不足时的提示 */
-export function deniedText(name, adminUsers) {
-  return [
-    `/${name} 需要管理员权限。`,
-    adminUsers?.length
-      ? `可用的人：${adminUsers.join('、')}`
-      : '还没配置 adminUsers，在 bot.config.json 里加上你的 QQ 号。',
-  ].join('\n')
+export function deniedText(name) {
+  return `/${name} 需要群主或群管理员权限。`
 }

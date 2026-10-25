@@ -234,6 +234,23 @@ export class OneBot extends EventEmitter {
     })
   }
 
+  /**
+   * 查群成员角色：owner / admin / member。
+   * 群管判定用它——比维护一份 QQ 白名单更贴近「谁在这个群里有权限」。
+   */
+  async getMemberRole(groupId, userId) {
+    try {
+      const info = await this.call('get_group_member_info', {
+        group_id: Number(groupId),
+        user_id: Number(userId),
+        no_cache: false,
+      })
+      return info?.role ?? 'member'
+    } catch {
+      return null // 查不到就当没权限，交给调用方兜底
+    }
+  }
+
   sendGroupMsg(groupId, message) {
     return this.call('send_group_msg', { group_id: Number(groupId), message })
   }

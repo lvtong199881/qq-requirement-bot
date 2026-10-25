@@ -129,8 +129,8 @@ export function routedPrompt({ intent, userText, bind }) {
       const opinion = (bind.rejectReason || '').trim()
       return [
         `用户打回了${reqId ? `需求 ${reqId}` : '当前需求'}的「${stage}」阶段。`,
-        '用户要改的是：',
-        `「${opinion || userText}」`,
+        '修改意见如下：',
+        opinion || userText,
         '按 skill 规则把这条意见转给对应阶段的 agent 修正，不要自己动手改产物。',
       ].join('\n')
     }
