@@ -98,18 +98,33 @@ export class RateLimiter {
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * 把毫秒差说成「9 分钟」。时间戳缺失返回 null——宁可不说，也别显示「0 分钟」。
- * 曾经因为 stageStartedAt 没被设置，群里播报了「已进行 0 分钟」。
+ * 毫秒 →「1天1小时1分钟30秒」。为 0 的单位整段省略，不补零：
+ *   30 秒      → 30秒
+ *   90 秒      → 1分钟30秒
+ *   3661 秒    → 1小时1分钟1秒
+ *   90061 秒   → 1天1小时1分钟1秒
+ * 不足 1 秒说「不到1秒」，避免出现「0秒」这种看着像没在跑的说法。
  */
-export function minsText(fromTs) {
-  if (!fromTs) return null
-  const ms = Date.now() - fromTs
-  if (ms < 60_000) return '不到 1 分钟'
-  return `${Math.round(ms / 60000)} 分钟`
+export function formatDuration(ms) {
+  if (ms == null) return null
+  const total = Math.floor(Math.max(0, ms) / 1000)
+  if (total === 0) return '不到1秒'
+
+  const d = Math.floor(total / 86400)
+  const h = Math.floor((total % 86400) / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+
+  let out = ''
+  if (d) out += `${d}天`
+  if (h) out += `${h}小时`
+  if (m) out += `${m}分钟`
+  if (s) out += `${s}秒`
+  return out
 }
 
-/** 「当前XX阶段中，已进行X分钟」——时长未知时省略时长 */
+/** 「当前XX阶段中，已进行 1小时2分钟30秒」——开始时间未知时省略时长 */
 export function runningText(stageName, fromTs) {
-  const dur = minsText(fromTs)
-  return dur ? `当前${stageName}阶段中，已进行 ${dur}。` : `当前${stageName}阶段进行中。`
+  if (!fromTs) return `当前${stageName}阶段进行中。`
+  return `当前${stageName}阶段中，已进行 ${formatDuration(Date.now() - fromTs)}。`
 }

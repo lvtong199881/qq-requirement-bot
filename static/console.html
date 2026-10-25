@@ -296,13 +296,21 @@ createApp({
       return { cls: 'b-gray', text: '空闲' }
     }
 
+    /** 毫秒 →「1天1小时1分钟30秒」，为 0 的单位整段省略 */
     function fmtDur(ms) {
-      if (!ms || ms < 0) return '0 秒'
-      const s = Math.floor(ms / 1000)
-      if (s < 60) return `${s} 秒`
-      const m = Math.floor(s / 60)
-      if (m < 60) return `${m} 分钟`
-      return `${Math.floor(m / 60)} 小时 ${m % 60} 分`
+      if (ms == null || ms < 0) return '—'
+      const total = Math.floor(ms / 1000)
+      if (total === 0) return '不到1秒'
+      const d = Math.floor(total / 86400)
+      const h = Math.floor((total % 86400) / 3600)
+      const m = Math.floor((total % 3600) / 60)
+      const sec = total % 60
+      let out = ''
+      if (d) out += `${d}天`
+      if (h) out += `${h}小时`
+      if (m) out += `${m}分钟`
+      if (sec) out += `${sec}秒`
+      return out
     }
     function fmtTime(ts) {
       if (!ts) return '—'

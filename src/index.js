@@ -116,9 +116,9 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 // ─────────────────── 群消息播报（四类，全部由 bridge 生成）───────────────────
 // 用户明确要求：agent 的文字一律不进群，群里只出现状态播报。
-//   1. 用户发消息后的回执：当前XX阶段中，已进行X分钟
+//   1. 用户发消息后的回执：当前XX阶段中，已进行 X小时X分钟X秒
 //   2. 阶段播报：XX阶段已开始 / XX阶段已完成（附产物）
-//   3. 心跳：当前XX阶段中，已进行X分钟
+//   3. 心跳：当前XX阶段中，已进行 X小时X分钟X秒
 //   4. 异常：XX阶段异常，请联系bot管理员，异常原因如下：…
 
 /** 把毫秒差格式化成「12 分钟」 */
@@ -159,7 +159,7 @@ function planStageAnnounce(st) {
     // （阶段切换必然改写编排记录）。比记 Date.now() 更接近真实起点。
     patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
   } else if (running && !st.stageStartedAt) {
-    // 老数据里 stage 已是当前阶段但缺时间戳：补一个，避免永远显示「0 分钟」
+    // 老数据里 stage 已是当前阶段但缺时间戳：补一个，避免播报里缺少时长
     patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
   } else if (!running && st.stage) {
     // 阶段都完成了但还没进入下一阶段：保留最后一次阶段名，避免回执说「没有阶段」
