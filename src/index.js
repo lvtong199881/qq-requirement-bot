@@ -567,7 +567,7 @@ bot.on('message', async (frame) => {
   const { stage: anchorStage, reqId: anchorReq } = currentStage(st.projectDir)
   const effectiveReqId = st.reqId || anchorReq
   const anchor = effectiveReqId
-    ? anchorBlock({ reqId: effectiveReqId, projectDir: st.projectDir, stage: anchorStage })
+    ? anchorBlock({ reqId: effectiveReqId, projectDir: st.projectDir, stage: anchorStage, envHints: config.envHints })
     : ''
 
   const promptBody = routedPrompt({

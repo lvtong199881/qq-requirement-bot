@@ -85,7 +85,7 @@ export function isAmbiguous(text, state) {
  * @param {string|null} opts.stage 当前阶段（可为空）
  * @returns {string}
  */
-export function anchorBlock({ reqId, projectDir, stage }) {
+export function anchorBlock({ reqId, projectDir, stage, envHints }) {
   const lines = [
     '【需求锚点——本会话唯一工作目标】',
     `需求标识：${reqId}`,
@@ -99,6 +99,9 @@ export function anchorBlock({ reqId, projectDir, stage }) {
     '- 项目里可能有其他需求在进行中，那些都不归你管，也不要在回复里提它们。',
     '- 你的每一步都要以编排记录为准：先读它，从停下的地方继续，不要从头重跑。',
   ]
+  if (envHints) {
+    lines.push('', '【本机环境（已核实，不要再自己猜）】', envHints)
+  }
   return lines.join('\n')
 }
 

@@ -153,6 +153,8 @@ export function loadConfig(configPath) {
     },
     turnTimeoutMs: raw.turnTimeoutMs ?? 45 * 60 * 1000,
     verbose: raw.verbose === true,
+    // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
+    envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
   }
 }
 
