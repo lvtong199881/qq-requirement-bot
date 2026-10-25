@@ -6,7 +6,7 @@
  *   QQ 群 → NapCat → WebSocket → 这里 → spawn dsh → 解析 NDJSON
  *   → 分条推送回群 → 检测 [[WAITING]] → 保存 sessionId 等下一次 @
  */
-import { loadConfig, resolveApiKey } from './config.js'
+import { loadConfig, resolveModelEnv } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
@@ -34,12 +34,14 @@ try {
   process.exit(1)
 }
 
-const apiKey = resolveApiKey()
-if (!apiKey) {
+// 模型凭证：dsh 的 llm-pi-ai 按 provider 的 apiKeyEnv 读环境变量，
+// 所以启动时把所有可能用到的 key 一并备好，缺哪个由 provider 自己报错。
+const modelEnv = resolveModelEnv()
+if (!Object.keys(modelEnv).length) {
   console.error(
-    '[启动失败] 找不到 DEEPSEEK_API_KEY。\n' +
-      'headless profile 只认环境变量：请先 export DEEPSEEK_API_KEY=...，\n' +
-      '或在 DSH Web GUI 的 Models 页保存过密钥（bridge 会自动从凭证文件读）。',
+    '[启动失败] 找不到任何模型凭证。\n' +
+      '请在 ~/.dsh/.credentials.yaml 的 refs 段写 DEEPSEEK_API_KEY 或 OPENCODE_GO_API_KEY，\n' +
+      '或直接 export 对应环境变量。',
   )
   process.exit(1)
 }
@@ -235,7 +237,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
       projectDir: st.projectDir,
       sessionId: isContinuation ? st.sessionId : undefined,
       prompt,
-      env: { ...process.env, DEEPSEEK_API_KEY: apiKey },
+      env: { ...process.env, ...modelEnv },
       timeoutMs: config.turnTimeoutMs,
       signal: aborter.signal,
       onChild: (child) => {

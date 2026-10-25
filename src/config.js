@@ -176,16 +176,30 @@ function normalizeGroupPolicy(policy) {
  * 取 DEEPSEEK_API_KEY：优先环境变量，其次从 DSH 凭证文件读。
  * headless profile 只认环境变量，所以这里必须帮忙补上。
  */
-export function resolveApiKey() {
-  if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY
+export function resolveApiKey(name = 'DEEPSEEK_API_KEY') {
+  if (process.env[name]) return process.env[name]
 
   const file = join(homedir(), '.dsh', '.credentials.yaml')
   if (!existsSync(file)) return undefined
 
   const text = readFileSync(file, 'utf8')
-  // 只取 refs 段里的 DEEPSEEK_API_KEY，避免误读 records 里的 token
+  // 只取 refs 段里的 key，避免误读 records 里的 token
   const refsIdx = text.search(/^refs:\s*$/m)
   const scope = refsIdx >= 0 ? text.slice(refsIdx) : text
-  const m = scope.match(/^\s+DEEPSEEK_API_KEY:\s*["']?([^\s"']+)["']?\s*$/m)
-  return m?.[1]
+  const re = new RegExp(`^\\s+${name}:\\s*["']?([^\\s"']+)["']?\\s*$`, 'm')
+  return text && scope.match(re)?.[1]
+}
+
+/**
+ * 本机模型 provider 需要的全部凭证环境变量。
+ * dsh 的 llm-pi-ai 按 apiKeyEnv 读对应变量，所以这里一次备齐。
+ */
+export function resolveModelEnv() {
+  const names = ['DEEPSEEK_API_KEY', 'OPENCODE_GO_API_KEY']
+  const env = {}
+  for (const n of names) {
+    const v = resolveApiKey(n)
+    if (v) env[n] = v
+  }
+  return env
 }
