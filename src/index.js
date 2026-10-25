@@ -606,6 +606,19 @@ if (config.groupPolicy.mode === 'allowlist' && !config.groups.length) {
   process.exit(1)
 }
 
+// 启动时清理脏状态：bridge 上一次退出时若有回合在跑，.state 里会留下
+// status=running 但 sessionId=null 的孤儿（正常 running 必有 sessionId）。
+// 置回 waiting 并告知群里，防止用户的新消息被「上一个回合还在跑」卡住。
+function cleanupOrphanStates() {
+  for (const g of config.groups) {
+    const st = store.get(g.groupId)
+    if (!st || st.status !== 'running' || st.sessionId) continue
+    store.save(g.groupId, { ...st, status: 'waiting' })
+    log(`[${g.groupId}] 清理孤儿回合状态（上次 bridge 退出时的残留）`)
+  }
+}
+cleanupOrphanStates()
+
 bot.connect()
 
 const shutdown = () => {
