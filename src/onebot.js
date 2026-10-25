@@ -6,6 +6,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { connect as netConnect } from 'node:net'
+import { readFileSync } from 'node:fs'
 
 /**
  * 探一下目标端口通不通，用来给失败原因下结论。
@@ -238,16 +239,24 @@ export class OneBot extends EventEmitter {
   }
 
   /**
-   * 发群文件。NapCat 支持 upload_group_file。
+   * 发群文件。
+   *
+   * 关键：NapCat 可能跑在 Docker 里，看不到宿主机的文件路径，
+   * 所以这里读文件内容走 base64:// 内联上传，不传绝对路径。
    * @param {string} groupId
-   * @param {string} filePath 本机绝对路径
+   * @param {string} filePath 本机绝对路径（由 bridge 读取）
    * @param {string} name 群文件里显示的文件名
    */
-  uploadGroupFile(groupId, filePath, name) {
-    return this.call('upload_group_file', {
-      group_id: Number(groupId),
-      file: filePath,
-      name,
-    })
+  async uploadGroupFile(groupId, filePath, name) {
+    const buf = readFileSync(filePath)
+    return this.call(
+      'upload_group_file',
+      {
+        group_id: Number(groupId),
+        file: `base64://${buf.toString('base64')}`,
+        name,
+      },
+      30000,
+    )
   }
 }

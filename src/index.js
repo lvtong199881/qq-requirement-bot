@@ -97,6 +97,17 @@ async function handleTurn(groupId, userText, { isContinuation }) {
   let lastSent = ''
   let pendingText = ''
   let turnLabel = ''
+  let lastActivityAt = Date.now()
+
+  // 长时间静默时，每 3 分钟在群里报一次「还在跑」，
+  // 否则 subagent 干活的 8 分钟里群上完全没动静，看着像卡死。
+  const heartbeat = setInterval(() => {
+    const silentMs = Date.now() - lastActivityAt
+    if (silentMs < 180_000) return
+    lastActivityAt = Date.now()
+    const mins = Math.round((Date.now() - started) / 60000)
+    sendPlain(groupId, `还在跑（已 ${mins} 分钟），子 agent 正在产出阶段产物，稍候。`).catch(() => {})
+  }, 60_000)
 
   const persist = (patch) => {
     store.save(groupId, { ...st, ...patch, lastActiveAt: Date.now() })
@@ -124,7 +135,16 @@ async function handleTurn(groupId, userText, { isContinuation }) {
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
         }
+        // subagent 活动时主 agent 可能几分钟不输出，用工具调用当心跳：
+        // 只在「很久没说话」时提醒一次，不刷屏
+        if (ev.type === 'status' && ev.phase === 'step_end') {
+          lastActivityAt = Date.now()
+        }
+        if (ev.type === 'tool_call' || ev.type === 'tool/result') {
+          lastActivityAt = Date.now()
+        }
         if (ev.type === 'text' && typeof ev.text === 'string') {
+          lastActivityAt = Date.now()
           pendingText += ev.text
           // 攒够一段就推，避免群里长时间没动静
           if (pendingText.length >= config.limits.chunkChars) {
@@ -202,6 +222,7 @@ async function handleTurn(groupId, userText, { isContinuation }) {
     await sendPlain(groupId, `出错了：${err.message}`)
     persist({ status: STATES.WAITING })
   } finally {
+    clearInterval(heartbeat)
     release()
     // 处理排队消息
     const queued = machine.drainQueue(groupId)
