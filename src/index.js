@@ -749,7 +749,17 @@ cleanupOrphanStates()
 
 /** 组装本实例的完整状态快照（面板 /api/status 的唯一数据源） */
 function buildSnapshot() {
-  const groups = machine.listAll().map((g) => {
+  const groups = machine
+    .listAll()
+    // 过滤掉项目目录已消失的残留（比如测试用临时目录留下的 state 文件）
+    .filter((g) => {
+      try {
+        return existsSync(g.projectDir)
+      } catch {
+        return false
+      }
+    })
+    .map((g) => {
     const table = stageTable(g.projectDir, g.reqId ?? undefined)
     const stages = table.stages
     const running = stages.find((x) => x.status.includes('进行中'))
