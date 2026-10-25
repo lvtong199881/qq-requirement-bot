@@ -483,7 +483,7 @@ bot.on('message', async (frame) => {
   // 会话丢了但流程没走完（比如 bridge 重启/429 中断）：
   // 把编排记录里的当前状态作为提示注入，让 agent 精准接上，而不是自己重新挑活
   let resumeHint = ''
-  if (!st.sessionId && st.status === STATES.WAITING && /^(继续|接着跑)/.test(text)) {
+  if (!st.sessionId && st.status === STATES.WAITING) {
     const { stage, reqId } = currentStage(st.projectDir)
     if (reqId) {
       resumeHint =
