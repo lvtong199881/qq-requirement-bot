@@ -80,8 +80,13 @@ node src/index.js
 
   "limits": {
     "maxMessagesPerMinute": 10,                    // 发送限流，防风控
-    "chunkChars": 400,                             // 单条消息字数
-    "maxChunksPerTurn": 12                         // 一回合最多发几条
+    "chunkChars": 3000,                            // 超过才拆条；正常一条发完
+    "maxChunksPerTurn": 4                          // 一回合最多拆几条
+  },
+
+  "heartbeat": {
+    "enabled": true,                               // 静默心跳开关
+    "idleMinutes": 10                              // 静默多久报一次「正在XX阶段，已等待X分钟」
   },
 
   "upload": { "enabled": true, "maxFiles": 8, "maxFileMB": 20 },

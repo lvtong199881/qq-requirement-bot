@@ -22,8 +22,13 @@
 
   "limits": {
     "maxMessagesPerMinute": 10,
-    "chunkChars": 400,
-    "maxChunksPerTurn": 12
+    "chunkChars": 3000,
+    "maxChunksPerTurn": 4
+  },
+
+  "heartbeat": {
+    "enabled": true,
+    "idleMinutes": 10
   },
 
   "upload": {

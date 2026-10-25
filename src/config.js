@@ -135,8 +135,15 @@ export function loadConfig(configPath) {
     approval: raw.approval === 'auto' ? 'auto' : 'manual',
     limits: {
       maxMessagesPerMinute: raw.limits?.maxMessagesPerMinute ?? 10,
-      chunkChars: raw.limits?.chunkChars ?? 600,
-      maxChunksPerTurn: raw.limits?.maxChunksPerTurn ?? 12,
+      // QQ 单条消息的实际上限约 4500 字（含转义余量），
+      // 超出才拆条；正常情况下一条发完，别让用户收到 N 条。
+      chunkChars: raw.limits?.chunkChars ?? 3000,
+      maxChunksPerTurn: raw.limits?.maxChunksPerTurn ?? 4,
+    },
+    // 静默心跳：多久没动静才在群里报一次进展
+    heartbeat: {
+      enabled: raw.heartbeat?.enabled !== false,
+      idleMinutes: raw.heartbeat?.idleMinutes ?? 10,
     },
     upload: {
       enabled: raw.upload?.enabled !== false,

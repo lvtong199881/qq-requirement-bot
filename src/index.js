@@ -11,7 +11,7 @@ import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, splitChunks, RateLimiter, sleep } from './format.js'
-import { snapshot, diffSnapshot, uploadName, touchedReqIds } from './artifacts.js'
+import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage } from './artifacts.js'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync } from 'node:fs'
 
@@ -117,15 +117,21 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
   let pendingText = ''
   let turnLabel = ''
   let lastActivityAt = Date.now()
+  let firstReplySent = false // agent 的「先回话」是否已提前发到群里
+  let sentHead = '' // 已提前发出的那句回话原文（用于去重）
 
-  // 长时间静默时，每 3 分钟在群里报一次「还在跑」，
-  // 否则 subagent 干活的 8 分钟里群上完全没动静，看着像卡死。
+  // 静默心跳：subagent 干活时群里可能长时间没动静，看着像卡死。
+  // 默认 10 分钟一条，可配 heartbeat.idleMinutes。
+  const idleMs = (config.heartbeat?.idleMinutes ?? 10) * 60_000
   const heartbeat = setInterval(() => {
+    if (config.heartbeat?.enabled === false) return
     const silentMs = Date.now() - lastActivityAt
-    if (silentMs < 180_000) return
+    if (silentMs < idleMs) return
     lastActivityAt = Date.now()
-    const mins = Math.round((Date.now() - started) / 60000)
-    sendPlain(groupId, `还在跑（已 ${mins} 分钟），子 agent 正在产出阶段产物，稍候。`).catch(() => {})
+    const waitedMin = Math.round(silentMs / 60000)
+    const { stage } = currentStage(st.projectDir)
+    const phase = stage ? `正在${stage}阶段` : '正在推进'
+    sendPlain(groupId, `${phase}，已等待 ${waitedMin} 分钟。`).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {
@@ -154,27 +160,24 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
         }
-        // subagent 活动时主 agent 可能几分钟不输出，用工具调用当心跳：
-        // 只在「很久没说话」时提醒一次，不刷屏
+        // 任何活动都刷新心跳计时
         if (ev.type === 'status' && ev.phase === 'step_end') {
-          lastActivityAt = Date.now()
-        }
-        if (ev.type === 'tool_call' || ev.type === 'tool/result') {
           lastActivityAt = Date.now()
         }
         if (ev.type === 'text' && typeof ev.text === 'string') {
           lastActivityAt = Date.now()
-          pendingText += ev.text
-          // 流式片段只在「明显够长」时才中途透露，
-          // 而且不带 @ 前缀、不引用——中途发言应该像人随口补一句。
-          if (pendingText.length >= config.limits.chunkChars * 2) {
-            const piece = pendingText
-            pendingText = ''
-            if (sanitize(piece) !== lastSent) {
-              lastSent = sanitize(piece)
-              sendChunked(groupId, piece, { replyTo }).catch(() => {})
+          // agent 按协议会先输出一句「打算做什么」——这一段要立刻发出去，
+          // 不能等同回合结束，否则用户发完消息要干等好几分钟。
+          if (!firstReplySent && pendingText.trim()) {
+            const head = pendingText.trim()
+            // 只在确实是「一句短回话」时才提前发：太长的是最终结论，等回合结束一起发
+            if (head.length <= 80 && !head.includes('[[WAITING]]') && !head.includes('[[DONE]]')) {
+              firstReplySent = true
+              sentHead = head
+              sendChunked(groupId, head, { replyTo }).catch(() => {})
             }
           }
+          pendingText += ev.text
         }
       },
     })
@@ -182,9 +185,16 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
     const gate = parseGate(result.finalText || pendingText)
     turnLabel = gate.label
 
-    // 最终输出：引用用户那条消息，不再 @ 自己
-    if (gate.cleaned) {
-      await sendChunked(groupId, gate.cleaned, { replyTo })
+    // 最终输出：引用用户那条消息。
+    // 若开头那句「先回话」已经在群里发过，就只发剩余部分，避免同一句话出现两遍。
+    let body = gate.cleaned
+    if (firstReplySent && sentHead && body.startsWith(sentHead.trim().slice(0, 40))) {
+      body = body.slice(sentHead.trim().length).trim()
+      // agent 的回话与结论之间通常有换行/破折号，清理掉开头残留
+      body = body.replace(/^[-—\s]+/, '')
+    }
+    if (body) {
+      await sendChunked(groupId, body, { replyTo })
     }
 
     // 异常收尾
