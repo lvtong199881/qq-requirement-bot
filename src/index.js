@@ -99,7 +99,7 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 // ────────────────────────────── 一回合 ──────────────────────────────
 
-async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
+async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHint }) {
   const st = machine.peek(groupId)
   if (!st) return
 
@@ -143,10 +143,13 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
   log(`[${groupId}] 回合开始${isContinuation ? '（续跑）' : '（新会话）'}：${userText.slice(0, 60)}`)
 
   try {
-    // 新会话带上群聊协议；续跑只发用户原话（协议已在首轮上下文里）
+    // 新会话带上群聊协议；续跑只发用户原话（协议已在首轮上下文里）。
+    // 会话丢失后的「继续」要带上续跑上下文，否则 agent 会自己挑活、接到别的需求上。
     const prompt = isContinuation
       ? userText
-      : `${gateInstructions({ botName: config.bot.name, approval: st.approval })}\n\n---\n\n【用户需求】\n${userText}`
+      : `${gateInstructions({ botName: config.bot.name, approval: st.approval })}\n\n---\n\n` +
+        (resumeHint ? `${resumeHint}\n\n---\n\n` : '') +
+        `【用户消息】\n${userText}`
 
     const result = await runTurn({
       dshBin: config.dshBin,
@@ -476,13 +479,27 @@ bot.on('message', async (frame) => {
   }
 
   const isContinuation = !!st.sessionId && st.status !== STATES.IDLE
+
+  // 会话丢了但流程没走完（比如 bridge 重启/429 中断）：
+  // 把编排记录里的当前状态作为提示注入，让 agent 精准接上，而不是自己重新挑活
+  let resumeHint = ''
+  if (!st.sessionId && st.status === STATES.WAITING && /^(继续|接着跑)/.test(text)) {
+    const { stage, reqId } = currentStage(st.projectDir)
+    if (reqId) {
+      resumeHint =
+        `【续跑上下文】本群正在推进需求 ${reqId}，编排记录显示当前停在「${stage || '未知'}」阶段，` +
+        `产物已归档在 docs/requirements/${reqId}/。先读该目录下的编排记录.md 和已有产物，` +
+        `从停下的地方继续，不要接手其他需求，不要从头重跑。用户正在等这个需求的进展。`
+    }
+  }
+
   if (isDryRun) {
     log(`[dry-run] 将执行的 prompt：\n${text}`)
     await sendPlain(groupId, `[dry-run] 收到，不实际执行。sessionId=${st.sessionId || '无'}`, { replyTo })
     return
   }
 
-  handleTurn(groupId, text, { isContinuation, replyTo }).catch((e) => log(`回合启动失败：${e.message}`))
+  handleTurn(groupId, text, { isContinuation, replyTo, resumeHint }).catch((e) => log(`回合启动失败：${e.message}`))
 })
 
 // ────────────────────────────── 启动 ──────────────────────────────
