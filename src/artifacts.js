@@ -155,3 +155,77 @@ export function currentStage(projectDir) {
   }
   return { stage: null, reqId: newest.id }
 }
+
+/**
+ * 解析编排记录的「阶段进度」表——四类群消息的状态来源。
+ *
+ * skill 在每个阶段都会改写这张表，所以它是比 agent 自述更可靠的
+ * 阶段真值。bridge 只读它、不读 agent 的 text。
+ *
+ * @param {string} projectDir
+ * @param {string=} reqId 指定需求；不给则取最近改动的编排记录
+ * @returns {{reqId: string|null, stages: Array<{name: string, status: string}>}}
+ */
+export function stageTable(projectDir, reqId) {
+  const empty = { reqId: reqId ?? null, stages: [] }
+  const root = join(projectDir, DOC_ROOT)
+  if (!existsSync(root)) return empty
+
+  let file = reqId ? join(root, reqId, '编排记录.md') : null
+  if (!file || !existsSync(file)) {
+    // 没指定或指定的不存在：退回「最近改动的编排记录」
+    let newest = null
+    try {
+      for (const id of readdirSync(root)) {
+        if (id.startsWith('.')) continue
+        const f = join(root, id, '编排记录.md')
+        if (!existsSync(f)) continue
+        const mtime = statSync(f).mtimeMs
+        if (!newest || mtime > newest.mtime) newest = { id, file: f, mtime }
+      }
+    } catch {
+      return empty
+    }
+    if (!newest) return empty
+    file = newest.file
+    reqId = newest.id
+  }
+
+  let lines
+  try {
+    lines = readFileSync(file, 'utf8').split('\n')
+  } catch {
+    return { reqId, stages: [] }
+  }
+
+  const stages = []
+  let inSection = false
+  for (const line of lines) {
+    const t = line.trim()
+    if (/^##\s*阶段进度\s*$/.test(t)) {
+      inSection = true
+      continue
+    }
+    if (inSection && /^##\s/.test(t)) break
+    if (!inSection) continue
+    if (!t.startsWith('|')) continue
+
+    const cells = t.split('|').map((c) => c.trim()).filter(Boolean)
+    if (cells.length < 2) continue
+    const rawName = cells[0]
+    const status = cells[1]
+    if (!rawName || rawName === '阶段' || rawName.includes('---')) continue
+    if (!status) continue
+
+    // 「4 开发」→ name='开发', num='4'
+    const m = rawName.match(/^(\d+)\s*(.+)$/)
+    stages.push({
+      num: m ? m[1] : null,
+      label: rawName,
+      name: (m ? m[2] : rawName).trim(),
+      status,
+    })
+  }
+
+  return { reqId, stages }
+}

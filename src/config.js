@@ -143,7 +143,7 @@ export function loadConfig(configPath) {
     // 静默心跳：多久没动静才在群里报一次进展
     heartbeat: {
       enabled: raw.heartbeat?.enabled !== false,
-      idleMinutes: raw.heartbeat?.idleMinutes ?? 10,
+      idleMinutes: raw.heartbeat?.idleMinutes ?? 5,
     },
     upload: {
       enabled: raw.upload?.enabled !== false,

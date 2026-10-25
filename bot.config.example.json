@@ -22,7 +22,7 @@
   },
   "heartbeat": {
     "enabled": true,
-    "idleMinutes": 10
+    "idleMinutes": 5
   },
   "upload": {
     "enabled": true,

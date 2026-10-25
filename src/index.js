@@ -10,8 +10,8 @@ import { loadConfig, resolveApiKey } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
-import { sanitize, splitChunks, RateLimiter, sleep } from './format.js'
-import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage } from './artifacts.js'
+import { sanitize, RateLimiter, sleep } from './format.js'
+import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage, stageTable } from './artifacts.js'
 import {
   classifyMessage,
   isAmbiguous,
@@ -78,8 +78,6 @@ function replySegment(messageId) {
  * @param {{replyTo?: number|string}} [opts]
  */
 // 长任务阶段进展的最小间隔：够久才不会刷屏，够短才不会让人干等
-const PROGRESS_INTERVAL_MS = 120_000
-
 // 距上次「群里收到消息」的时间——agent 内部活动不算，只由 sendText 成功发送后刷新。
 // 模块级：sendText 与各群的心跳共用（bridge 当前只服务少数群，共享一个计时够用）。
 let lastActivityAt = Date.now()
@@ -99,21 +97,88 @@ async function sendText(groupId, text, { replyTo } = {}) {
   }
 }
 
-async function sendChunked(groupId, text, { replyTo, prefix = '' } = {}) {
-  const chunks = splitChunks(sanitize(text), config.limits.chunkChars, config.limits.maxChunksPerTurn)
-  for (let i = 0; i < chunks.length; i++) {
-    const body = i === 0 && prefix ? `${prefix}\n${chunks[i]}` : chunks[i]
-    // 只有第一条引用原消息，后续分条普通发送，避免刷屏式重复引用
-    await sendText(groupId, body, { replyTo: i === 0 ? replyTo : undefined })
-  }
-  return chunks.length
-}
-
 async function sendPlain(groupId, text, { replyTo } = {}) {
   await sendText(groupId, text, { replyTo })
 }
 
 // ────────────────────────────── 一回合 ──────────────────────────────
+
+// ─────────────────── 群消息播报（四类，全部由 bridge 生成）───────────────────
+// 用户明确要求：agent 的文字一律不进群，群里只出现状态播报。
+//   1. 用户发消息后的回执：当前XX阶段中，已进行X分钟
+//   2. 阶段播报：XX阶段已开始 / XX阶段已完成（附产物）
+//   3. 心跳：当前XX阶段中，已进行X分钟
+//   4. 异常：XX阶段异常，请联系bot管理员，异常原因如下：…
+
+/** 把毫秒差格式化成「12 分钟」 */
+function minsText(fromTs) {
+  if (!fromTs) return '0 分钟'
+  const m = Math.max(0, Math.round((Date.now() - fromTs) / 60000))
+  return `${m} 分钟`
+}
+
+/**
+ * 同步阶段状态并生成要播报的消息。
+ * 阶段真值来自编排记录的「阶段进度」表，不看 agent 说了什么。
+ *
+ * @param {object} st 群状态
+ * @returns {{messages: string[], running: string|null, finishedNow: string[], patch: object}}
+ */
+function planStageAnnounce(st) {
+  const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+  const running = stages.find((x) => x.status.includes('进行中'))?.name ?? null
+  const finishedNow = stages.filter((x) => x.status.includes('已完成')).map((x) => x.name)
+
+  const messages = []
+  const patch = {}
+
+  // 首次观测：把历史已完成阶段全部记为已知，避免把老阶段播报一遍
+  const known = st.finishedStages
+  if (known === null || known === undefined) {
+    patch.finishedStages = finishedNow
+  } else {
+    const knownSet = new Set(known)
+    for (const name of finishedNow) {
+      if (!knownSet.has(name)) {
+        messages.push(`${name}阶段已完成。`)
+        patch.finishedStages = [...finishedNow]
+      }
+    }
+  }
+
+  // 阶段切换 → 播报「已开始」，并重置阶段计时
+  if (running && running !== st.stage) {
+    messages.push(`${running}阶段已开始。`)
+    patch.stage = running
+    patch.stageStartedAt = Date.now()
+  } else if (!running && st.stage) {
+    // 阶段都完成了但还没进入下一阶段：保留最后一次阶段名，避免回执说「没有阶段」
+    patch.stage = st.stage
+  }
+
+  return { messages, running, finishedNow, patch }
+}
+
+/** 消息 1：用户发消息后的回执 */
+async function sendAck(groupId, st, replyTo) {
+  const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+  const running = stages.find((x) => x.status.includes('进行中'))
+  if (running) {
+    await sendPlain(groupId, `当前${running.name}阶段中，已进行 ${minsText(st.stageStartedAt)}。`, { replyTo })
+    return
+  }
+  // 没有进行中的阶段：说明在等用户决定
+  const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
+  if (lastDone) {
+    await sendPlain(
+      groupId,
+      `${lastDone.name}阶段已完成，等你确认。`,
+      { replyTo },
+    )
+    return
+  }
+  await sendPlain(groupId, '当前没有进行中的阶段。', { replyTo })
+}
 
 async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent }) {
   const st = machine.peek(groupId)
@@ -131,24 +196,19 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   const before = snapshot(st.projectDir)
   let pendingText = ''
   let turnDone = false // runTurn 是否已 resolve
-  let firstReplySent = false // agent 的「先回话」是否已提前发到群里
-  let sentHead = '' // 已提前发出的那句回话原文（用于去重）
-  let lastProgressAt = Date.now() // 上次向群里发进展的时间
 
-  // 静默心跳：只要群里 10 分钟没收到任何消息就报一条，
-  // 不管 agent 内部多忙——「在活动」不等于「用户有感知」，写代码 8 分钟
-  // 群里就是 8 分钟静默。默认 10 分钟，可配 heartbeat.idleMinutes。
-  const idleMs = (config.heartbeat?.idleMinutes ?? 10) * 60_000
+  // 消息 3：心跳——只要群里「距上次发言」够久就补一条状态。
+  // 默认 5 分钟，可配 heartbeat.idleMinutes。话术固定，不含任何 agent 内容。
+  const idleMs = (config.heartbeat?.idleMinutes ?? 5) * 60_000
   const heartbeat = setInterval(() => {
     if (config.heartbeat?.enabled === false) return
-    const silentMs = Date.now() - lastActivityAt
-    if (silentMs < idleMs) return
+    if (Date.now() - lastActivityAt < idleMs) return
+    // 只在有进行中阶段时发（阶段都完成了就没必要报心跳）
+    const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+    const running = stages.find((x) => x.status.includes('进行中'))
+    if (!running) return
     lastActivityAt = Date.now()
-    const waitedMin = Math.round(silentMs / 60000)
-    const { stage } = currentStage(st.projectDir)
-    const head = st.reqId ? `${st.reqId} · ` : ''
-    const phase = stage ? `${head}正在${stage}阶段` : `${head}正在推进`
-    sendPlain(groupId, `${phase}，已等待 ${waitedMin} 分钟。`).catch(() => {})
+    sendPlain(groupId, `当前${running.name}阶段中，已进行 ${minsText(st.stageStartedAt)}。`).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {
@@ -192,38 +252,11 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
         }
+        // agent 的任何文字都不进群——群里只发 bridge 生成的
+        // 四类状态消息（用户回执 / 阶段播报 / 心跳 / 异常）。
+        // agent 的 text 只留作最终结论的兜底。
         if (ev.type === 'text' && typeof ev.text === 'string') {
-          // 先把当前这段累加进来，再判定——顺序反了会导致第一次永远是空串、
-          // 先回话永远发不出去（真实踩过）。
           pendingText += ev.text
-          const now = Date.now()
-
-          // ① 先回话：第一条短文本立刻发，让用户知道消息收到了
-          if (!firstReplySent) {
-            const head = pendingText.trim()
-            if (head && head.length <= 80 && !head.includes('[[')) {
-              firstReplySent = true
-              sentHead = head
-              lastProgressAt = now
-              sendChunked(groupId, head, { replyTo }).catch((e) =>
-                log(`[${groupId}] 先回话发送失败：${e.message}`),
-              )
-              pendingText = '' // 已发出，清掉避免影响后续判定
-              return
-            }
-          }
-
-          // ② 长任务的阶段进展：距上次发言够久、且本段有实质内容才补一条。
-          // 编译/测试能跑十几分钟，全程静默用户没法分辨「在忙」和「死了」。
-          if (firstReplySent && now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
-            const piece = ev.text.trim()
-            if (piece.length >= 20 && !piece.includes('[[')) {
-              lastProgressAt = now
-              sendChunked(groupId, piece, { replyTo }).catch((e) =>
-                log(`[${groupId}] 进展推送失败：${e.message}`),
-              )
-            }
-          }
         }
       },
     })
@@ -231,37 +264,26 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     turnDone = true
     const gate = parseGate(result.finalText || pendingText)
 
-    // 最终输出：引用用户那条消息。
-    // 若开头那句「先回话」已经在群里发过，就只发剩余部分，避免同一句话出现两遍。
-    let body = gate.cleaned
-    if (firstReplySent && sentHead && body.startsWith(sentHead.trim().slice(0, 40))) {
-      body = body.slice(sentHead.trim().length).trim()
-      // agent 的回话与结论之间通常有换行/破折号，清理掉开头残留
-      body = body.replace(/^[-—\s]+/, '')
-    }
-    if (body) {
-      await sendChunked(groupId, body, { replyTo })
-    }
+    // agent 的文字不再进群（用户要求：只有四类 bridge 状态消息）。
+    // gate.cleaned 仅用于判断阶段结论与等待事项，不直接发送。
 
     // 异常收尾
+    // 消息 4：异常播报（固定格式，方便用户/管理员一眼定位）
+    const stageName = (planStageAnnounce({ ...st, reqId: st.reqId }).running) ?? st.stage ?? '当前'
+    const abnormal = (reason) =>
+      sendPlain(groupId, `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${reason}`, { replyTo })
+
     if (result.errorSummary) {
-      // turn_end 带错误（429 限流 / 凭证失效 / 断网）：讲人话，别让群里无声无息
-      await sendPlain(groupId, `⚠️ ${result.errorSummary}`, { replyTo })
+      await abnormal(result.errorSummary)
     } else if (result.timedOut) {
-      await sendPlain(
-        groupId,
-        `这个回合超过 ${Math.round(config.turnTimeoutMs / 60000)} 分钟还没跑完，我已经把它停了。\n` +
-          `可以发「继续」让我接着跑，或发更具体的指令。`,
-        { replyTo },
-      )
+      await abnormal(`回合超时（超过 ${Math.round(config.turnTimeoutMs / 60000)} 分钟），已强制停止。`)
     } else if (result.exitCode !== 0 && !gate.cleaned) {
       const tail = (result.stderr || '').split('\n').filter(Boolean).slice(-3).join('\n')
-      await sendPlain(groupId, `回合异常结束（退出码 ${result.exitCode}）。\n${sanitize(tail).slice(0, 400)}`, {
-        replyTo,
-      })
+      await abnormal(`进程退出码 ${result.exitCode}。\n${sanitize(tail).slice(0, 400)}`)
     }
 
     // 产物回传
+    let uploadedNames = []
     if (config.upload.enabled) {
       const after = snapshot(st.projectDir)
       const all = diffSnapshot(before, after, config.upload)
@@ -311,43 +333,62 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
             failed.map((f) => '· ' + f.replace(st.projectDir + '/', '')).join('\n'),
         )
       }
-      if (changed.length) detail(`回传 ${changed.length} 个产物`)
+      if (changed.length) {
+        uploadedNames = changed.map((f) => f.path.split('/').pop()).filter(Boolean)
+        detail(`回传 ${changed.length} 个产物`)
+      }
     }
 
-    // 落状态
+    // ── 消息 2：阶段播报（回合收尾的最后一步）──
+    // 话术由 bridge 生成，不含任何 agent 文字。
+    const stageInfo2 = currentStage(st.projectDir)
+    const reqIdToBind2 = st.reqId || stageInfo2.reqId
+    const planned = planStageAnnounce({ ...st, reqId: reqIdToBind2 })
+
+    // 阶段完成时把产物名和待确认点并进同一条，避免又多出几条零碎消息
+    const pendingNote = gate.state === 'waiting' && gate.label ? `等你确认：${gate.label}` : ''
+
+    const lines = []
+    for (const msg of planned.messages) {
+      if (msg.endsWith('阶段已完成。')) {
+        const parts = [msg]
+        if (uploadedNames.length) parts.push(`产物：${uploadedNames.join('、')}`)
+        if (pendingNote) parts.push(pendingNote)
+        lines.push(parts.join('\n'))
+      } else {
+        lines.push(msg)
+      }
+    }
+    // 没有任何阶段变化但有等待事项时，也要让用户知道要决策什么
+    if (!lines.length && pendingNote) lines.push(pendingNote)
+    if (!lines.length && gate.state === 'done') lines.push('这个需求跑完了。要新需求直接 @我 说。')
+
     const nextStatus =
       gate.state === 'waiting' ? STATES.WAITING : gate.state === 'done' ? STATES.IDLE : STATES.WAITING
-
-    // 绑定落定：回合后编排记录里最新的需求就是本群绑定的需求
-    const stageInfo = currentStage(st.projectDir)
-    const reqIdToBind = st.reqId || stageInfo.reqId
-    if (reqIdToBind && reqIdToBind !== st.reqId) {
-      log(`[${groupId}] 绑定需求：${reqIdToBind}`)
-    }
 
     persist({
       sessionId: result.sessionId ?? st.sessionId,
       status: nextStatus,
       waitingLabel: gate.state === 'waiting' ? gate.label : '',
-      reqId: reqIdToBind,
+      reqId: reqIdToBind2,
       turn: st.turn + 1,
-      projectDir: st.projectDir, // 群首次出现时把项目目录一起固化
+      projectDir: st.projectDir,
+      ...planned.patch,
     })
-
-    if (gate.state === 'waiting') {
-      // label 是 agent 自己写的一句「在等什么」，只在它没写时才追问
-      if (!gate.label) await sendPlain(groupId, '需要你拍板，看到上面的问题后回复就行。', { replyTo })
-    } else if (gate.state === 'done') {
-      await sendPlain(groupId, '这个需求跑完了。要做新需求，直接 @我 说就行。')
-    } else if (!gate.cleaned) {
-      await sendPlain(groupId, '这一轮结束了，但没看到明确的阶段结论。发「继续」我可以接着跑。')
-      persist({ status: STATES.WAITING })
+    for (const line of lines) {
+      await sendPlain(groupId, line, { replyTo })
     }
+
+
 
     log(`[${groupId}] 回合结束：${((Date.now() - started) / 1000).toFixed(1)}s，状态=${nextStatus}`)
   } catch (err) {
     log(`[${groupId}] 回合异常：${err.message}`)
-    await sendPlain(groupId, `出错了：${err.message}`)
+    const stageName = currentStage(st.projectDir).stage ?? '当前'
+    await sendPlain(
+      groupId,
+      `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${err.message}`,
+    ).catch(() => {})
     persist({ status: STATES.WAITING })
   } finally {
     clearInterval(heartbeat)
@@ -608,6 +649,9 @@ bot.on('message', async (frame) => {
     await sendPlain(groupId, `[dry-run] 收到，不实际执行。`, { replyTo })
     return
   }
+
+  // 消息 1：用户发消息后立刻回一条当前状态（不等 agent）
+  await sendAck(groupId, st, replyTo)
 
   handleTurn(groupId, text, {
     isContinuation,

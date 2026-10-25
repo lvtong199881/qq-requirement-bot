@@ -135,6 +135,10 @@ export class GroupStateMachine {
       waitingLabel: saved?.waitingLabel ?? '',
       turn: saved?.turn ?? 0,
       lastActiveAt: saved?.lastActiveAt ?? 0,
+      // 阶段播报用：当前进行中的阶段、它的开始时间、已知完成的阶段
+      stage: saved?.stage ?? null,
+      stageStartedAt: saved?.stageStartedAt ?? 0,
+      finishedStages: saved?.finishedStages ?? null, // null=首次，历史阶段不播报
     }
   }
 
