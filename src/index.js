@@ -162,24 +162,27 @@ function planStageAnnounce(st) {
 }
 
 /** 消息 1：用户发消息后的回执 */
-async function sendAck(groupId, st, replyTo) {
+async function sendAck(groupId, st, replyTo, intent) {
   const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
   const running = stages.find((x) => x.status.includes('进行中'))
+
+  // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
   if (running) {
     await sendPlain(groupId, `当前${running.name}阶段中，已进行 ${minsText(st.stageStartedAt)}。`, { replyTo })
     return
   }
-  // 没有进行中的阶段：说明在等用户决定
+
+  // 没有进行中阶段：按意图回执，避免同一句话重复出现
   const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
-  if (lastDone) {
-    await sendPlain(
-      groupId,
-      `${lastDone.name}阶段已完成，等你确认。`,
-      { replyTo },
-    )
-    return
+  const tag = lastDone ? `${lastDone.name}阶段已完成，` : ''
+  const byIntent = {
+    approve: `${tag}收到批准，正在启动下一阶段。`,
+    reject: `${tag}收到修改意见，正在转给对应阶段处理。`,
+    continue: `${tag}正在继续。`,
+    new_req: '收到，开始新需求。',
   }
-  await sendPlain(groupId, '当前没有进行中的阶段。', { replyTo })
+  const msg = byIntent[intent] ?? (lastDone ? `${tag}等你确认。` : '当前没有进行中的阶段。')
+  await sendPlain(groupId, msg, { replyTo })
 }
 
 async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent }) {
@@ -189,8 +192,9 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   const aborter = new AbortController()
   const release = machine.acquire(groupId, aborter)
   if (!release) {
+    // 消息排队等下一轮，不再额外播报——回执已经告诉用户当前状态了，
+    // 多说一句「上一个回合还在跑」只是泄露内部机制。
     machine.enqueue(groupId, userText)
-    await sendPlain(groupId, '上一个回合还在跑，你的话我记下了，等它结束后接着处理。', { replyTo })
     return
   }
 
@@ -653,7 +657,7 @@ bot.on('message', async (frame) => {
   }
 
   // 消息 1：用户发消息后立刻回一条当前状态（不等 agent）
-  await sendAck(groupId, st, replyTo)
+  await sendAck(groupId, st, replyTo, intent)
 
   handleTurn(groupId, text, {
     isContinuation,
