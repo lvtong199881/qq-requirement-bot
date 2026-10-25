@@ -189,18 +189,20 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
           detail('turn_start')
         }
         if (ev.type === 'text' && typeof ev.text === 'string') {
-          // agent 按协议会先输出一句「打算做什么」——这一段要立刻发出去，
-          // 不能等同回合结束，否则用户发完消息要干等好几分钟。
-          if (!firstReplySent && pendingText.trim()) {
+          // 先把当前这段累加进来，再判定——顺序反了会导致第一次永远是空串、
+          // 先回话永远发不出去（真实踩过）。
+          pendingText += ev.text
+          if (!firstReplySent) {
             const head = pendingText.trim()
-            // 只在确实是「一句短回话」时才提前发：太长的是最终结论，等回合结束一起发
-            if (head.length <= 80 && !head.includes('[[WAITING]]') && !head.includes('[[DONE]]')) {
+            // 只提前发「一句短回话」：太长的是最终结论，等回合结束一起发
+            if (head && head.length <= 80 && !head.includes('[[')) {
               firstReplySent = true
               sentHead = head
-              sendChunked(groupId, head, { replyTo }).catch(() => {})
+              sendChunked(groupId, head, { replyTo }).catch((e) =>
+                log(`[${groupId}] 先回话发送失败：${e.message}`),
+              )
             }
           }
-          pendingText += ev.text
         }
       },
     })
