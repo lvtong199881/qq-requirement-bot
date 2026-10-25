@@ -22,7 +22,8 @@ export const INTENT = {
 /** 批准词 */
 const APPROVE_RE = /^(通过|ok|OK|Okay|好的|可以|同意|批准|lgtm|LGTM)[\s,，。!！.]*$/
 /** 打回词 */
-const REJECT_RE = /^(打回|不行|不对|有问题|重做)[\s,，。!！.]*$/
+// 允许「打回」后面直接跟修改意见，否则用户说完打回就没机会说了
+const REJECT_RE = /^(打回|不行|不对|有问题|重做)[\s,，。!！:：]*(.*)$/
 /** 继续词 */
 const CONTINUE_RE = /^(继续|接着跑|接着来|go|GO)[\s,，。!！.]*$/
 /** 新需求词（带可选描述） */
@@ -49,7 +50,7 @@ export function classifyMessage(text) {
   if (approve) return { intent: INTENT.APPROVE }
 
   const reject = t.match(REJECT_RE)
-  if (reject) return { intent: INTENT.REJECT }
+  if (reject) return { intent: INTENT.REJECT, detail: (reject[2] || '').trim() }
 
   const cont = t.match(CONTINUE_RE)
   if (cont) return { intent: INTENT.CONTINUE }
@@ -124,12 +125,15 @@ export function routedPrompt({ intent, userText, bind }) {
         '若有未闭环项，按 skill 规则处理并如实说明。',
       ].join('\n')
 
-    case INTENT.REJECT:
+    case INTENT.REJECT: {
+      const opinion = (bind.rejectReason || '').trim()
       return [
-        `用户对${reqId ? `需求 ${reqId}` : '当前需求'}的「${stage}」阶段表示不满意（打回）。`,
-        `用户原话：「${userText}」`,
-        '按 skill 规则把修改意见转给对应阶段的 agent 修正，不要自己动手改产物。',
+        `用户打回了${reqId ? `需求 ${reqId}` : '当前需求'}的「${stage}」阶段。`,
+        '用户要改的是：',
+        `「${opinion || userText}」`,
+        '按 skill 规则把这条意见转给对应阶段的 agent 修正，不要自己动手改产物。',
       ].join('\n')
+    }
 
     case INTENT.CONTINUE:
       return [

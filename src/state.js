@@ -156,6 +156,10 @@ export class GroupStateMachine {
       finishedStages: saved?.finishedStages ?? null, // null=首次，历史阶段不播报
       // 最近一次在这群里提需求的人（面板列表要显示「发起人」）
       initiator: saved?.initiator ?? null,
+      // 打回后等用户补充修改意见
+      pendingReject: saved?.pendingReject ?? null,
+      // /release 等二次确认
+      pendingRelease: saved?.pendingRelease ?? null,
     }
   }
 

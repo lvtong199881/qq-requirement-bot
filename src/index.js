@@ -10,12 +10,19 @@ import { loadConfig, resolveModelEnv } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
-import { sanitize, RateLimiter, sleep, runningText } from './format.js'
+import { sanitize, RateLimiter, sleep, runningText, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
 import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage, stageTable } from './artifacts.js'
+import {
+  parseCommand,
+  helpText,
+  releaseConfirmText,
+  deniedText,
+  COMMANDS,
+} from './commands.js'
 import {
   classifyMessage,
   isAmbiguous,
@@ -583,7 +590,7 @@ bot.on('message', async (frame) => {
 
   // 回复时引用用户这条消息，比 @ 自己更像真人
   const replyTo = frame.message_id
-  const text = stripAt(frame.message)
+  let text = stripAt(frame.message)
 
   // 记录发起人（面板列表要显示「谁提的需求」）
   const sender = frame.sender ?? {}
@@ -600,6 +607,126 @@ bot.on('message', async (frame) => {
     store.save(groupId, { ...st, initiator })
   }
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
+
+  // ── /指令（白名单）────────────────────────────────────────────
+  const cmd = parseCommand(text)
+  if (cmd) {
+    const isAdmin = config.adminUsers.includes(initiator.userId)
+
+    if (cmd.unknown || !cmd.def) {
+      await sendPlain(groupId, `没有 /${cmd.name} 这条指令。发 /help 看可用的。`, { replyTo })
+      return
+    }
+
+    if (cmd.def.scope === 'admin' && !isAdmin) {
+      await sendPlain(groupId, deniedText(cmd.name, config.adminUsers), { replyTo })
+      return
+    }
+
+    if (cmd.name === 'help') {
+      const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+      const running = stages.find((x) => x.status.includes('进行中'))
+      const statusLine = running
+        ? `当前状态：${running.name}阶段中，已进行 ${formatDuration(Date.now() - (st.stageStartedAt || Date.now()))}。`
+        : st.waitingLabel
+          ? `当前状态：${st.waitingLabel}`
+          : '当前状态：没有进行中的任务。'
+      await sendPlain(groupId, helpText({ isAdmin, statusLine }), { replyTo })
+      return
+    }
+
+    if (cmd.name === 'stop') {
+      const killed = machine.interrupt(groupId)
+      await sendPlain(groupId, killed ? '已停止当前任务。' : '当前没有在跑的任务。', { replyTo })
+      return
+    }
+
+    if (cmd.name === 'resume') {
+      // 走到下面的 CONTINUE 流程，只是把用户原文换成人话
+      text = '继续'
+    }
+
+    if (cmd.name === 'release') {
+      // 二次确认：先记下意图，等用户回「确认」
+      if (st.pendingRelease) {
+        await sendPlain(groupId, '已经在等你确认了，回「确认」执行，回别的取消。', { replyTo })
+        return
+      }
+      const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+      const running = stages.find((x) => x.status.includes('进行中'))
+      st.pendingRelease = { at: Date.now(), by: initiator.userId }
+      store.save(groupId, { ...st, pendingRelease: st.pendingRelease })
+      await sendPlain(groupId, releaseConfirmText({ reqId: st.reqId, stage: running?.name }), { replyTo })
+      return
+    }
+  }
+
+  // ── /release 的二次确认回复 ──────────────────────────────────
+  if (st.pendingRelease) {
+    const yes = /^(确认|是|yes|y|ok|好)$/i.test(text.trim())
+    st.pendingRelease = null
+    store.save(groupId, { ...st, pendingRelease: null })
+    if (!yes) {
+      await sendPlain(groupId, '已取消释放。', { replyTo })
+      return
+    }
+    const killed = machine.interrupt(groupId)
+    await sleep(600) // 给子进程一点时间收尾，避免 session 写锁残留
+    store.clear(groupId)
+    runtime.endTurn(groupId)
+    log(`[${groupId}] 已释放会话与进程（被打断的回合：${killed ? '有' : '无'}）`)
+    await sendPlain(
+      groupId,
+      `已释放${killed ? '（当前回合已打断）' : ''}。进度都在编排记录里，重新发需求或「继续」就能接上。`,
+      { replyTo },
+    )
+    return
+  }
+
+  // ── 打回后等用户补充修改意见 ──────────────────────────────────
+  if (st.pendingReject) {
+    const t = text.trim()
+    const cancel = /^(取消|算了|不打了|不改了)$/.test(t)
+    const target = st.pendingReject
+    st.pendingReject = null
+    store.save(groupId, { ...st, pendingReject: null })
+    if (cancel) {
+      await sendPlain(groupId, '已取消打回，阶段保持原样。', { replyTo })
+      return
+    }
+    // 把这条当成修改意见，走 REJECT 流程
+    const rejected = {
+      intent: INTENT.REJECT,
+      detail: t,
+    }
+    await sendAck(groupId, st, replyTo, INTENT.REJECT)
+    const anchorText = st.reqId
+      ? anchorBlock({
+          reqId: st.reqId,
+          projectDir: st.projectDir,
+          stage: target.stage,
+          envHints: config.envHints,
+        })
+      : ''
+    const promptBody = routedPrompt({
+      intent: INTENT.REJECT,
+      userText: t,
+      bind: {
+        reqId: st.reqId,
+        stage: target.stage,
+        waitingLabel: st.waitingLabel,
+        rejectReason: t,
+      },
+    })
+    handleTurn(groupId, t, {
+      isContinuation: !!st.sessionId && st.status !== STATES.IDLE,
+      replyTo,
+      anchor: anchorText,
+      promptBody,
+      intent: rejected.intent,
+    }).catch((e) => log(`回合启动失败：${e.message}`))
+    return
+  }
 
   // ── 意图路由：bridge 决定每条消息是什么，agent 不猜 ──
   const { intent, detail: intentDetail } = classifyMessage(text)
@@ -673,6 +800,25 @@ bot.on('message', async (frame) => {
     return
   }
 
+  // 打回但没给修改意见：先追问，别让 agent 拿着一个「打回」二字去瞎改
+  if (intent === INTENT.REJECT && !intentDetail) {
+    const { stages, reqId: tableReqId } = stageTable(st.projectDir, st.reqId ?? undefined)
+    const running = stages.find((x) => x.status.includes('进行中'))
+    const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
+    const targetStage = running?.name ?? lastDone?.name ?? null
+    st.reqId = st.reqId || tableReqId || null
+    st.pendingReject = { stage: targetStage, at: Date.now() }
+    store.save(groupId, { ...st, reqId: st.reqId, pendingReject: st.pendingReject })
+    await sendPlain(
+      groupId,
+      targetStage
+        ? `收到，要打回「${targetStage}」阶段。具体要改什么？直接说，我转给对应的人。\n（回「取消」可以撤销打回）`
+        : '收到打回。具体要改什么？直接说就行。',
+      { replyTo },
+    )
+    return
+  }
+
   // ── 绑定检查：批准/打回/继续 必须已有绑定需求 ──
   if (
     (intent === INTENT.APPROVE || intent === INTENT.REJECT || intent === INTENT.CONTINUE) &&
@@ -716,6 +862,7 @@ bot.on('message', async (frame) => {
       reqId: effectiveReqId,
       stage: anchorStage,
       waitingLabel: st.waitingLabel,
+      rejectReason: intentDetail,
     },
   })
 

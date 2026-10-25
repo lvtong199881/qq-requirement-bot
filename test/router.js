@@ -39,6 +39,10 @@ console.log('\n== 意图分类 ==')
   }
   const nr = classifyMessage('新需求 首页加弹窗')
   check('新需求带描述时 detail 提取', nr.detail === '首页加弹窗')
+
+  check('光说打回时 detail 为空', classifyMessage('打回').detail === '')
+  check('打回带意见时提取意见', classifyMessage('打回 主按钮改成蓝色').detail === '主按钮改成蓝色')
+  check('打回带逗号也提取', classifyMessage('打回，文案太长了').detail === '文案太长了')
 }
 
 console.log('\n== 含糊判定 ==')
@@ -72,6 +76,15 @@ console.log('\n== 路由骨架 ==')
   const rj = routedPrompt({ intent: INTENT.REJECT, userText: '文案不行重写', bind })
   check('打回骨架带用户原话', rj.includes('文案不行重写'))
   check('打回骨架不自己改产物', rj.includes('不要自己动手改'))
+
+  // 打回时把「修改意见」独立带进去，agent 才知道要改什么
+  const rj2 = routedPrompt({
+    intent: INTENT.REJECT,
+    userText: '打回',
+    bind: { ...bind, rejectReason: '主按钮改成蓝色' },
+  })
+  check('打回骨架带上修改意见', rj2.includes('主按钮改成蓝色'), rj2)
+  check('打回骨架说明用户要改什么', rj2.includes('用户要改的是'))
 
   const ct = routedPrompt({ intent: INTENT.CONTINUE, userText: '继续', bind })
   check('继续骨架指向编排记录', ct.includes('编排记录'))

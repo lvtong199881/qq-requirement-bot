@@ -174,6 +174,12 @@ export function loadConfig(configPath) {
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
+    // 管理员 QQ 号：标 admin 的指令只有这些人能用
+    adminUsers: Array.isArray(raw.adminUsers)
+      ? raw.adminUsers.map((x) => String(x))
+      : raw.adminUsers
+        ? [String(raw.adminUsers)]
+        : [],
     // 面板展示用的模型名：配置优先，否则从 profile 的 agent-default-model 推断
     modelLabel: raw.modelLabel ?? readModelLabel(raw.profile),
     // 管理面板 / 本地 HTTP API

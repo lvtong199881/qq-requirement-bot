@@ -1,0 +1,97 @@
+/**
+ * 群内指令：让用户在极端情况下能直接操作整个需求，不用靠自然语言猜。
+ *
+ * 白名单机制：每条指令声明 scope。标 admin 的只有 adminUsers 里的人能执行，
+ * 后续加危险操作（清库、改配置）直接标 admin 即可，不用改分发逻辑。
+ */
+
+/** 指令表。desc 用于 /help，scope 决定谁能用 */
+export const COMMANDS = {
+  help: {
+    desc: '查看所有可用指令',
+    scope: 'user',
+  },
+  resume: {
+    desc: '继续推进当前需求',
+    scope: 'user',
+  },
+  stop: {
+    desc: '停止当前正在跑的任务',
+    scope: 'user',
+  },
+  release: {
+    desc: '释放当前会话与进程（会丢失本回合上下文）',
+    scope: 'admin',
+    confirm: true,
+  },
+}
+
+/**
+ * 解析指令。不是指令返回 null。
+ * @param {string} text 已去掉 @ 的正文
+ * @returns {null | {name: string, arg: string, unknown?: boolean, def?: object}}
+ */
+export function parseCommand(text) {
+  const t = (text ?? '').trim()
+  if (!t.startsWith('/')) return null
+  const body = t.slice(1).trim()
+  if (!body) return { name: '', arg: '', def: null, unknown: true }
+
+  const [rawName, ...rest] = body.split(/\s+/)
+  const name = rawName.toLowerCase()
+  const def = COMMANDS[name]
+  return {
+    name,
+    arg: rest.join(' ').trim(),
+    def: def ?? null,
+    unknown: !def,
+  }
+}
+
+/**
+ * 生成 /help 的回复正文。标出哪些指令需要管理员。
+ * @param {{isAdmin: boolean, state?: object, stages?: Array}} o
+ */
+export function helpText({ isAdmin, statusLine }) {
+  const lines = ['可用指令：', '']
+  for (const [name, def] of Object.entries(COMMANDS)) {
+    const lock = def.scope === 'admin' ? '（管理员）' : ''
+    lines.push(`/${name}${lock}  ${def.desc}`)
+  }
+  lines.push('')
+  lines.push('也可以直接说人话：「继续」「停」「打回 主按钮要蓝色的」「新需求 …」')
+  if (statusLine) {
+    lines.push('')
+    lines.push(statusLine)
+  }
+  if (!isAdmin) {
+    lines.push('')
+    lines.push('标「管理员」的指令需要 adminUsers 名单里的 QQ 号才能用。')
+  }
+  return lines.join('\n')
+}
+
+/** /release 的二次确认文案 */
+export function releaseConfirmText({ reqId, stage }) {
+  return [
+    `确认要释放${reqId ? `「${reqId}」` : ''}的会话与进程吗？`,
+    '',
+    '会做三件事：',
+    '· 打断当前正在跑的回合（如果有）',
+    '· 清空这个群的会话上下文',
+    stage ? `· 当前阶段「${stage}」的进度只保留在编排记录里` : '· 进度只保留在编排记录里',
+    '',
+    '之后需要重新发需求或「继续」才能接上。',
+    '回复「确认」执行，回别的就取消。',
+  ].join('\n')
+}
+
+/** 指令权限不足时的提示 */
+export function deniedText(name, adminUsers) {
+  return [
+    `/${name} 需要管理员权限。`,
+    adminUsers?.length
+      ? `可用的人：${adminUsers.join('、')}`
+      : '还没配置 adminUsers，在 bot.config.json 里加上你的 QQ 号。',
+  ].join('\n')
+}
