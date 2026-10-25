@@ -105,6 +105,17 @@ await client.sendGroupMsg('123456', '你好，这是测试消息')
 const sent = mock.sentTexts()
 check('send_group_msg 被调用', sent.includes('你好，这是测试消息'))
 
+// 引用回复：数组消息带 reply 段
+await client.sendGroupMsg('123456', [
+  { type: 'reply', data: { id: '999' } },
+  { type: 'text', data: { text: '这是引用回复' } },
+])
+const raw = mock.sentRaw()
+const replyMsg = raw.find((m) => Array.isArray(m) && m[0]?.type === 'reply')
+check('能发出引用回复', !!replyMsg, '未找到 reply 段')
+check('引用 id 正确', replyMsg?.[0]?.data?.id === '999')
+check('引用回复的文本被正确抽取', mock.sentTexts().includes('这是引用回复'))
+
 // 收消息事件
 const received = []
 client.on('message', (f) => received.push(f))

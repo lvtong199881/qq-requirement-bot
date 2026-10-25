@@ -162,12 +162,26 @@ export function startMockOneBot({ port = 0, selfId = 10000, token = '', groupId 
         port: addr.port,
         url: `ws://127.0.0.1:${addr.port}`,
         calls,
-        /** 记录到目前收到的所有 send_group_msg 文本 */
+        /** 记录到目前收到的所有 send_group_msg 文本（数组消息会抽出文本段） */
         sentTexts: () =>
           calls
             .filter((c) => c.action === 'send_group_msg')
-            .map((c) => c.params?.message)
-            .filter((m) => typeof m === 'string'),
+            .map((c) => {
+              const m = c.params?.message
+              if (typeof m === 'string') return m
+              // 引用回复是 [reply, text] 数组，取文本段拼起来
+              if (Array.isArray(m)) {
+                return m
+                  .filter((seg) => seg?.type === 'text')
+                  .map((seg) => seg.data?.text ?? '')
+                  .join('')
+              }
+              return undefined
+            })
+            .filter((m) => typeof m === 'string' && m.length > 0),
+        /** 原始发送参数，用于断言引用段 */
+        sentRaw: () =>
+          calls.filter((c) => c.action === 'send_group_msg').map((c) => c.params?.message),
         uploadedFiles: () =>
           calls.filter((c) => c.action === 'upload_group_file').map((c) => c.params),
         /** 模拟群里有人 @ 了 bot */

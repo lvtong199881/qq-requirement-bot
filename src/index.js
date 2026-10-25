@@ -11,7 +11,7 @@ import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, splitChunks, RateLimiter, sleep } from './format.js'
-import { snapshot, diffSnapshot, uploadName } from './artifacts.js'
+import { snapshot, diffSnapshot, uploadName, touchedReqIds } from './artifacts.js'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync } from 'node:fs'
 
@@ -53,34 +53,53 @@ const knownGroups = new Map()
 
 // ────────────────────────────── 发消息 ──────────────────────────────
 
-async function sendChunked(groupId, text, { prefix = '' } = {}) {
-  const chunks = splitChunks(sanitize(text), config.limits.chunkChars, config.limits.maxChunksPerTurn)
-  for (let i = 0; i < chunks.length; i++) {
-    const head = i === 0 && prefix ? `${prefix}\n` : ''
-    const wait = limiter.delayFor()
-    if (wait > 0) await sleep(wait)
-    try {
-      await bot.sendGroupMsg(groupId, `${head}${chunks[i]}`)
-    } catch (err) {
-      log(`发送失败（${groupId}）：${err.message}`)
-    }
-  }
-  return chunks.length
+/**
+ * 构造一条「引用回复」消息段。
+ * @param {number|string} messageId 被引用的消息 id
+ * @returns {object|null}
+ */
+function replySegment(messageId) {
+  if (!messageId) return null
+  return { type: 'reply', data: { id: String(messageId) } }
 }
 
-async function sendPlain(groupId, text) {
+/**
+ * 发消息。replyTo 有值时以「引用回复」形式发出，跟真人回消息一样。
+ * @param {string} groupId
+ * @param {string} text 纯文本
+ * @param {{replyTo?: number|string}} [opts]
+ */
+async function sendText(groupId, text, { replyTo } = {}) {
   const wait = limiter.delayFor()
   if (wait > 0) await sleep(wait)
+
+  const seg = replySegment(replyTo)
+  const message = seg ? [seg, { type: 'text', data: { text } }] : text
+
   try {
-    await bot.sendGroupMsg(groupId, text)
+    await bot.sendGroupMsg(groupId, message)
   } catch (err) {
     log(`发送失败（${groupId}）：${err.message}`)
   }
 }
 
+async function sendChunked(groupId, text, { replyTo, prefix = '' } = {}) {
+  const chunks = splitChunks(sanitize(text), config.limits.chunkChars, config.limits.maxChunksPerTurn)
+  for (let i = 0; i < chunks.length; i++) {
+    const body = i === 0 && prefix ? `${prefix}\n${chunks[i]}` : chunks[i]
+    // 只有第一条引用原消息，后续分条普通发送，避免刷屏式重复引用
+    await sendText(groupId, body, { replyTo: i === 0 ? replyTo : undefined })
+  }
+  return chunks.length
+}
+
+async function sendPlain(groupId, text, { replyTo } = {}) {
+  await sendText(groupId, text, { replyTo })
+}
+
 // ────────────────────────────── 一回合 ──────────────────────────────
 
-async function handleTurn(groupId, userText, { isContinuation }) {
+async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
   const st = machine.peek(groupId)
   if (!st) return
 
@@ -88,7 +107,7 @@ async function handleTurn(groupId, userText, { isContinuation }) {
   const release = machine.acquire(groupId, aborter)
   if (!release) {
     machine.enqueue(groupId, userText)
-    await sendPlain(groupId, '上一个回合还在跑，你的话我记下了，等它结束后接着处理。')
+    await sendPlain(groupId, '上一个回合还在跑，你的话我记下了，等它结束后接着处理。', { replyTo })
     return
   }
 
@@ -146,13 +165,14 @@ async function handleTurn(groupId, userText, { isContinuation }) {
         if (ev.type === 'text' && typeof ev.text === 'string') {
           lastActivityAt = Date.now()
           pendingText += ev.text
-          // 攒够一段就推，避免群里长时间没动静
-          if (pendingText.length >= config.limits.chunkChars) {
+          // 流式片段只在「明显够长」时才中途透露，
+          // 而且不带 @ 前缀、不引用——中途发言应该像人随口补一句。
+          if (pendingText.length >= config.limits.chunkChars * 2) {
             const piece = pendingText
             pendingText = ''
             if (sanitize(piece) !== lastSent) {
               lastSent = sanitize(piece)
-              sendChunked(groupId, piece, { prefix: `@${config.bot.name}` }).catch(() => {})
+              sendChunked(groupId, piece, { replyTo }).catch(() => {})
             }
           }
         }
@@ -162,9 +182,9 @@ async function handleTurn(groupId, userText, { isContinuation }) {
     const gate = parseGate(result.finalText || pendingText)
     turnLabel = gate.label
 
-    // 最终输出
+    // 最终输出：引用用户那条消息，不再 @ 自己
     if (gate.cleaned) {
-      await sendChunked(groupId, gate.cleaned, { prefix: isContinuation ? '' : '收到，开始处理。' })
+      await sendChunked(groupId, gate.cleaned, { replyTo })
     }
 
     // 异常收尾
@@ -181,7 +201,15 @@ async function handleTurn(groupId, userText, { isContinuation }) {
 
     // 产物回传
     if (config.upload.enabled) {
-      const changed = diffSnapshot(before, snapshot(st.projectDir), config.upload)
+      const after = snapshot(st.projectDir)
+      const all = diffSnapshot(before, after, config.upload)
+      // 只回传本次回合动过的需求目录：一条需求跑完不该把别的需求的旧文档也翻出来
+      const reqIds = touchedReqIds(before, after)
+      const changed =
+        reqIds.length > 0
+          ? all.filter((f) => reqIds.some((id) => f.path.includes(`/docs/requirements/${id}/`)))
+          : all
+      const failed = []
       for (const f of changed) {
         if (!existsSync(f.path)) continue
         try {
@@ -189,8 +217,16 @@ async function handleTurn(groupId, userText, { isContinuation }) {
           await sleep(300)
         } catch (err) {
           log(`上传失败 ${f.path}: ${err.message}`)
-          await sendPlain(groupId, `产物已生成但上传失败，路径：${f.path}`)
+          failed.push(f.path)
         }
+      }
+      // 失败汇总成一条，不要每个文件刷一行
+      if (failed.length) {
+        await sendPlain(
+          groupId,
+          `${failed.length} 个产物上传失败，文件已在项目里：\n` +
+            failed.map((f) => '· ' + f.replace(st.projectDir + '/', '')).join('\n'),
+        )
       }
       if (changed.length) detail(`回传 ${changed.length} 个产物`)
     }
@@ -208,7 +244,8 @@ async function handleTurn(groupId, userText, { isContinuation }) {
     })
 
     if (gate.state === 'waiting') {
-      await sendPlain(groupId, `等你回复：${gate.label || '请确认'}`)
+      // label 是 agent 自己写的一句「在等什么」，只在它没写时才追问
+      if (!gate.label) await sendPlain(groupId, '需要你拍板，看到上面的问题后回复就行。', { replyTo })
     } else if (gate.state === 'done') {
       await sendPlain(groupId, '这个需求跑完了。要做新需求，直接 @我 说就行。')
     } else if (!gate.cleaned) {
@@ -352,12 +389,14 @@ bot.on('message', async (frame) => {
 
   await ensureGroupInfo(groupId)
 
+  // 回复时引用用户这条消息，比 @ 自己更像真人
+  const replyTo = frame.message_id
   const text = stripAt(frame.message)
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
 
   if (STOP_WORDS.has(text)) {
     const killed = machine.interrupt(groupId)
-    await sendPlain(groupId, killed ? '已打断当前回合。' : '当前没有在跑的回合。')
+    await sendPlain(groupId, killed ? '已打断当前回合。' : '当前没有在跑的回合。', { replyTo })
     return
   }
 
@@ -404,18 +443,18 @@ bot.on('message', async (frame) => {
   // 重开：清掉旧会话上下文
   if (text === '新需求' || text === '重开') {
     store.clear(groupId)
-    await sendPlain(groupId, '已清空上下文，下一条消息开始新需求。')
+    await sendPlain(groupId, '已清空上下文，下一条消息开始新需求。', { replyTo })
     return
   }
 
   const isContinuation = !!st.sessionId && st.status !== STATES.IDLE
   if (isDryRun) {
     log(`[dry-run] 将执行的 prompt：\n${text}`)
-    await sendPlain(groupId, `[dry-run] 收到，不实际执行。sessionId=${st.sessionId || '无'}`)
+    await sendPlain(groupId, `[dry-run] 收到，不实际执行。sessionId=${st.sessionId || '无'}`, { replyTo })
     return
   }
 
-  handleTurn(groupId, text, { isContinuation }).catch((e) => log(`回合启动失败：${e.message}`))
+  handleTurn(groupId, text, { isContinuation, replyTo }).catch((e) => log(`回合启动失败：${e.message}`))
 })
 
 // ────────────────────────────── 启动 ──────────────────────────────

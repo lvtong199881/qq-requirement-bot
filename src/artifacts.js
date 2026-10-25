@@ -9,9 +9,13 @@ import { join, extname, basename, relative } from 'node:path'
 
 const DOC_ROOT = 'docs/requirements'
 
-/** 递归扫需求目录，返回 path → {mtimeMs, size} */
-export function snapshot(projectDir) {
-  const root = join(projectDir, DOC_ROOT)
+/**
+ * 递归扫需求目录，返回 path → {mtimeMs, size}
+ * @param {string} projectDir 项目根
+ * @param {string} [onlyReqId] 只扫这一个需求目录（避免把别的需求的历史文件也回传）
+ */
+export function snapshot(projectDir, onlyReqId) {
+  const root = onlyReqId ? join(projectDir, DOC_ROOT, onlyReqId) : join(projectDir, DOC_ROOT)
   const out = new Map()
   if (!existsSync(root)) return out
 
@@ -66,6 +70,28 @@ export function diffSnapshot(before, after, opts) {
   })
 
   return changed.slice(0, opts.maxFiles)
+}
+
+/**
+ * 从路径里认出本次回合动过的需求标识。
+ * 依据：docs/requirements/<需求标识>/... 里发生改动的文件集。
+ * @param {Map} before 回合前快照
+ * @param {Map} after 回合后快照
+ * @returns {string[]} 涉及的需求标识列表
+ */
+export function touchedReqIds(before, after) {
+  const ids = new Set()
+  const prefix = DOC_ROOT + '/'
+  for (const [path, meta] of after) {
+    const prev = before.get(path)
+    if (prev && prev.mtimeMs === meta.mtimeMs && prev.size === meta.size) continue
+    const idx = path.indexOf(prefix)
+    if (idx < 0) continue
+    const rest = path.slice(idx + prefix.length)
+    const id = rest.split('/')[0]
+    if (id && !id.startsWith('.')) ids.add(id)
+  }
+  return [...ids]
 }
 
 /** 生成群文件里显示的名字，带需求标识前缀避免重名 */
