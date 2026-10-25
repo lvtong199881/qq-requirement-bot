@@ -255,8 +255,14 @@ bot.on('connected', async () => {
       for (const g of list) {
         knownGroups.set(String(g.group_id), { name: g.group_name, memberCount: g.member_count })
       }
-      log(`bot 已在 ${list.length} 个群里，直接 @${config.bot.name} 即可使用：`)
-      for (const g of list) log(`  · ${g.group_name}（${g.group_id}）`)
+      const excluded = config.excludeGroups ?? []
+      const usable = list.filter((g) => !excluded.includes(String(g.group_id)))
+      log(`bot 已在 ${list.length} 个群里，服务其中 ${usable.length} 个：`)
+      for (const g of list) {
+        const skip = excluded.includes(String(g.group_id))
+        log(`  ${skip ? '· [已排除]' : '·'} ${g.group_name}（${g.group_id}）`)
+      }
+      if (excluded.length) log(`排除名单：${excluded.join(', ')}（写在 bot.config.json 的 excludeGroups）`)
     } else {
       log('bot 还不在任何群里，把它拉进群后 @ 它就行。')
     }

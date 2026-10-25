@@ -62,7 +62,8 @@ export class GroupStateMachine {
 
   /**
    * 解析一个群该不该处理、用哪个项目。
-   * 群号不用手填：auto 模式下任何群都接受，路径用顶层 projectDir。
+   * 群号不用手填：auto 模式下任何群都接受，路径用顶层 projectDir；
+   * 想排除个别群用 excludeGroups，不必退回 allowlist。
    * @returns {{ok: boolean, reason?: string, groupId: string, projectDir?: string, approval?: string}}
    */
   resolveGroup(groupId) {
@@ -70,6 +71,11 @@ export class GroupStateMachine {
 
     if (policy === 'deny') {
       return { ok: false, reason: 'groupPolicy.mode=deny，已拒绝所有群', groupId }
+    }
+
+    // 排除名单优先于任何策略：个人闲聊群不该被 bot 掺和
+    if (this.config.excludeGroups?.includes(groupId)) {
+      return { ok: false, reason: '在 excludeGroups 排除名单里', groupId }
     }
 
     const listed = this.config.groups.find((x) => x.groupId === groupId)

@@ -128,6 +128,9 @@ export function loadConfig(configPath) {
       approval: g.approval === 'auto' ? 'auto' : 'manual',
     })),
     groupPolicy: normalizeGroupPolicy(raw.groupPolicy),
+    // 排除名单：auto 模式下也不服务的群（个人闲聊群之类）。
+    // 这是 auto 模式的补丁，填了就不用为了排除几个群而改用 allowlist。
+    excludeGroups: (raw.excludeGroups ?? []).map((x) => String(x)),
     // 顶层 approval 是 auto 模式下所有群的默认批准方式
     approval: raw.approval === 'auto' ? 'auto' : 'manual',
     limits: {
