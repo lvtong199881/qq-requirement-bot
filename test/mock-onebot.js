@@ -69,7 +69,7 @@ function decodeFrames(buf, onText) {
   return { consumed: offset, closed: false }
 }
 
-export function startMockOneBot({ port = 0, selfId = 10000, token = '' } = {}) {
+export function startMockOneBot({ port = 0, selfId = 10000, token = '', groupId = 123456 } = {}) {
   const calls = []
   const sockets = new Set()
 
@@ -124,7 +124,23 @@ export function startMockOneBot({ port = 0, selfId = 10000, token = '' } = {}) {
         }
         calls.push(frame)
         // 回一个成功响应
-        const resp = { status: 'ok', retcode: 0, data: { message_id: calls.length }, echo: frame.echo }
+        // 回一个成功响应；get_group_list / get_group_info 返回真实结构
+        let data
+        if (frame.action === 'get_group_list') {
+          data = [
+            { group_id: Number(groupId), group_name: '测试需求群', member_count: 3, max_member_count: 200 },
+          ]
+        } else if (frame.action === 'get_group_info') {
+          data = {
+            group_id: Number(frame.params?.group_id ?? api.groupId),
+            group_name: '测试需求群',
+            member_count: 3,
+            max_member_count: 200,
+          }
+        } else {
+          data = { message_id: calls.length }
+        }
+        const resp = { status: 'ok', retcode: 0, data, echo: frame.echo }
         try {
           socket.write(encodeFrame(JSON.stringify(resp)))
         } catch {

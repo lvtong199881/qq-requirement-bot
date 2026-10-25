@@ -31,7 +31,16 @@ try {
   ok(`skill 目录（动态解析）：${config.skillDir}`)
   ok(`profile：${config.profile}｜bot 昵称：${config.bot.name}`)
   if (!config.bot.qq) warn('bot.qq 未填（不影响接收消息，但填了能识别自发消息）')
-  ok(`群白名单：${config.groups.length} 个`)
+
+  const mode = config.groupPolicy.mode
+  if (mode === 'auto') {
+    ok(`群策略：auto —— 拉进哪个群就服务哪个群，不用填群号`)
+  } else if (mode === 'allowlist') {
+    ok(`群策略：allowlist —— 只服务 ${config.groups.length} 个群`)
+    if (!config.groups.length) fail('allowlist 模式但 groups 为空')
+  } else {
+    fail('群策略：deny —— 不会服务任何群')
+  }
   for (const g of config.groups) {
     if (!existsSync(g.projectDir)) fail(`群 ${g.groupId} 的项目目录不存在：${g.projectDir}`)
   }

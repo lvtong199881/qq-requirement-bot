@@ -50,7 +50,7 @@ cp -R profiles/qqbot ~/.dsh/profiles/qqbot
 
 # 2. 配置
 cp bot.config.example.json bot.config.json
-$EDITOR bot.config.json        # 填群号、项目目录
+$EDITOR bot.config.json        # 只需要改 projectDir；群号不用填
 
 # 3. 自检
 node src/doctor.js             # 配置 / 密钥 / skill / dsh / OneBot 连通性
@@ -61,6 +61,8 @@ node src/index.js
 ```
 
 ## 配置说明
+
+**群号不用填。** bot 连上 NapCat 后会自己调 `get_group_list` 报出它所在的群，你把它拉进哪个群，它就在哪个群工作。
 
 ```jsonc
 {
@@ -73,13 +75,8 @@ node src/index.js
 
   "onebot": { "ws": "ws://127.0.0.1:3001", "token": "" },
 
-  "groups": [
-    {
-      "groupId": "群号",
-      "projectDir": "可选，覆盖顶层 projectDir",
-      "approval": "manual"                        // manual = 每阶段等确认；auto = 自动推进
-    }
-  ],
+  "groupPolicy": { "mode": "auto" },               // auto = 拉进哪个群就服务哪个群
+  "approval": "manual",                            // manual = 每阶段等确认；auto = 自动推进
 
   "limits": {
     "maxMessagesPerMinute": 10,                    // 发送限流，防风控
@@ -89,6 +86,26 @@ node src/index.js
 
   "upload": { "enabled": true, "maxFiles": 8, "maxFileMB": 20 },
   "turnTimeoutMs": 2700000                        // 单回合超时（默认 45 分钟）
+}
+```
+
+### 群策略
+
+| mode | 行为 | 用在哪 |
+| --- | --- | --- |
+| `auto`（默认） | 任何拉进 bot 的群都服务，项目目录用顶层 `projectDir` | 日常用，最省事 |
+| `allowlist` | 只服务 `groups` 里列出的群，可给每个群配不同项目目录 | 一个 bot 服务多个项目时 |
+| `deny` | 全部拒绝 | 临时关闭 |
+
+`auto` 模式下完全不需要写 `groups`。只有想「同一个人 bot 服务多个项目、不同群落不同目录」时才用 `allowlist`：
+
+```jsonc
+{
+  "groupPolicy": { "mode": "allowlist" },
+  "groups": [
+    { "groupId": "111111", "projectDir": "~/Documents/ChatGPT/Instanto", "approval": "manual" },
+    { "groupId": "222222", "projectDir": "~/Documents/ChatGPT/KuaiSao", "approval": "auto" }
+  ]
 }
 ```
 

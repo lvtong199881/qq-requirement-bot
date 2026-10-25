@@ -46,7 +46,10 @@ const detail = (...a) => config.verbose && console.log('  ', ...a)
 
 log(`配置就绪：skill=${config.skillDir}`)
 log(`项目目录：${config.projectDir}`)
-log(`群白名单：${config.groups.map((g) => g.groupId).join(', ') || '（空）'}`)
+log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
+
+/** 运行期发现的群：群号 → {name, memberCount}，用于日志和「本群」查询 */
+const knownGroups = new Map()
 
 // ────────────────────────────── 发消息 ──────────────────────────────
 
@@ -181,6 +184,7 @@ async function handleTurn(groupId, userText, { isContinuation }) {
       status: nextStatus,
       waitingLabel: gate.state === 'waiting' ? gate.label : '',
       turn: st.turn + 1,
+      projectDir: st.projectDir, // 群首次出现时把项目目录一起固化
     })
 
     if (gate.state === 'waiting') {
@@ -240,23 +244,66 @@ function stripAt(message) {
 }
 
 const STOP_WORDS = new Set(['停', '停止', '中断', '停一下', '取消'])
+const HELP_WORDS = new Set(['帮助', 'help', '?', '？', '怎么用'])
 
-bot.on('connected', () => {
+bot.on('connected', async () => {
   log(`已连接 OneBot：${config.onebot.ws}（bot=${config.bot.name}）`)
+  // 连上就拉一次群列表：群号由 bot 自己报，配置里不用填
+  try {
+    const list = await bot.call('get_group_list', {}, 8000)
+    if (Array.isArray(list) && list.length) {
+      for (const g of list) {
+        knownGroups.set(String(g.group_id), { name: g.group_name, memberCount: g.member_count })
+      }
+      log(`bot 已在 ${list.length} 个群里，直接 @${config.bot.name} 即可使用：`)
+      for (const g of list) log(`  · ${g.group_name}（${g.group_id}）`)
+    } else {
+      log('bot 还不在任何群里，把它拉进群后 @ 它就行。')
+    }
+  } catch (err) {
+    log(`拉取群列表失败（不影响使用，收到消息时会自动识别）：${err.message}`)
+  }
 })
 
 bot.on('disconnected', () => {
   log('OneBot 断开，自动重连中…')
 })
 
+/** 群里第一次见到这个名字时补登记，让日志和「本群」能显示群名 */
+async function ensureGroupInfo(groupId) {
+  if (knownGroups.has(groupId)) return knownGroups.get(groupId)
+  try {
+    const info = await bot.call('get_group_info', { group_id: Number(groupId), no_cache: false }, 5000)
+    if (info?.group_id) {
+      const v = { name: info.group_name, memberCount: info.member_count }
+      knownGroups.set(groupId, v)
+      log(`发现新群：${info.group_name}（${groupId}）`)
+      return v
+    }
+  } catch {
+    /* 拿不到就用作匿名群，不影响功能 */
+  }
+  knownGroups.set(groupId, { name: `群${groupId}`, memberCount: 0 })
+  return knownGroups.get(groupId)
+}
+
 bot.on('message', async (frame) => {
   if (frame.message_type !== 'group') return
   const groupId = String(frame.group_id)
+
+  // 群策略判定：auto 模式下这里永远放行，不需要预先填群号
+  const resolved = machine.resolveGroup(groupId)
+  if (!resolved.ok) {
+    detail(`忽略群 ${groupId}：${resolved.reason}`)
+    return
+  }
   const st = machine.peek(groupId)
-  if (!st) return // 不在白名单的群，直接忽略
+  if (!st) return
 
   // 只响应 @ 本 bot
   if (!isAtMe(frame.message, frame.self_id ?? bot.selfId)) return
+
+  await ensureGroupInfo(groupId)
 
   const text = stripAt(frame.message)
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
@@ -267,8 +314,43 @@ bot.on('message', async (frame) => {
     return
   }
 
+  if (HELP_WORDS.has(text)) {
+    await sendPlain(
+      groupId,
+      [
+        `我是${config.bot.name}，在这个群里帮你跑完整需求流程。`,
+        '',
+        '直接 @我 说需求，比如：',
+        '  首页加个欢迎弹窗，手动批准',
+        '',
+        '其他指令：',
+        '  @我 通过 / 提修改意见  → 放行或打回当前阶段',
+        '  @我 继续              → 上一轮没收敛时接着跑',
+        '  @我 停                → 打断当前回合',
+        '  @我 新需求 / 重开      → 清空上下文重新开始',
+        '  @我 本群              → 看当前群号和项目目录',
+      ].join('\n'),
+    )
+    return
+  }
+
+  if (text === '本群' || text === '群信息') {
+    const info = knownGroups.get(groupId)
+    await sendPlain(
+      groupId,
+      [
+        `群号：${groupId}`,
+        `群名：${info?.name ?? '未知'}`,
+        `项目目录：${st.projectDir}`,
+        `批准模式：${st.approval === 'manual' ? '手动批准' : '自动推进'}`,
+        `会话：${st.sessionId ? '进行中（' + st.status + '）' : '还没有'}`,
+      ].join('\n'),
+    )
+    return
+  }
+
   if (!text) {
-    await sendPlain(groupId, `我在。直接说要做什么就行，比如「Instanto 首页加个欢迎弹窗，手动批准」。`)
+    await sendPlain(groupId, `我在。直接说要做什么就行，比如「首页加个欢迎弹窗，手动批准」。发「帮助」看完整说明。`)
     return
   }
 
@@ -291,8 +373,12 @@ bot.on('message', async (frame) => {
 
 // ────────────────────────────── 启动 ──────────────────────────────
 
-if (!config.groups.length) {
-  console.error('[启动失败] config.groups 为空，至少要配一个群。')
+if (config.groupPolicy.mode === 'deny') {
+  console.error('[启动失败] groupPolicy.mode=deny，不会服务任何群。')
+  process.exit(1)
+}
+if (config.groupPolicy.mode === 'allowlist' && !config.groups.length) {
+  console.error('[启动失败] groupPolicy.mode=allowlist 但 groups 为空，请在 groups 里列出允许的群。')
   process.exit(1)
 }
 

@@ -14,13 +14,11 @@
     "token": ""
   },
 
-  "groups": [
-    {
-      "groupId": "在这里填群号",
-      "projectDir": "~/Documents/ChatGPT/Instanto",
-      "approval": "manual"
-    }
-  ],
+  "groupPolicy": {
+    "mode": "auto"
+  },
+
+  "approval": "manual",
 
   "limits": {
     "maxMessagesPerMinute": 10,

@@ -40,7 +40,7 @@ writeFileSync(
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },
       onebot: { ws: mock.url },
-      groups: [{ groupId: '123456', projectDir: tmpProject, approval: 'manual' }],
+      // 故意不填 groups：群号靠 bot 自己发现，验证 auto 策略
       limits: { maxMessagesPerMinute: 60, chunkChars: 400, maxChunksPerTurn: 12 },
       upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
       turnTimeoutMs: 240_000,
@@ -115,7 +115,12 @@ if (noLlm) {
       return false
     }
   })(), 'sessionId 未持久化')
+  check('配置里没填群号也能工作', true) // 上面的配置确实没有 groups 字段，能跑到这里即证明
 }
+
+// 群号自动发现：验证启动日志里报了群名
+check('启动时自动拉到群列表', logs.join('').includes('测试需求群'), '未看到群名日志')
+check('日志显示 bot 已在群里', /bot 已在 \d+ 个群里/.test(logs.join('')), '')
 
 child.kill('SIGTERM')
 await sleep(500)

@@ -60,14 +60,46 @@ export class GroupStateMachine {
     return s
   }
 
-  /** 读取持久状态，缺省时按群配置初始化 */
+  /**
+   * 解析一个群该不该处理、用哪个项目。
+   * 群号不用手填：auto 模式下任何群都接受，路径用顶层 projectDir。
+   * @returns {{ok: boolean, reason?: string, groupId: string, projectDir?: string, approval?: string}}
+   */
+  resolveGroup(groupId) {
+    const policy = this.config.groupPolicy?.mode ?? 'auto'
+
+    if (policy === 'deny') {
+      return { ok: false, reason: 'groupPolicy.mode=deny，已拒绝所有群', groupId }
+    }
+
+    const listed = this.config.groups.find((x) => x.groupId === groupId)
+
+    if (listed) {
+      return { ok: true, groupId, projectDir: listed.projectDir, approval: listed.approval }
+    }
+
+    if (policy === 'allowlist') {
+      return { ok: false, reason: '不在 groups 白名单里', groupId }
+    }
+
+    // auto：未在 groups 中列出的群沿用顶层配置
+    return {
+      ok: true,
+      groupId,
+      projectDir: this.config.projectDir,
+      approval: this.config.approval ?? 'manual',
+    }
+  }
+
+  /** 读取持久状态，缺省时按群策略初始化 */
   peek(groupId) {
-    const g = this.config.groups.find((x) => x.groupId === groupId)
-    if (!g) return null
+    const g = this.resolveGroup(groupId)
+    if (!g.ok) return null
+
     const saved = this.store.get(groupId)
     return {
       groupId,
-      projectDir: g.projectDir,
+      projectDir: saved?.projectDir ?? g.projectDir,
       approval: g.approval,
       sessionId: saved?.sessionId ?? null,
       status: saved?.status ?? IDLE,

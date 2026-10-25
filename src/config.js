@@ -120,11 +120,16 @@ export function loadConfig(configPath) {
       token: raw.onebot?.token || process.env.ONEBOT_TOKEN || '',
       reconnectMs: raw.onebot?.reconnectMs ?? 3000,
     },
+    // 群不再手填：默认自动发现 bot 所在的所有群。
+    // 想限制范围时才写 groups，留空表示「全自动」。
     groups: (raw.groups ?? []).map((g) => ({
       groupId: String(g.groupId),
       projectDir: g.projectDir ? resolve(expandHome(g.projectDir)) : projectDir,
       approval: g.approval === 'auto' ? 'auto' : 'manual',
     })),
+    groupPolicy: normalizeGroupPolicy(raw.groupPolicy),
+    // 顶层 approval 是 auto 模式下所有群的默认批准方式
+    approval: raw.approval === 'auto' ? 'auto' : 'manual',
     limits: {
       maxMessagesPerMinute: raw.limits?.maxMessagesPerMinute ?? 10,
       chunkChars: raw.limits?.chunkChars ?? 600,
@@ -139,6 +144,20 @@ export function loadConfig(configPath) {
     turnTimeoutMs: raw.turnTimeoutMs ?? 45 * 60 * 1000,
     verbose: raw.verbose === true,
   }
+}
+
+/**
+ * 群策略。三种模式：
+ *   auto     —— bot 被拉进的任何群都接受（默认，推荐）
+ *   allowlist —— 只接受 groups 里列出的群
+ *   deny      —— 全部拒绝
+ */
+function normalizeGroupPolicy(policy) {
+  const p = policy?.mode
+  if (p === 'allowlist') return { mode: 'allowlist' }
+  if (p === 'deny') return { mode: 'deny' }
+  if (p === 'auto') return { mode: 'auto' }
+  return { mode: 'auto' }
 }
 
 /**
