@@ -49,6 +49,8 @@ export function runTurn({
   let finalText = ''
   let timedOut = false
   let stderrTail = ''
+  let turnError = null
+  let runnerClassify = null
 
   const timer = setTimeout(() => {
     timedOut = true
@@ -80,8 +82,33 @@ export function runTurn({
     }
     if (ev.type === 'session' && ev.sessionId) sid = ev.sessionId
     if (ev.type === 'final' && typeof ev.text === 'string') finalText = ev.text
+
+    // turn_end 带 error 时（429 限流、凭证失效等），把关键信息提出来。
+    // 这类错误 Agent 自己不会说，bridge 必须能识别并在群里讲人话。
+    if (ev.type === 'status' && ev.phase === 'turn_end' && ev.reason?.kind === 'error') {
+      turnError = ev.reason.error?.message ?? '未知错误'
+    }
     onEvent?.(ev)
   })
+
+  // 从错误文本里提取「人能看懂」的原因
+  function classifyError(msg) {
+    if (!msg) return null
+    if (/429|rate.?limit|频率限制|限流|quota/i.test(msg)) {
+      const reset = msg.match(/(\d{4}-\d{2}-\d{2}[^，,]*?重置)/)?.[1]
+      return reset
+        ? `模型额度用完了（429 限流），${reset}重置。期间可以先做别的，稍后发「继续」。`
+        : '模型额度用完了（429 限流），稍后发「继续」重试。'
+    }
+    if (/MISSING_CREDENTIAL|API key|凭证/i.test(msg)) {
+      return '模型凭证失效或缺失（API key 问题），检查 DEEPSEEK_API_KEY 后再试。'
+    }
+    if (/ECONNREFUSED|ETIMEDOUT|network/i.test(msg)) {
+      return '网络错误，连不上模型服务，稍后发「继续」重试。'
+    }
+    return `回合异常终止：${msg.slice(0, 200)}`
+  }
+  runnerClassify = classifyError
 
   const abortHandler = () => {
     try {
@@ -102,6 +129,8 @@ export function runTurn({
         exitCode: code,
         timedOut,
         stderr: stderrTail,
+        turnError,
+        errorSummary: runnerClassify?.(turnError) ?? null,
       })
     })
   })

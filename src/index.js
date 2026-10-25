@@ -117,6 +117,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
   let pendingText = ''
   let turnLabel = ''
   let lastActivityAt = Date.now()
+  let turnDone = false // runTurn 是否已 resolve
   let firstReplySent = false // agent 的「先回话」是否已提前发到群里
   let sentHead = '' // 已提前发出的那句回话原文（用于去重）
 
@@ -156,6 +157,16 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
       env: { ...process.env, DEEPSEEK_API_KEY: apiKey },
       timeoutMs: config.turnTimeoutMs,
       signal: aborter.signal,
+      onChild: (child) => {
+        // 主进程死了但 runTurn 还没 resolve（罕见，比如被外部 kill）：
+        // 心跳必须停，否则群里会持续收到「正在XX阶段」的鬼魂消息
+        child.on('close', () => {
+          if (!turnDone) {
+            log(`[${groupId}] 子进程提前退出`)
+            clearInterval(heartbeat)
+          }
+        })
+      },
       onEvent: (ev) => {
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
@@ -182,6 +193,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
       },
     })
 
+    turnDone = true
     const gate = parseGate(result.finalText || pendingText)
     turnLabel = gate.label
 
@@ -198,15 +210,21 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo }) {
     }
 
     // 异常收尾
-    if (result.timedOut) {
+    if (result.errorSummary) {
+      // turn_end 带错误（429 限流 / 凭证失效 / 断网）：讲人话，别让群里无声无息
+      await sendPlain(groupId, `⚠️ ${result.errorSummary}`, { replyTo })
+    } else if (result.timedOut) {
       await sendPlain(
         groupId,
         `这个回合超过 ${Math.round(config.turnTimeoutMs / 60000)} 分钟还没跑完，我已经把它停了。\n` +
           `可以发「继续」让我接着跑，或发更具体的指令。`,
+        { replyTo },
       )
     } else if (result.exitCode !== 0 && !gate.cleaned) {
       const tail = (result.stderr || '').split('\n').filter(Boolean).slice(-3).join('\n')
-      await sendPlain(groupId, `回合异常结束（退出码 ${result.exitCode}）。\n${sanitize(tail).slice(0, 400)}`)
+      await sendPlain(groupId, `回合异常结束（退出码 ${result.exitCode}）。\n${sanitize(tail).slice(0, 400)}`, {
+        replyTo,
+      })
     }
 
     // 产物回传
