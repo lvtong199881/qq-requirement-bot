@@ -100,6 +100,9 @@ export function runTurn({
         ? `模型额度用完了（429 限流），${reset}重置。期间可以先做别的，稍后发「继续」。`
         : '模型额度用完了（429 限流），稍后发「继续」重试。'
     }
+    if (/Insufficient Balance|余额不足|QUOTA|402/i.test(msg)) {
+      return '模型账号余额不足（402），充值或换 API key 后发「继续」。'
+    }
     if (/MISSING_CREDENTIAL|API key|凭证/i.test(msg)) {
       return '模型凭证失效或缺失（API key 问题），检查 DEEPSEEK_API_KEY 后再试。'
     }
