@@ -8,3 +8,5 @@ node_modules/
 
 # 回合上下文落盘
 .state/
+.instances/
+.logs/

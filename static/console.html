@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ 需求 Bot 控制台</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --card2:#1d212a; --line:#262b36;
+    --text:#e6e9ef; --dim:#8b93a7; --dim2:#5c6478;
+    --green:#3fb950; --yellow:#d29922; --red:#f85149; --blue:#58a6ff; --gray:#6e7681;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",sans-serif;
+    padding:24px;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+  h1{font-size:16px;font-weight:600;margin:0}
+  .stats{display:flex;gap:14px;color:var(--dim);font-size:12px;margin-left:auto;align-items:center}
+  .stats b{color:var(--text);font-weight:600}
+  .dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px}
+
+  .inst{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden;background:var(--card)}
+  .inst-head{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--card2);
+             border-bottom:1px solid var(--line);font-size:12px;color:var(--dim);flex-wrap:wrap}
+  .inst-head .pid{color:var(--text);font-weight:600;font-family:ui-monospace,Menlo,monospace}
+  .inst-head .sep{color:var(--dim2)}
+  .tag{padding:1px 7px;border-radius:5px;background:#22262f;color:var(--dim);font-size:11px}
+
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.04em;
+     padding:9px 14px;border-bottom:1px solid var(--line);background:#141821}
+  td{padding:11px 14px;border-bottom:1px solid #1d212a;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#1a1e26}
+
+  .req{font-weight:600}
+  .req small{display:block;color:var(--dim2);font-weight:400;font-size:11px;margin-top:2px;font-family:ui-monospace,Menlo,monospace}
+  .who{color:var(--dim)}
+  .who small{display:block;color:var(--dim2);font-size:11px;font-family:ui-monospace,Menlo,monospace}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
+         font-size:11px;font-weight:600;white-space:nowrap}
+  .badge .dot{margin:0}
+  .b-green{background:rgba(63,185,80,.13);color:var(--green)}   .b-green .dot{background:var(--green)}
+  .b-yellow{background:rgba(210,153,34,.13);color:var(--yellow)} .b-yellow .dot{background:var(--yellow)}
+  .b-red{background:rgba(248,81,73,.13);color:var(--red)}        .b-red .dot{background:var(--red)}
+  .b-gray{background:rgba(110,118,129,.13);color:var(--gray)}    .b-gray .dot{background:var(--gray)}
+  .b-blue{background:rgba(88,166,255,.13);color:var(--blue)}      .b-blue .dot{background:var(--blue)}
+
+  .menu-btn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;
+            padding:5px 11px;cursor:pointer;font-size:12px;transition:.12s}
+  .menu-btn:hover{background:#22262f;color:var(--text);border-color:#333a48}
+  .menu{position:fixed;z-index:60;background:#1c2029;border:1px solid #2c333f;border-radius:9px;
+        padding:5px;min-width:132px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .menu button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);
+               padding:8px 11px;border-radius:6px;cursor:pointer;font-size:12.5px}
+  .menu button:hover{background:#262c37}
+  .menu button.danger{color:var(--red)}
+  .menu hr{border:none;border-top:1px solid #2c333f;margin:4px 0}
+
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;
+        justify-content:center;padding:52px 20px;z-index:100;overflow:auto}
+  .modal{background:var(--card);border:1px solid #2c333f;border-radius:12px;width:100%;max-width:720px;
+         box-shadow:0 24px 70px rgba(0,0,0,.65)}
+  .modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .modal-head h2{margin:0;font-size:14px;font-weight:600}
+  .x{margin-left:auto;background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;
+     line-height:1;padding:0 4px}
+  .x:hover{color:var(--text)}
+  .modal-body{padding:18px 20px;max-height:64vh;overflow:auto}
+
+  .kv{display:grid;grid-template-columns:120px 1fr;gap:9px 16px;font-size:12.5px}
+  .kv dt{color:var(--dim)}
+  .kv dd{margin:0;font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+  h3{font-size:11px;letter-spacing:.06em;color:var(--dim2);text-transform:uppercase;
+     margin:22px 0 10px;font-weight:600}
+  h3:first-child{margin-top:0}
+
+  .logs{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:11px;
+        font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.7;
+        max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+  .logs .t{color:var(--dim2)}
+  .logs .warn{color:var(--yellow)}
+  .logs .error{color:var(--red)}
+
+  .empty{color:var(--dim2);text-align:center;padding:44px;font-size:12.5px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2029;
+         border:1px solid #2c333f;padding:10px 18px;border-radius:9px;font-size:12.5px;
+         z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .toast.err{border-color:rgba(248,81,73,.5);color:#ffb4af}
+  .spin{color:var(--dim2);font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="wrap">
+    <header>
+      <h1>QQ 需求 Bot 控制台</h1>
+      <div class="stats">
+        <span><b>{{ instanceCount }}</b> 实例</span>
+        <span><b>{{ groupCount }}</b> 群</span>
+        <span v-if="alertCount"><b style="color:var(--red)">{{ alertCount }}</b> 告警</span>
+        <span class="spin" v-if="loading">刷新中…</span>
+        <span class="spin" v-else>每 3 秒刷新</span>
+      </div>
+    </header>
+
+    <div v-if="!instances.length" class="empty">没有发现正在运行的 bridge 实例。</div>
+
+    <div v-for="inst in instances" :key="inst.instance?.pid" class="inst">
+      <div class="inst-head">
+        <span class="dot" :style="{background: inst.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
+        <span class="pid">PID {{ inst.instance?.pid ?? '?' }}</span>
+        <span class="sep">·</span>
+        <span>{{ inst.config?.botName || '—' }}({{ inst.config?.botQQ || '—' }})</span>
+        <span class="sep">·</span>
+        <span>{{ inst.config?.model || '—' }}</span>
+        <span class="sep">·</span>
+        <span>{{ inst.resources?.rssMb ?? '—' }} MB</span>
+        <span class="sep">·</span>
+        <span>运行 {{ fmtDur(Date.now() - (inst.instance?.startedAt || Date.now())) }}</span>
+        <span v-if="inst.unreachable" class="tag" style="color:var(--red)">不可达：{{ inst.error }}</span>
+        <span v-else-if="!inst.onebot?.connected" class="tag" style="color:var(--yellow)">OneBot 未连接</span>
+      </div>
+
+      <table v-if="inst.groups?.length">
+        <thead>
+          <tr>
+            <th style="width:190px">需求名</th>
+            <th style="width:190px">QQ 群</th>
+            <th style="width:170px">发起人</th>
+            <th>当前阶段</th>
+            <th style="width:70px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="g in inst.groups" :key="g.groupId">
+            <td>
+              <div class="req">{{ g.reqId || '（未绑定需求）' }}<small v-if="g.activeTurn">回合进行中 {{ fmtDur(g.activeTurn.elapsedMs) }}</small></div>
+            </td>
+            <td>{{ g.groupName || '未知群' }}<div style="color:var(--dim2);font-size:11px">{{ g.groupId }}</div></td>
+            <td class="who">
+              {{ g.initiator?.nickname || '—' }}
+              <small v-if="g.initiator?.userId">{{ g.initiator.userId }}</small>
+            </td>
+            <td><span class="badge" :class="badgeOf(g).cls"><span class="dot"></span>{{ badgeOf(g).text }}</span></td>
+            <td style="text-align:right">
+              <button class="menu-btn" @click.stop="openMenu($event, inst, g)">⋯</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="empty" style="padding:22px">这个实例下还没有服务中的群。</div>
+    </div>
+
+    <!-- 操作菜单 -->
+    <div v-if="menu" class="menu" :style="{left: menu.x + 'px', top: menu.y + 'px'}" @click.stop>
+      <button class="danger" @click="act('stop')">终止</button>
+      <button @click="act('restart')">重启</button>
+      <hr>
+      <button @click="detail()">详细信息</button>
+    </div>
+
+    <!-- 详细信息弹窗 -->
+    <div v-if="modal" class="mask" @click.self="modal = null">
+      <div class="modal">
+        <div class="modal-head">
+          <h2>进程详情 · {{ modal.group.reqId || modal.group.groupId }}</h2>
+          <button class="x" @click="modal = null">×</button>
+        </div>
+        <div class="modal-body">
+          <h3>基本信息</h3>
+          <dl class="kv">
+            <dt>PID</dt><dd>{{ modal.inst.instance?.pid }}</dd>
+            <dt>端口</dt><dd>{{ modal.inst.instance?.port }}</dd>
+            <dt>需求名</dt><dd>{{ modal.group.reqId || '—' }}</dd>
+            <dt>QQ 群名</dt><dd>{{ modal.group.groupName || '—' }}</dd>
+            <dt>群 ID</dt><dd>{{ modal.group.groupId }}</dd>
+            <dt>发起人</dt><dd>{{ modal.group.initiator?.nickname || '—' }}<span v-if="modal.group.initiator?.userId"> ({{ modal.group.initiator.userId }})</span></dd>
+            <dt>发起时间</dt><dd>{{ fmtTime(modal.group.initiator?.at) }}</dd>
+            <dt>当前阶段</dt><dd>{{ modal.group.stage || '—' }}</dd>
+            <dt>阶段开始</dt><dd>{{ fmtTime(modal.group.stageStartedAt) }}</dd>
+            <dt>当前模型</dt><dd>{{ modal.inst.config?.model || '—' }}</dd>
+            <dt>进程启动</dt><dd>{{ fmtTime(modal.inst.instance?.startedAt) }}</dd>
+            <dt>OneBot</dt><dd>{{ modal.inst.onebot?.url }} · {{ modal.inst.onebot?.connected ? '已连接' : '未连接' }}</dd>
+            <dt>内存占用</dt><dd>{{ modal.inst.resources?.rssMb }} MB（heap {{ modal.inst.resources?.heapMb }} MB）</dd>
+            <dt>回合编号</dt><dd>{{ modal.group.turn ?? 0 }}</dd>
+            <dt>等待事项</dt><dd>{{ modal.group.waitingLabel || '—' }}</dd>
+          </dl>
+
+          <template v-if="modal.group.activeTurn">
+            <h3>当前回合</h3>
+            <dl class="kv">
+              <dt>已运行</dt><dd>{{ fmtDur(modal.group.activeTurn.elapsedMs) }}</dd>
+              <dt>最后活动</dt><dd>{{ fmtDur(modal.group.activeTurn.idleMs) }}前</dd>
+              <dt>子进程</dt><dd>{{ modal.group.activeTurn.childPid }} · {{ modal.group.activeTurn.childAlive ? '存活' : '已退出' }}</dd>
+              <dt>事件数</dt><dd>{{ modal.group.activeTurn.events }}</dd>
+            </dl>
+          </template>
+
+          <h3>最近日志</h3>
+          <div class="logs">
+            <div v-for="(l, i) in modal.logs" :key="i">
+              <span class="t">{{ fmtClock(l.at) }}</span>
+              <span :class="l.level">{{ l.text }}</span>
+            </div>
+            <div v-if="!modal.logs?.length" style="color:var(--dim2)">暂无日志</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="toast" class="toast" :class="{err: toast.err}">{{ toast.text }}</div>
+  </div>
+</div>
+
+<script src="/vue.js"></script>
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted } = Vue
+
+createApp({
+  setup() {
+    const instances = ref([])
+    const loading = ref(false)
+    const menu = ref(null)
+    const modal = ref(null)
+    const toast = ref(null)
+    let timer = null
+
+    const instanceCount = computed(() => instances.value.length)
+    const groupCount = computed(() =>
+      instances.value.reduce((n, i) => n + (i.groups?.length || 0), 0))
+    const alertCount = computed(() =>
+      instances.value.filter((i) => i.unreachable || (i.onebot && !i.onebot.connected)).length)
+
+    async function load() {
+      loading.value = true
+      try {
+        const r = await fetch('/api/instances')
+        const d = await r.json()
+        instances.value = d.instances || []
+      } catch (e) {
+        /* 面板自己出问题时不吵 */
+      } finally {
+        loading.value = false
+      }
+    }
+
+    function badgeOf(g) {
+      if (g.activeTurn) return { cls: 'b-green', text: `${g.stage || '执行'}中 · ${fmtDur(g.activeTurn.elapsedMs)}` }
+      if (g.waitingLabel) return { cls: 'b-yellow', text: `${g.stage || ''}等确认`.trim() }
+      if (g.status === 'running') return { cls: 'b-blue', text: `${g.stage || '执行'}中` }
+      if (g.status === 'waiting') return { cls: 'b-yellow', text: `${g.stage || ''}已完成`.trim() }
+      if (!g.reqId) return { cls: 'b-gray', text: '未绑定需求' }
+      return { cls: 'b-gray', text: '空闲' }
+    }
+
+    function fmtDur(ms) {
+      if (!ms || ms < 0) return '0 秒'
+      const s = Math.floor(ms / 1000)
+      if (s < 60) return `${s} 秒`
+      const m = Math.floor(s / 60)
+      if (m < 60) return `${m} 分钟`
+      return `${Math.floor(m / 60)} 小时 ${m % 60} 分`
+    }
+    function fmtTime(ts) {
+      if (!ts) return '—'
+      const d = new Date(ts)
+      return `${d.getMonth() + 1}/${d.getDate()} ` +
+        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+    }
+    function fmtClock(ts) {
+      const d = new Date(ts)
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')} `
+    }
+
+    function openMenu(ev, inst, g) {
+      const r = ev.target.getBoundingClientRect()
+      menu.value = { x: Math.min(r.left - 90, window.innerWidth - 160), y: r.bottom + 6, inst, g }
+    }
+
+    async function act(kind) {
+      const { g } = menu.value
+      menu.value = null
+      try {
+        const r = await fetch(`/api/groups/${g.groupId}/${kind}`, { method: 'POST' })
+        const d = await r.json()
+        toast.value = { text: d.ok ? (kind === 'stop' ? '已终止' : '已重启') : `失败：${d.error || d.message}`, err: !d.ok }
+        setTimeout(() => (toast.value = null), 2600)
+        await load()
+      } catch (e) {
+        toast.value = { text: `请求失败：${e.message}`, err: true }
+        setTimeout(() => (toast.value = null), 3200)
+      }
+    }
+
+    async function detail() {
+      const { inst, g } = menu.value
+      menu.value = null
+      modal.value = { inst, group: g, logs: [] }
+      try {
+        const r = await fetch(`/api/logs?pid=${inst.instance?.pid}&n=200`)
+        const d = await r.json()
+        modal.value = { ...modal.value, logs: d.logs || [] }
+      } catch { /* 日志拿不到就留空 */ }
+    }
+
+    const closeAll = () => { menu.value = null }
+    onMounted(() => {
+      load()
+      timer = setInterval(load, 3000)
+      window.addEventListener('click', closeAll)
+      window.addEventListener('scroll', closeAll, true)
+    })
+    onUnmounted(() => {
+      clearInterval(timer)
+      window.removeEventListener('click', closeAll)
+      window.removeEventListener('scroll', closeAll, true)
+    })
+
+    return {
+      instances, loading, menu, modal, toast,
+      instanceCount, groupCount, alertCount,
+      badgeOf, fmtDur, fmtTime, fmtClock, openMenu, act, detail,
+    }
+  },
+}).mount('#app')
+</script>
+</body>
+</html>

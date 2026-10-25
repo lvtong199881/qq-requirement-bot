@@ -128,6 +128,52 @@ node src/index.js
 
 产物自动回传：每回合结束后，`docs/requirements/**` 下新增或改动的 `.md` / `.png` / `.jpg` 会作为群文件上传。
 
+## 管理面板
+
+常驻进程，聚合所有正在运行的 bridge 实例，看状态、下指令。
+
+```bash
+./start-panel.sh              # 默认 http://127.0.0.1:7879/console
+./start-panel.sh 8899         # 换端口
+```
+
+页面每 3 秒自动刷新，列表展示：PID、需求名、QQ 群名、发起人、当前阶段状态徽章，
+每行末尾的 `⋯` 菜单提供 **终止 / 重启 / 详细信息**。
+
+详细信息弹窗会显示该进程的完整状态：群 ID、当前模型、端口、发起时间、阶段进度、
+当前回合（子进程是否存活、已运行多久）、最近 200 条日志。
+
+### 架构
+
+```
+bridge（每个实例）
+├── .instances/<pid>.json   启动时注册，退出时删除——面板靠它发现实例
+└── 127.0.0.1:7878          /api/status、/api/logs、/api/groups/:id/{stop,restart}
+
+panel（一个进程）
+├── 扫描 .instances/        发现所有实例
+├── 逐个拉 /api/status      聚合成一份数据
+└── 127.0.0.1:7879          /console 页面 + 转发操作到对应实例
+```
+
+面板与 bridge 分离：bridge 崩了面板还活着，能告诉你它崩了。
+
+### API
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/status` | 本实例完整状态（bridge） |
+| `GET /api/logs?n=200` | 最近日志（bridge） |
+| `POST /api/groups/:id/stop` | 终止该群当前任务 |
+| `POST /api/groups/:id/restart` | 重启该群任务（先掐断，再用「继续」骨架重跑） |
+| `GET /api/instances` | 聚合所有实例（panel） |
+
+写操作需要 `panel.token` 非空时携带 `x-panel-token`；留空则只依赖「仅监听 127.0.0.1」。
+
+### 日志
+
+按天落盘到 `.logs/bridge-YYYY-MM-DD.log`，同时保留内存中最近 500 条供面板读取。
+
 ## 测试
 
 ```bash

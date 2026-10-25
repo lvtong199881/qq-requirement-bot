@@ -103,6 +103,9 @@ export function runTurn({
     if (/Insufficient Balance|余额不足|QUOTA|402/i.test(msg)) {
       return '模型账号余额不足（402），充值或换 API key 后发「继续」。'
     }
+    if (/already owned by an active write handle/i.test(msg)) {
+      return '会话被上一个未退出的进程占用（session 写锁未释放）。'
+    }
     if (/MISSING_CREDENTIAL|API key|凭证/i.test(msg)) {
       return '模型凭证失效或缺失（API key 问题），检查 DEEPSEEK_API_KEY 后再试。'
     }
@@ -134,6 +137,7 @@ export function runTurn({
         stderr: stderrTail,
         turnError,
         errorSummary: runnerClassify?.(turnError) ?? null,
+        sessionLocked: /already owned by an active write handle/i.test(turnError ?? ''),
       })
     })
   })

@@ -11,6 +11,10 @@ import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, RateLimiter, sleep } from './format.js'
+import { Runtime } from './runtime.js'
+import { InstanceRegistry, isAlive } from './instances.js'
+import { createBridgeServer } from './server.js'
+import { join as pathJoin } from 'node:path'
 import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage, stageTable } from './artifacts.js'
 import {
   classifyMessage,
@@ -51,8 +55,13 @@ const machine = new GroupStateMachine(config, store)
 const limiter = new RateLimiter(config.limits.maxMessagesPerMinute)
 const bot = new OneBot(config.onebot)
 
-const log = (...a) => console.log(new Date().toLocaleTimeString('zh-CN'), ...a)
-const detail = (...a) => config.verbose && console.log('  ', ...a)
+// 运行时状态中心：日志、回合、资源都从这里出去（面板 /api/status 的数据源）
+const runtime = new Runtime({
+  logDir: pathJoin(config.repoRoot, '.logs'),
+  verbose: config.verbose,
+})
+const log = (...a) => runtime.info(...a)
+const detail = (...a) => config.verbose && runtime.log('debug', ...a)
 
 log(`配置就绪：skill=${config.skillDir}`)
 log(`项目目录：${config.projectDir}`)
@@ -185,7 +194,7 @@ async function sendAck(groupId, st, replyTo, intent) {
   await sendPlain(groupId, msg, { replyTo })
 }
 
-async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent }) {
+async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent, retried = false }) {
   const st = machine.peek(groupId)
   if (!st) return
 
@@ -199,6 +208,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   }
 
   const started = Date.now()
+  runtime.beginTurn(groupId)
   const before = snapshot(st.projectDir)
   let pendingText = ''
   let turnDone = false // runTurn 是否已 resolve
@@ -245,8 +255,8 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
       timeoutMs: config.turnTimeoutMs,
       signal: aborter.signal,
       onChild: (child) => {
-        // 主进程死了但 runTurn 还没 resolve（罕见，比如被外部 kill）：
-        // 心跳必须停，否则群里会持续收到「正在XX阶段」的鬼魂消息
+        // 把子进程 pid 交给面板展示（判断「agent 到底活着没有」）
+        runtime.beginTurn(groupId, { childPid: child.pid })
         child.on('close', () => {
           if (!turnDone) {
             log(`[${groupId}] 子进程提前退出`)
@@ -255,6 +265,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         })
       },
       onEvent: (ev) => {
+        runtime.noteEvent(groupId)
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
         }
@@ -274,10 +285,34 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     // gate.cleaned 仅用于判断阶段结论与等待事项，不直接发送。
 
     // 异常收尾
+    // session 被上一个没退出的 dsh 进程锁住：清掉 sessionId，立刻用新会话重跑一次。
+    // 不这么做的话，这个群之后每条消息都会失败（真实踩过：429 打断后进程挂住不释放锁）。
+    if (result.sessionLocked && !retried) {
+      log(`[${groupId}] session 写锁被占用，清空 sessionId 后用新会话重试`)
+      persist({ sessionId: null, status: STATES.IDLE })
+      await sendPlain(groupId, '上一个进程没释放会话，已重置并重新开始这一轮。', { replyTo })
+      setTimeout(() => {
+        handleTurn(groupId, userText, {
+          isContinuation: false,
+          replyTo,
+          anchor,
+          promptBody,
+          intent,
+          retried: true,
+        }).catch((e) => log(`重试失败：${e.message}`))
+      }, 500)
+      return
+    }
+
     // 消息 4：异常播报（固定格式，方便用户/管理员一眼定位）
     const stageName = (planStageAnnounce({ ...st, reqId: st.reqId }).running) ?? st.stage ?? '当前'
-    const abnormal = (reason) =>
-      sendPlain(groupId, `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${reason}`, { replyTo })
+    const abnormal = (reason) => {
+      const plain = String(reason ?? '（无详细信息）')
+      log(`[${groupId}] 异常播报：${plain.replace(/\n/g, ' / ').slice(0, 200)}`)
+      return sendPlain(groupId, `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${plain}`, {
+        replyTo,
+      })
+    }
 
     if (result.errorSummary) {
       await abnormal(result.errorSummary)
@@ -398,6 +433,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     persist({ status: STATES.WAITING })
   } finally {
     clearInterval(heartbeat)
+    runtime.endTurn(groupId)
     release()
     // 处理排队消息
     const queued = machine.drainQueue(groupId)
@@ -530,6 +566,21 @@ bot.on('message', async (frame) => {
   // 回复时引用用户这条消息，比 @ 自己更像真人
   const replyTo = frame.message_id
   const text = stripAt(frame.message)
+
+  // 记录发起人（面板列表要显示「谁提的需求」）
+  const sender = frame.sender ?? {}
+  const initiator = {
+    userId: String(sender.user_id ?? frame.user_id ?? ''),
+    nickname: sender.card || sender.nickname || String(sender.user_id ?? ''),
+    at: Date.now(),
+  }
+  if (initiator.userId && st.initiator?.userId !== initiator.userId) {
+    st.initiator = initiator
+    store.save(groupId, { ...st, initiator })
+  } else if (initiator.userId && !st.initiator) {
+    st.initiator = initiator
+    store.save(groupId, { ...st, initiator })
+  }
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
 
   // ── 意图路由：bridge 决定每条消息是什么，agent 不猜 ──
@@ -694,6 +745,151 @@ function cleanupOrphanStates() {
 }
 cleanupOrphanStates()
 
+// ─────────────────── 管理面板的 HTTP API ───────────────────
+
+/** 组装本实例的完整状态快照（面板 /api/status 的唯一数据源） */
+function buildSnapshot() {
+  const groups = machine.listAll().map((g) => {
+    const table = stageTable(g.projectDir, g.reqId ?? undefined)
+    const stages = table.stages
+    const running = stages.find((x) => x.status.includes('进行中'))
+    const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
+    return {
+      groupId: g.groupId,
+      groupName: knownGroups.get(g.groupId)?.name ?? null,
+      // state 里丢了就用编排记录恢复（面板不该显示「未绑定需求」）
+      reqId: g.reqId ?? table.reqId ?? null,
+      stage: (running ?? lastDone)?.name ?? null,
+      stageStatus: running ? '进行中' : lastDone ? '已完成' : '未开始',
+      stageStartedAt: g.stageStartedAt || null,
+      status: g.status,
+      waitingLabel: g.waitingLabel || '',
+      turn: g.turn ?? 0,
+      initiator: g.initiator ?? null,
+      lastActiveAt: g.lastActiveAt ?? null,
+      activeTurn: runtime.turnInfo(g.groupId),
+      stages: stages.map((x) => ({ name: x.name, status: x.status })),
+    }
+  })
+
+  return {
+    instance: {
+      pid: process.pid,
+      port: apiPort,
+      startedAt: runtime.startedAt,
+      nodeVersion: process.version,
+      cwd: process.cwd(),
+    },
+    config: {
+      profile: config.profile,
+      botQQ: config.bot.qq,
+      botName: config.bot.name,
+      projectDir: config.projectDir,
+      groupPolicy: config.groupPolicy.mode,
+      model: config.modelLabel ?? null,
+      heartbeatMinutes: config.heartbeat?.idleMinutes ?? 5,
+      turnTimeoutMin: Math.round(config.turnTimeoutMs / 60000),
+    },
+    onebot: {
+      url: config.onebot.ws,
+      connected: bot.connected === true,
+      selfId: bot.selfId ?? null,
+    },
+    groups,
+    resources: runtime.resources(),
+    recentEvents: runtime.recentLogs(50),
+    at: Date.now(),
+  }
+}
+
+/** 面板：终止某群当前任务 */
+async function stopGroup(groupId) {
+  const st = machine.peek(groupId)
+  if (!st) return { ok: false, error: '这个群不在服务范围内' }
+  const killed = machine.interrupt(groupId)
+  return killed
+    ? { ok: true, message: '已终止当前回合' }
+    : { ok: false, error: '该群当前没有在跑的回合' }
+}
+
+/** 面板：重启某群任务（先掐断，再用「继续」骨架重新起一回合） */
+async function restartGroup(groupId) {
+  const st = machine.peek(groupId)
+  if (!st) return { ok: false, error: '这个群不在服务范围内' }
+
+  machine.interrupt(groupId)
+  await sleep(300)
+
+  const { stage, reqId } = currentStage(st.projectDir)
+  const effectiveReqId = st.reqId || reqId
+  const bound = { reqId: effectiveReqId, stage, waitingLabel: st.waitingLabel }
+  const anchorText = effectiveReqId
+    ? anchorBlock({
+        reqId: effectiveReqId,
+        projectDir: st.projectDir,
+        stage,
+        envHints: config.envHints,
+      })
+    : ''
+  const promptBody = routedPrompt({ intent: INTENT.CONTINUE, userText: '（管理员从面板重启）', bind: bound })
+
+  handleTurn(groupId, '（管理员从面板重启）', {
+    isContinuation: !!st.sessionId && st.status !== STATES.IDLE,
+    anchor: anchorText,
+    promptBody,
+    intent: INTENT.CONTINUE,
+  }).catch((e) => log(`重启失败：${e.message}`))
+
+  return { ok: true, message: '已重启' }
+}
+
+// 实例注册 + HTTP 服务
+const registry = new InstanceRegistry(config.repoRoot)
+let apiPort = 0
+
+function startApi() {
+  if (config.panel?.enabled === false) return
+  const server = createBridgeServer({
+    runtime,
+    config,
+    snapshot: buildSnapshot,
+    stopGroup,
+    restartGroup,
+    token: config.panel?.token ?? '',
+  })
+  const tryListen = (port, attempt = 0) => {
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE' && attempt < 20) {
+        tryListen(port + 1, attempt + 1)
+      } else {
+        runtime.error(`HTTP API 启动失败：${err.message}`)
+      }
+    })
+    server.listen(port, '127.0.0.1', () => {
+      apiPort = server.address().port
+      registry.register({
+        pid: process.pid,
+        port: apiPort,
+        profile: config.profile,
+        projectDir: config.projectDir,
+        logFile: pathJoin(config.repoRoot, '.logs'),
+        gitCommit: process.env.GIT_COMMIT ?? null,
+        version: '0.1.0',
+      })
+      runtime.info(`面板 API：http://127.0.0.1:${apiPort}/api/status`)
+      const siblings = registry.findSiblings(config.projectDir, process.pid)
+      if (siblings.length) {
+        runtime.warn(
+          `检测到 ${siblings.length} 个其他实例正在服务同一项目（PID ${siblings.map((x) => x.pid).join(', ')}）——会重复响应群消息`,
+        )
+      }
+    })
+  }
+  tryListen(config.panel?.port ?? 7878)
+}
+
+startApi()
+
 bot.connect()
 
 const shutdown = () => {
@@ -709,6 +905,12 @@ const shutdown = () => {
   } catch {
     /* ignore */
   }
+  try {
+    registry.unregister()
+  } catch {
+    /* ignore */
+  }
+  runtime.close()
   bot.close()
   process.exit(0)
 }

@@ -31,5 +31,11 @@
   },
   "turnTimeoutMs": 2700000,
   "verbose": false,
-  "envHints": ""
+  "envHints": "",
+  "panel": {
+    "enabled": true,
+    "port": 7878,
+    "publicPort": 7879,
+    "token": ""
+  }
 }

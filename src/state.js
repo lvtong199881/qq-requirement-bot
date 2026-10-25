@@ -120,6 +120,21 @@ export class GroupStateMachine {
     }
   }
 
+  /**
+   * 列出所有「落过盘」的群状态——面板要遍历的就是这些。
+   * 外加 config.groups 里显式配置但还没产生状态的群。
+   */
+  listAll() {
+    const ids = new Set(this.store.allGroupIds())
+    for (const g of this.config.groups ?? []) ids.add(String(g.groupId))
+    const out = []
+    for (const id of ids) {
+      const st = this.peek(id)
+      if (st) out.push(st)
+    }
+    return out
+  }
+
   /** 读取持久状态，缺省时按群策略初始化 */
   peek(groupId) {
     const g = this.resolveGroup(groupId)
@@ -139,6 +154,8 @@ export class GroupStateMachine {
       stage: saved?.stage ?? null,
       stageStartedAt: saved?.stageStartedAt ?? 0,
       finishedStages: saved?.finishedStages ?? null, // null=首次，历史阶段不播报
+      // 最近一次在这群里提需求的人（面板列表要显示「发起人」）
+      initiator: saved?.initiator ?? null,
     }
   }
 

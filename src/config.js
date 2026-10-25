@@ -78,6 +78,25 @@ export function expandHome(p) {
 }
 
 /** 读 bot.config.json */
+/** 从 profile 的 cordis.patch.yml 里读 agent-default-model，拼成 "provider/model" */
+function readModelLabel(profile) {
+  if (!profile) return null
+  try {
+    const f = join(homedir(), '.dsh', 'profiles', profile, 'cordis.patch.yml')
+    if (!existsSync(f)) return null
+    const text = readFileSync(f, 'utf8')
+    // 找 agent-default-model 下面最近的 provider/model 两行
+    const idx = text.lastIndexOf('agent-default-model')
+    if (idx < 0) return null
+    const tail = text.slice(idx, idx + 400)
+    const provider = tail.match(/^\s*provider:\s*(\S+)/m)?.[1]
+    const model = tail.match(/^\s*model:\s*(\S+)/m)?.[1]
+    return provider && model ? `${provider}/${model}` : null
+  } catch {
+    return null
+  }
+}
+
 export function loadConfig(configPath) {
   const path = configPath
     ? resolve(expandHome(configPath))
@@ -155,6 +174,15 @@ export function loadConfig(configPath) {
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
+    // 面板展示用的模型名：配置优先，否则从 profile 的 agent-default-model 推断
+    modelLabel: raw.modelLabel ?? readModelLabel(raw.profile),
+    // 管理面板 / 本地 HTTP API
+    panel: {
+      enabled: raw.panel?.enabled !== false,
+      port: Number(raw.panel?.port ?? 7878),
+      publicPort: Number(raw.panel?.publicPort ?? 7879),
+      token: typeof raw.panel?.token === 'string' ? raw.panel.token : '',
+    },
   }
 }
 
