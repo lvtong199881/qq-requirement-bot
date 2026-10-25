@@ -1,0 +1,17 @@
+{
+  "name": "qq-requirement-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把 requirement-spec skill 接到 QQ 群：@产品同学 说需求，各阶段进度自动同步到群里",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "qq-requirement-bot": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "doctor": "node src/doctor.js"
+  }
+}

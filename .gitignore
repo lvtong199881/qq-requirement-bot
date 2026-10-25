@@ -1,0 +1,10 @@
+# 真实配置含 QQ 号、群号、项目绝对路径，不入库
+bot.config.json
+
+# 运行产物
+node_modules/
+*.log
+.DS_Store
+
+# 回合上下文落盘
+.state/

@@ -1,0 +1,39 @@
+{
+  "projectDir": "~/Documents/ChatGPT/Instanto",
+  "skillDir": "",
+  "dshBin": "dsh",
+  "profile": "qqbot",
+
+  "bot": {
+    "qq": "",
+    "name": "产品同学"
+  },
+
+  "onebot": {
+    "ws": "ws://127.0.0.1:3001",
+    "token": ""
+  },
+
+  "groups": [
+    {
+      "groupId": "在这里填群号",
+      "projectDir": "~/Documents/ChatGPT/Instanto",
+      "approval": "manual"
+    }
+  ],
+
+  "limits": {
+    "maxMessagesPerMinute": 10,
+    "chunkChars": 400,
+    "maxChunksPerTurn": 12
+  },
+
+  "upload": {
+    "enabled": true,
+    "maxFiles": 8,
+    "maxFileMB": 20
+  },
+
+  "turnTimeoutMs": 2700000,
+  "verbose": false
+}
