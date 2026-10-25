@@ -16,7 +16,16 @@ const WAITING = 'waiting'
 export class SessionStore {
   constructor(repoRoot) {
     this.dir = join(repoRoot, '.state')
-    if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true })
+    this.#ensureDir()
+  }
+
+  /** 每次写盘前都确保目录存在：运行中被人删掉也不会 ENOENT */
+  #ensureDir() {
+    try {
+      if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true })
+    } catch {
+      /* 真建不了就让后续写入报错，至少错误发生在明确的位置 */
+    }
   }
 
   #file(groupId) {
@@ -34,10 +43,12 @@ export class SessionStore {
   }
 
   save(groupId, state) {
+    this.#ensureDir()
     writeFileSync(this.#file(groupId), JSON.stringify(state, null, 2), 'utf8')
   }
 
   clear(groupId) {
+    this.#ensureDir()
     const f = this.#file(groupId)
     if (existsSync(f)) writeFileSync(f, '{}', 'utf8')
   }
