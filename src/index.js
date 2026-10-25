@@ -10,7 +10,7 @@ import { loadConfig, resolveModelEnv } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
-import { sanitize, RateLimiter, sleep } from './format.js'
+import { sanitize, RateLimiter, sleep, runningText } from './format.js'
 import { Runtime } from './runtime.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
@@ -25,7 +25,7 @@ import {
   INTENT,
 } from './router.js'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const isDryRun = process.argv.includes('--dry-run')
@@ -122,12 +122,6 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 //   4. 异常：XX阶段异常，请联系bot管理员，异常原因如下：…
 
 /** 把毫秒差格式化成「12 分钟」 */
-function minsText(fromTs) {
-  if (!fromTs) return '0 分钟'
-  const m = Math.max(0, Math.round((Date.now() - fromTs) / 60000))
-  return `${m} 分钟`
-}
-
 /**
  * 同步阶段状态并生成要播报的消息。
  * 阶段真值来自编排记录的「阶段进度」表，不看 agent 说了什么。
@@ -161,13 +155,37 @@ function planStageAnnounce(st) {
   if (running && running !== st.stage) {
     messages.push(`${running}阶段已开始。`)
     patch.stage = running
-    patch.stageStartedAt = Date.now()
+    // 首次观测到某个阶段在跑时，用编排记录的最近写入时间近似它的开始时间
+    // （阶段切换必然改写编排记录）。比记 Date.now() 更接近真实起点。
+    patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
+  } else if (running && !st.stageStartedAt) {
+    // 老数据里 stage 已是当前阶段但缺时间戳：补一个，避免永远显示「0 分钟」
+    patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
   } else if (!running && st.stage) {
     // 阶段都完成了但还没进入下一阶段：保留最后一次阶段名，避免回执说「没有阶段」
     patch.stage = st.stage
   }
 
   return { messages, running, finishedNow, patch }
+}
+
+/** 用编排记录的写入时间近似某阶段的开始时间；拿不到就用当前时间 */
+function guessStageStart(projectDir, reqId) {
+  try {
+    const root = pathJoin(projectDir, 'docs', 'requirements')
+    const dirs = reqId ? [reqId] : readdirSync(root)
+    for (const id of dirs) {
+      const f = pathJoin(root, id, '编排记录.md')
+      if (!existsSync(f)) continue
+      const mtime = statSync(f).mtimeMs
+      // 超过 24 小时说明是很久以前的记录，不能当阶段起点
+      if (Date.now() - mtime > 24 * 3600 * 1000) return Date.now()
+      return mtime
+    }
+  } catch {
+    /* 落空就返回当前时间 */
+  }
+  return Date.now()
 }
 
 /** 消息 1：用户发消息后的回执 */
@@ -177,7 +195,7 @@ async function sendAck(groupId, st, replyTo, intent) {
 
   // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
   if (running) {
-    await sendPlain(groupId, `当前${running.name}阶段中，已进行 ${minsText(st.stageStartedAt)}。`, { replyTo })
+    await sendPlain(groupId, runningText(running.name, st.stageStartedAt), { replyTo })
     return
   }
 
@@ -224,7 +242,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const running = stages.find((x) => x.status.includes('进行中'))
     if (!running) return
     lastActivityAt = Date.now()
-    sendPlain(groupId, `当前${running.name}阶段中，已进行 ${minsText(st.stageStartedAt)}。`).catch(() => {})
+    sendPlain(groupId, runningText(running.name, st.stageStartedAt)).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {

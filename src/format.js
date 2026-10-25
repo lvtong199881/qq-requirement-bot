@@ -96,3 +96,20 @@ export class RateLimiter {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 把毫秒差说成「9 分钟」。时间戳缺失返回 null——宁可不说，也别显示「0 分钟」。
+ * 曾经因为 stageStartedAt 没被设置，群里播报了「已进行 0 分钟」。
+ */
+export function minsText(fromTs) {
+  if (!fromTs) return null
+  const ms = Date.now() - fromTs
+  if (ms < 60_000) return '不到 1 分钟'
+  return `${Math.round(ms / 60000)} 分钟`
+}
+
+/** 「当前XX阶段中，已进行X分钟」——时长未知时省略时长 */
+export function runningText(stageName, fromTs) {
+  const dur = minsText(fromTs)
+  return dur ? `当前${stageName}阶段中，已进行 ${dur}。` : `当前${stageName}阶段进行中。`
+}
