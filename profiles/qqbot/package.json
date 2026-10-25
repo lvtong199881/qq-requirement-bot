@@ -1,12 +1,15 @@
 {
   "name": "dsh-profile-qqbot",
   "private": true,
-  "dependencies": {},
+  "dependencies": {
+    "dsh-connect-workbuddy": "4.15.1"
+  },
   "dsh": {
     "profile": {
       "bundles": [
         "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-headless"
+        "@deepseek-ai/dsh-headless",
+        "dsh-connect-workbuddy"
       ]
     }
   }

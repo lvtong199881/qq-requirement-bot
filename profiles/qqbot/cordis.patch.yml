@@ -1,3 +1,11 @@
 # qqbot profile 的用户补丁层（顶层 YAML 数组）。
-# 需要改插件行为时在这里加条目；留空表示完全沿用 headless 默认行为。
+#
+# 默认只含注释：完全沿用 headless 的行为（模型走 DEEPSEEK_API_KEY）。
+#
+# 要切到 workbuddy 平台的模型（如 hy3，免费期到 10/31）：
+#   1. package.json 的 bundles 加 dsh-connect-workbuddy 并 pnpm add 它
+#   2. 从 ~/.dsh/profiles/desktop/cordis.patch.yml 拷贝两段过来：
+#      - id: dsh-connect-workbuddy   （整段，含模型目录与账号池）
+#      - id: agent-default-model     （provider: workbuddy, model: hy3）
+# 参考：bridge 的 README「切换模型」一节。
 []
