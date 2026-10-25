@@ -40,7 +40,10 @@ function serveStatic(res, name) {
     return
   }
   const ext = name.slice(name.lastIndexOf('.'))
-  res.writeHead(200, { 'content-type': MIME[ext] ?? 'application/octet-stream' })
+  res.writeHead(200, {
+    'content-type': MIME[ext] ?? 'application/octet-stream',
+    'cache-control': 'no-store',
+  })
   res.end(readFileSync(file))
 }
 

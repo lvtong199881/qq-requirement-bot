@@ -312,15 +312,17 @@ createApp({
       if (sec) out += `${sec}秒`
       return out
     }
+    /** 绝对时间统一格式：2026-10-26 07:17:25（带年份，跨天/跨年不会看错） */
     function fmtTime(ts) {
       if (!ts) return '—'
       const d = new Date(ts)
-      return `${d.getMonth() + 1}/${d.getDate()} ` +
-        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+      const p = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+        `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
     }
+    /** 日志行用同一格式，末尾补空格与正文分开 */
     function fmtClock(ts) {
-      const d = new Date(ts)
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')} `
+      return `${fmtTime(ts)}  `
     }
 
     function openMenu(ev, inst, g) {
