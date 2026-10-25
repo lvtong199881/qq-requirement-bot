@@ -77,6 +77,9 @@ function replySegment(messageId) {
  * @param {string} text 纯文本
  * @param {{replyTo?: number|string}} [opts]
  */
+// 长任务阶段进展的最小间隔：够久才不会刷屏，够短才不会让人干等
+const PROGRESS_INTERVAL_MS = 120_000
+
 // 距上次「群里收到消息」的时间——agent 内部活动不算，只由 sendText 成功发送后刷新。
 // 模块级：sendText 与各群的心跳共用（bridge 当前只服务少数群，共享一个计时够用）。
 let lastActivityAt = Date.now()
@@ -130,6 +133,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   let turnDone = false // runTurn 是否已 resolve
   let firstReplySent = false // agent 的「先回话」是否已提前发到群里
   let sentHead = '' // 已提前发出的那句回话原文（用于去重）
+  let lastProgressAt = Date.now() // 上次向群里发进展的时间
 
   // 静默心跳：只要群里 10 分钟没收到任何消息就报一条，
   // 不管 agent 内部多忙——「在活动」不等于「用户有感知」，写代码 8 分钟
@@ -192,14 +196,31 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
           // 先把当前这段累加进来，再判定——顺序反了会导致第一次永远是空串、
           // 先回话永远发不出去（真实踩过）。
           pendingText += ev.text
+          const now = Date.now()
+
+          // ① 先回话：第一条短文本立刻发，让用户知道消息收到了
           if (!firstReplySent) {
             const head = pendingText.trim()
-            // 只提前发「一句短回话」：太长的是最终结论，等回合结束一起发
             if (head && head.length <= 80 && !head.includes('[[')) {
               firstReplySent = true
               sentHead = head
+              lastProgressAt = now
               sendChunked(groupId, head, { replyTo }).catch((e) =>
                 log(`[${groupId}] 先回话发送失败：${e.message}`),
+              )
+              pendingText = '' // 已发出，清掉避免影响后续判定
+              return
+            }
+          }
+
+          // ② 长任务的阶段进展：距上次发言够久、且本段有实质内容才补一条。
+          // 编译/测试能跑十几分钟，全程静默用户没法分辨「在忙」和「死了」。
+          if (firstReplySent && now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
+            const piece = ev.text.trim()
+            if (piece.length >= 20 && !piece.includes('[[')) {
+              lastProgressAt = now
+              sendChunked(groupId, piece, { replyTo }).catch((e) =>
+                log(`[${groupId}] 进展推送失败：${e.message}`),
               )
             }
           }
