@@ -6,7 +6,7 @@
  * - 续跑必须带同一个 sessionId，否则上下文全丢
  * - 状态落盘到 .state/，bridge 重启后还能接着聊
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const IDLE = 'idle'
@@ -51,6 +51,18 @@ export class SessionStore {
     this.#ensureDir()
     const f = this.#file(groupId)
     if (existsSync(f)) writeFileSync(f, '{}', 'utf8')
+  }
+
+  /** 所有落过盘的群 id（含被 clear 成 {} 的），供启动清理用 */
+  allGroupIds() {
+    this.#ensureDir()
+    try {
+      return readdirSync(this.dir)
+        .filter((f) => f.startsWith('group-') && f.endsWith('.json'))
+        .map((f) => f.slice('group-'.length, -'.json'.length))
+    } catch {
+      return []
+    }
   }
 }
 

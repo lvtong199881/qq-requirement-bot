@@ -610,11 +610,13 @@ if (config.groupPolicy.mode === 'allowlist' && !config.groups.length) {
 // status=running 但 sessionId=null 的孤儿（正常 running 必有 sessionId）。
 // 置回 waiting 并告知群里，防止用户的新消息被「上一个回合还在跑」卡住。
 function cleanupOrphanStates() {
-  for (const g of config.groups) {
-    const st = store.get(g.groupId)
+  // 遍历 .state 下所有群状态文件——groupPolicy=auto 时 config.groups 可能为空，
+  // 按 config 遍历会漏掉自动发现群的状态
+  for (const groupId of store.allGroupIds()) {
+    const st = store.get(groupId)
     if (!st || st.status !== 'running' || st.sessionId) continue
-    store.save(g.groupId, { ...st, status: 'waiting' })
-    log(`[${g.groupId}] 清理孤儿回合状态（上次 bridge 退出时的残留）`)
+    store.save(groupId, { ...st, status: 'waiting' })
+    log(`[${groupId}] 清理孤儿回合状态（上次 bridge 退出时的残留）`)
   }
 }
 cleanupOrphanStates()
