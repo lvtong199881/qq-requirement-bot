@@ -88,6 +88,10 @@
   .logs .error{color:var(--red)}
 
   .empty{color:var(--dim2);text-align:center;padding:44px;font-size:12.5px}
+  .btn-danger{background:rgba(248,81,73,.14);border-color:rgba(248,81,73,.45);color:#ff9c96}
+  .btn-danger:hover{background:rgba(248,81,73,.24);color:#ffc4c0}
+  .btn-primary{background:rgba(88,166,255,.14);border-color:rgba(88,166,255,.45);color:#9ccbff}
+  .btn-primary:hover{background:rgba(88,166,255,.24);color:#c9e2ff}
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2029;
          border:1px solid #2c333f;padding:10px 18px;border-radius:9px;font-size:12.5px;
          z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.5)}
@@ -159,10 +163,42 @@
 
     <!-- 操作菜单 -->
     <div v-if="menu" class="menu" :style="{left: menu.x + 'px', top: menu.y + 'px'}" @click.stop>
-      <button class="danger" @click="act('stop')">终止</button>
-      <button @click="act('restart')">重启</button>
+      <button class="danger" @click="askConfirm('stop')">终止</button>
+      <button @click="askConfirm('restart')">重启</button>
       <hr>
       <button @click="detail()">详细信息</button>
+    </div>
+
+    <!-- 操作确认弹窗 -->
+    <div v-if="confirmModal" class="mask" @click.self="confirmModal = null">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-head">
+          <h2 :style="{color: confirmModal.kind === 'stop' ? 'var(--red)' : 'var(--blue)'}">
+            {{ confirmModal.kind === 'stop' ? '终止任务' : '重启任务' }}
+          </h2>
+          <button class="x" @click="confirmModal = null">×</button>
+        </div>
+        <div class="modal-body">
+          <p style="margin:0 0 10px;font-size:13px;line-height:1.7">
+            {{ confirmModal.kind === 'stop'
+               ? '正在运行的任务会被立即打断，本回合的产出可能丢失。'
+               : '当前回合会先被中断，然后用「继续」重新起一轮。' }}
+          </p>
+          <dl class="kv" style="margin:0">
+            <dt>需求</dt><dd>{{ confirmModal.group.reqId || '（未绑定）' }}</dd>
+            <dt>QQ 群</dt><dd>{{ confirmModal.group.groupName || confirmModal.group.groupId }}</dd>
+            <dt v-if="confirmModal.group.activeTurn">当前回合</dt>
+            <dd v-if="confirmModal.group.activeTurn">已运行 {{ fmtDur(confirmModal.group.activeTurn.elapsedMs) }}</dd>
+          </dl>
+          <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px">
+            <button class="menu-btn" @click="confirmModal = null">取消</button>
+            <button class="menu-btn" :class="{ 'btn-danger': confirmModal.kind === 'stop', 'btn-primary': confirmModal.kind === 'restart' }"
+                    @click="doConfirm()">
+              {{ confirmModal.kind === 'stop' ? '确认终止' : '确认重启' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 详细信息弹窗 -->
@@ -228,6 +264,7 @@ createApp({
     const loading = ref(false)
     const menu = ref(null)
     const modal = ref(null)
+    const confirmModal = ref(null)
     const toast = ref(null)
     let timer = null
 
@@ -283,9 +320,20 @@ createApp({
       menu.value = { x: Math.min(r.left - 90, window.innerWidth - 160), y: r.bottom + 6, inst, g }
     }
 
-    async function act(kind) {
-      const { g } = menu.value
+    /** 点击菜单项 → 先弹确认，不直接执行 */
+    function askConfirm(kind) {
+      const { inst, g } = menu.value
       menu.value = null
+      confirmModal.value = { kind, inst, group: g }
+    }
+
+    async function doConfirm() {
+      const { kind, g } = confirmModal.value
+      confirmModal.value = null
+      await act(kind, g)
+    }
+
+    async function act(kind, g) {
       try {
         const r = await fetch(`/api/groups/${g.groupId}/${kind}`, { method: 'POST' })
         const d = await r.json()
@@ -323,9 +371,9 @@ createApp({
     })
 
     return {
-      instances, loading, menu, modal, toast,
+      instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount,
-      badgeOf, fmtDur, fmtTime, fmtClock, openMenu, act, detail,
+      badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
     }
   },
 }).mount('#app')
