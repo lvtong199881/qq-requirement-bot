@@ -77,6 +77,10 @@ function replySegment(messageId) {
  * @param {string} text 纯文本
  * @param {{replyTo?: number|string}} [opts]
  */
+// 距上次「群里收到消息」的时间——agent 内部活动不算，只由 sendText 成功发送后刷新。
+// 模块级：sendText 与各群的心跳共用（bridge 当前只服务少数群，共享一个计时够用）。
+let lastActivityAt = Date.now()
+
 async function sendText(groupId, text, { replyTo } = {}) {
   const wait = limiter.delayFor()
   if (wait > 0) await sleep(wait)
@@ -86,6 +90,7 @@ async function sendText(groupId, text, { replyTo } = {}) {
 
   try {
     await bot.sendGroupMsg(groupId, message)
+    lastActivityAt = Date.now() // 群里收到消息了，心跳重新计时
   } catch (err) {
     log(`发送失败（${groupId}）：${err.message}`)
   }
@@ -122,13 +127,13 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   const started = Date.now()
   const before = snapshot(st.projectDir)
   let pendingText = ''
-  let lastActivityAt = Date.now()
   let turnDone = false // runTurn 是否已 resolve
   let firstReplySent = false // agent 的「先回话」是否已提前发到群里
   let sentHead = '' // 已提前发出的那句回话原文（用于去重）
 
-  // 静默心跳：subagent 干活时群里可能长时间没动静，看着像卡死。
-  // 默认 10 分钟一条，可配 heartbeat.idleMinutes。
+  // 静默心跳：只要群里 10 分钟没收到任何消息就报一条，
+  // 不管 agent 内部多忙——「在活动」不等于「用户有感知」，写代码 8 分钟
+  // 群里就是 8 分钟静默。默认 10 分钟，可配 heartbeat.idleMinutes。
   const idleMs = (config.heartbeat?.idleMinutes ?? 10) * 60_000
   const heartbeat = setInterval(() => {
     if (config.heartbeat?.enabled === false) return
@@ -183,12 +188,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         if (ev.type === 'status' && ev.phase === 'turn_start') {
           detail('turn_start')
         }
-        // 任何活动都刷新心跳计时
-        if (ev.type === 'status' && ev.phase === 'step_end') {
-          lastActivityAt = Date.now()
-        }
         if (ev.type === 'text' && typeof ev.text === 'string') {
-          lastActivityAt = Date.now()
           // agent 按协议会先输出一句「打算做什么」——这一段要立刻发出去，
           // 不能等同回合结束，否则用户发完消息要干等好几分钟。
           if (!firstReplySent && pendingText.trim()) {
