@@ -5,6 +5,60 @@
  * upload_group_file。Node 22+ 自带 WebSocket，不需要任何依赖。
  */
 import { EventEmitter } from 'node:events'
+import { connect as netConnect } from 'node:net'
+
+/**
+ * 探一下目标端口通不通，用来给失败原因下结论。
+ * Node 的 WebSocket 在连接失败时 error 事件几乎不给信息，只能靠 TCP 层判断。
+ * @returns {Promise<'open'|'refused'|'timeout'|'unreachable'|'unknown'>}
+ */
+function probeTcp(wsUrl, timeoutMs = 2000) {
+  let host
+  let port
+  try {
+    const u = new URL(wsUrl)
+    host = u.hostname
+    port = Number(u.port || (u.protocol === 'wss:' ? 443 : 80))
+  } catch {
+    return Promise.resolve('unknown')
+  }
+
+  return new Promise((resolve) => {
+    const sock = netConnect({ host, port })
+    const timer = setTimeout(() => {
+      sock.destroy()
+      resolve('timeout')
+    }, timeoutMs)
+
+    sock.on('connect', () => {
+      clearTimeout(timer)
+      sock.destroy()
+      resolve('open')
+    })
+    sock.on('error', (err) => {
+      clearTimeout(timer)
+      if (err.code === 'ECONNREFUSED') return resolve('refused')
+      if (err.code === 'ENOTFOUND' || err.code === 'EHOSTUNREACH') return resolve('unreachable')
+      resolve('unknown')
+    })
+  })
+}
+
+/** 把探测结果翻译成人能读的排查建议 */
+export function explainProbe(result, wsUrl) {
+  switch (result) {
+    case 'refused':
+      return `端口没有服务在监听 —— ${wsUrl} 上是空的。NapCat 没启动，或没开「WebSocket 服务端」。`
+    case 'open':
+      return `端口能连上，但 WebSocket 握手失败 —— 地址写错了（是不是该用 /onebot/v11/ws 之类的路径？），或 token 不对。`
+    case 'timeout':
+      return `连接超时 —— 端口被防火墙挡了，或地址不是本机。`
+    case 'unreachable':
+      return `解析不到主机 —— 检查 ${wsUrl} 里的主机名/IP。`
+    default:
+      return `无法判断原因，检查 ${wsUrl} 是否写对。`
+  }
+}
 
 export class OneBot extends EventEmitter {
   /**
@@ -21,18 +75,38 @@ export class OneBot extends EventEmitter {
     this.connected = false
     this.selfId = null
     this.closed = false
+    this.failures = 0
+    this.lastError = null
+    this.reconnectTimer = null
+    this.keepAlive = null
   }
 
   connect() {
+    this.#startKeepAlive()
+
     const url = this.token
       ? `${this.wsUrl}${this.wsUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(this.token)}`
       : this.wsUrl
 
-    const ws = new WebSocket(url)
+    let ws
+    try {
+      ws = new WebSocket(url)
+    } catch (err) {
+      this.failures++
+      this.emit('connection-error', {
+        failures: this.failures,
+        probe: 'unknown',
+        reason: `WebSocket 地址非法：${err.message}`,
+      })
+      this.#scheduleReconnect()
+      return
+    }
     this.ws = ws
 
     ws.addEventListener('open', () => {
       this.connected = true
+      this.failures = 0
+      this.lastError = null
       this.emit('connected')
     })
 
@@ -42,19 +116,56 @@ export class OneBot extends EventEmitter {
       this.connected = false
       this.emit('disconnected')
       this.#failAllPending('OneBot 连接已断开')
-      if (!this.closed) {
-        setTimeout(() => this.connect(), this.reconnectMs).unref?.()
-      }
+      this.#scheduleReconnect()
     })
 
+    // 注意：不能 emit('error')——EventEmitter 对 'error' 有特殊语义，
+    // 没有监听器时会把异常抛出去杀进程。用自定义事件名。
     ws.addEventListener('error', () => {
-      // close 事件会接手重连，这里只上报，避免重复调度
-      this.emit('error', new Error('OneBot WebSocket 错误'))
+      this.failures++
+      // WebSocket 的 error 事件几乎没有可用信息，改由 TCP 探测给出原因
+      this.emit('connection-error', { failures: this.failures, probing: true })
+      probeTcp(this.wsUrl).then((result) => {
+        this.emit('connection-error', {
+          failures: this.failures,
+          probe: result,
+          reason: explainProbe(result, this.wsUrl),
+        })
+      })
     })
+  }
+
+  #scheduleReconnect() {
+    if (this.closed) return
+    // 退化式退避：前 3 次快速重试，之后拉长到 30 秒，避免刷屏
+    const delay =
+      this.failures <= 3 ? this.reconnectMs : Math.min(this.reconnectMs * 2 ** Math.min(this.failures - 2, 4), 30000)
+
+    // 绝不能 unref：这个定时器是「保持进程活着等 NapCat」的唯一理由。
+    // unref 后一断开事件循环就空，进程会静默退出。
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.connect()
+    }, delay)
+  }
+
+  /** 有一个常驻定时器，保证即使没连上也别让进程空转退出 */
+  #startKeepAlive() {
+    if (this.keepAlive) return
+    this.keepAlive = setInterval(() => {}, 60_000)
   }
 
   close() {
     this.closed = true
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    if (this.keepAlive) {
+      clearInterval(this.keepAlive)
+      this.keepAlive = null
+    }
     try {
       this.ws?.close()
     } catch {

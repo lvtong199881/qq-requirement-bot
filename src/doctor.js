@@ -103,8 +103,37 @@ const reachable = await new Promise((resolve) => {
     done(false)
   }
 })
-if (reachable) ok(`能连上 ${wsUrl}`)
-else warn(`连不上 ${wsUrl}（NapCat 没起来？没配正向 WS？）—— 不影响 --turn 自检`)
+if (reachable) {
+  ok(`能连上 ${wsUrl}`)
+} else {
+  // 连不上时给出具体原因，别只丢一句「连不上」
+  const { explainProbe } = await import('./onebot.js')
+  let probe = 'unknown'
+  try {
+    const net = await import('node:net')
+    const u = new URL(wsUrl)
+    probe = await new Promise((resolve) => {
+      const sock = net.connect({ host: u.hostname, port: Number(u.port || 80) })
+      const t = setTimeout(() => {
+        sock.destroy()
+        resolve('timeout')
+      }, 2000)
+      sock.on('connect', () => {
+        clearTimeout(t)
+        sock.destroy()
+        resolve('open')
+      })
+      sock.on('error', (e) => {
+        clearTimeout(t)
+        resolve(e.code === 'ECONNREFUSED' ? 'refused' : e.code === 'ENOTFOUND' ? 'unreachable' : 'unknown')
+      })
+    })
+  } catch {
+    /* keep unknown */
+  }
+  warn(explainProbe(probe, wsUrl))
+  console.log('     —— 不影响 --turn 自检，但启动 bridge 前必须解决')
+}
 
 if (runRealTurn) {
   console.log('\n6. 真实回合（会消耗 token）')

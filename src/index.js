@@ -269,6 +269,26 @@ bot.on('disconnected', () => {
   log('OneBot 断开，自动重连中…')
 })
 
+// 连接失败给明确诊断，并做节流，避免重连时空刷屏
+let lastDiagAt = 0
+let diagHints = 0
+bot.on('connection-error', (info) => {
+  // 探测阶段先不打印，等结论出来
+  if (info.probing) return
+
+  const now = Date.now()
+  if (now - lastDiagAt < 10000) return
+  lastDiagAt = now
+
+  log(`连不上 OneBot（第 ${info.failures} 次）：${info.reason ?? '未知原因'}`)
+  if (diagHints++ === 0) {
+    log(
+      'NapCat 侧要开「WebSocket 服务端」：设置 → 网络配置 → 新建 WS 服务端，' +
+        '端口与 onebot.ws 一致；有 token 就填到 onebot.token。',
+    )
+  }
+})
+
 /** 群里第一次见到这个名字时补登记，让日志和「本群」能显示群名 */
 async function ensureGroupInfo(groupId) {
   if (knownGroups.has(groupId)) return knownGroups.get(groupId)
