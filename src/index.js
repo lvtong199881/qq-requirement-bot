@@ -12,6 +12,14 @@ import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, splitChunks, RateLimiter, sleep } from './format.js'
 import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage } from './artifacts.js'
+import {
+  classifyMessage,
+  isAmbiguous,
+  anchorBlock,
+  routedPrompt,
+  ambiguousReply,
+  INTENT,
+} from './router.js'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync } from 'node:fs'
 
@@ -99,7 +107,7 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 // ────────────────────────────── 一回合 ──────────────────────────────
 
-async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHint }) {
+async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent }) {
   const st = machine.peek(groupId)
   if (!st) return
 
@@ -113,9 +121,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
 
   const started = Date.now()
   const before = snapshot(st.projectDir)
-  let lastSent = ''
   let pendingText = ''
-  let turnLabel = ''
   let lastActivityAt = Date.now()
   let turnDone = false // runTurn 是否已 resolve
   let firstReplySent = false // agent 的「先回话」是否已提前发到群里
@@ -131,7 +137,8 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
     lastActivityAt = Date.now()
     const waitedMin = Math.round(silentMs / 60000)
     const { stage } = currentStage(st.projectDir)
-    const phase = stage ? `正在${stage}阶段` : '正在推进'
+    const head = st.reqId ? `${st.reqId} · ` : ''
+    const phase = stage ? `${head}正在${stage}阶段` : `${head}正在推进`
     sendPlain(groupId, `${phase}，已等待 ${waitedMin} 分钟。`).catch(() => {})
   }, 60_000)
 
@@ -143,13 +150,15 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
   log(`[${groupId}] 回合开始${isContinuation ? '（续跑）' : '（新会话）'}：${userText.slice(0, 60)}`)
 
   try {
-    // 新会话带上群聊协议；续跑只发用户原话（协议已在首轮上下文里）。
-    // 会话丢失后的「继续」要带上续跑上下文，否则 agent 会自己挑活、接到别的需求上。
-    const prompt = isContinuation
-      ? userText
-      : `${gateInstructions({ botName: config.bot.name, approval: st.approval })}\n\n---\n\n` +
-        (resumeHint ? `${resumeHint}\n\n---\n\n` : '') +
-        `【用户消息】\n${userText}`
+    // 协议只在首轮注入；锚点每回合都注入（防走偏第 3 层）；
+    // 消息内容由路由层给出的确定性骨架承载（第 2 层）。
+    const parts = []
+    if (!isContinuation) {
+      parts.push(gateInstructions({ botName: config.bot.name, approval: st.approval }))
+    }
+    if (anchor) parts.push(anchor)
+    if (promptBody) parts.push(promptBody)
+    const prompt = parts.join('\n\n---\n\n')
 
     const result = await runTurn({
       dshBin: config.dshBin,
@@ -198,7 +207,6 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
 
     turnDone = true
     const gate = parseGate(result.finalText || pendingText)
-    turnLabel = gate.label
 
     // 最终输出：引用用户那条消息。
     // 若开头那句「先回话」已经在群里发过，就只发剩余部分，避免同一句话出现两遍。
@@ -234,13 +242,34 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
     if (config.upload.enabled) {
       const after = snapshot(st.projectDir)
       const all = diffSnapshot(before, after, config.upload)
-      // 只回传本次回合动过的需求目录：一条需求跑完不该把别的需求的旧文档也翻出来
-      const reqIds = touchedReqIds(before, after)
-      const changed =
-        reqIds.length > 0
-          ? all.filter((f) => reqIds.some((id) => f.path.includes(`/docs/requirements/${id}/`)))
-          : all
+
+      // ── 第 4 层：输出审计 ──
+      // 绑定需求之外的 docs/requirements 目录被改动 = agent 越界。
+      // 产物不回传群里，发警告。编排记录不自动回滚（动产物太危险），交人判断。
+      const boundReqId = st.reqId
+      const violated = boundReqId
+        ? touchedReqIds(before, after).filter((id) => id !== boundReqId)
+        : []
+      const allWrite = touchedReqIds(before, after)
+      const inBound = allWrite.filter((id) => id === boundReqId)
+
+      const changed = all.filter((f) =>
+        boundReqId
+          ? inBound.some((id) => f.path.includes(`/docs/requirements/${id}/`)) ||
+            !f.path.includes('/docs/requirements/')
+          : true,
+      )
       const failed = []
+
+      if (violated.length) {
+        log(`[${groupId}] ⚠️ 越界写入检测：${violated.join(', ')}（绑定=${boundReqId}）`)
+        await sendPlain(
+          groupId,
+          `⚠️ 越界警告：这一回合动了绑定需求（${boundReqId}）之外的目录：${violated.join('、')}。` +
+            `相关文件我不会发到群里。如果不是你有意安排，回复「停」然后告诉我。`,
+          { replyTo },
+        )
+      }
       for (const f of changed) {
         if (!existsSync(f.path)) continue
         try {
@@ -266,10 +295,18 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, resumeHi
     const nextStatus =
       gate.state === 'waiting' ? STATES.WAITING : gate.state === 'done' ? STATES.IDLE : STATES.WAITING
 
+    // 绑定落定：回合后编排记录里最新的需求就是本群绑定的需求
+    const stageInfo = currentStage(st.projectDir)
+    const reqIdToBind = st.reqId || stageInfo.reqId
+    if (reqIdToBind && reqIdToBind !== st.reqId) {
+      log(`[${groupId}] 绑定需求：${reqIdToBind}`)
+    }
+
     persist({
       sessionId: result.sessionId ?? st.sessionId,
       status: nextStatus,
       waitingLabel: gate.state === 'waiting' ? gate.label : '',
+      reqId: reqIdToBind,
       turn: st.turn + 1,
       projectDir: st.projectDir, // 群首次出现时把项目目录一起固化
     })
@@ -425,13 +462,17 @@ bot.on('message', async (frame) => {
   const text = stripAt(frame.message)
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
 
-  if (STOP_WORDS.has(text)) {
+  // ── 意图路由：bridge 决定每条消息是什么，agent 不猜 ──
+  const { intent, detail: intentDetail } = classifyMessage(text)
+
+  // 停：不打断 agent，直接杀回合
+  if (intent === INTENT.STOP) {
     const killed = machine.interrupt(groupId)
     await sendPlain(groupId, killed ? '已打断当前回合。' : '当前没有在跑的回合。', { replyTo })
     return
   }
 
-  if (HELP_WORDS.has(text)) {
+  if (intent === INTENT.HELP) {
     await sendPlain(
       groupId,
       [
@@ -444,62 +485,114 @@ bot.on('message', async (frame) => {
         '  @我 通过 / 提修改意见  → 放行或打回当前阶段',
         '  @我 继续              → 上一轮没收敛时接着跑',
         '  @我 停                → 打断当前回合',
-        '  @我 新需求 / 重开      → 清空上下文重新开始',
-        '  @我 本群              → 看当前群号和项目目录',
+        '  @我 新需求 <描述>      → 结束当前需求，开新的',
+        '  @我 本群              → 看当前需求绑定与进度',
       ].join('\n'),
+      { replyTo },
     )
     return
   }
 
-  if (text === '本群' || text === '群信息') {
+  if (intent === INTENT.INFO) {
     const info = knownGroups.get(groupId)
+    const { stage } = currentStage(st.projectDir)
     await sendPlain(
       groupId,
       [
         `群号：${groupId}`,
         `群名：${info?.name ?? '未知'}`,
+        `绑定需求：${st.reqId ?? '（还没有）'}`,
+        `当前阶段：${stage ?? '未知'}`,
+        st.waitingLabel ? `正在等：${st.waitingLabel}` : null,
         `项目目录：${st.projectDir}`,
         `批准模式：${st.approval === 'manual' ? '手动批准' : '自动推进'}`,
-        `会话：${st.sessionId ? '进行中（' + st.status + '）' : '还没有'}`,
-      ].join('\n'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
+      { replyTo },
     )
     return
   }
 
-  if (!text) {
-    await sendPlain(groupId, `我在。直接说要做什么就行，比如「首页加个欢迎弹窗，手动批准」。发「帮助」看完整说明。`)
+  // 新需求：显式换绑。带描述就受理新需求，不带描述就清绑定
+  if (intent === INTENT.NEW_REQ) {
+    if (!intentDetail) {
+      store.clear(groupId)
+      await sendPlain(groupId, '已清空。下一条消息发新需求，我来绑定。', { replyTo })
+      return
+    }
+    // 带描述：清掉旧绑定，把描述作为新需求受理（回合结束后绑定新 reqId）
+    store.clear(groupId)
+    st.reqId = null
+    st.sessionId = null
+    st.status = STATES.IDLE
+  }
+
+  // 空消息
+  if (!text.trim()) {
+    await sendPlain(groupId, `我在。直接说要做什么就行。发「帮助」看完整说明。`, { replyTo })
     return
   }
 
-  // 重开：清掉旧会话上下文
-  if (text === '新需求' || text === '重开') {
-    store.clear(groupId)
-    await sendPlain(groupId, '已清空上下文，下一条消息开始新需求。', { replyTo })
+  // ── 绑定检查：批准/打回/继续 必须已有绑定需求 ──
+  if (
+    (intent === INTENT.APPROVE || intent === INTENT.REJECT || intent === INTENT.CONTINUE) &&
+    !st.reqId
+  ) {
+    // 尝试从编排记录恢复绑定（bridge 重启/状态丢失的自愈）
+    const { stage, reqId } = currentStage(st.projectDir)
+    if (reqId) {
+      st.reqId = reqId
+      store.save(groupId, { ...st, reqId })
+      log(`[${groupId}] 绑定自愈：从编排记录恢复 reqId=${reqId}`)
+    } else {
+      await sendPlain(
+        groupId,
+        '这个群里还没有进行中的需求。直接说需求就行，比如「首页加个欢迎弹窗，手动批准」。',
+        { replyTo },
+      )
+      return
+    }
+  }
+
+  // ── 含糊消息：bridge 反问，不交给 agent 猜 ──
+  if (intent === INTENT.CONTENT && isAmbiguous(text, st)) {
+    await sendPlain(groupId, ambiguousReply(st.waitingLabel), { replyTo })
     return
   }
 
   const isContinuation = !!st.sessionId && st.status !== STATES.IDLE
 
-  // 会话丢了但流程没走完（比如 bridge 重启/429 中断）：
-  // 把编排记录里的当前状态作为提示注入，让 agent 精准接上，而不是自己重新挑活
-  let resumeHint = ''
-  if (!st.sessionId && st.status === STATES.WAITING) {
-    const { stage, reqId } = currentStage(st.projectDir)
-    if (reqId) {
-      resumeHint =
-        `【续跑上下文】本群正在推进需求 ${reqId}，编排记录显示当前停在「${stage || '未知'}」阶段，` +
-        `产物已归档在 docs/requirements/${reqId}/。先读该目录下的编排记录.md 和已有产物，` +
-        `从停下的地方继续，不要接手其他需求，不要从头重跑。用户正在等这个需求的进展。`
-    }
-  }
+  // ── 编排锚点 + 路由骨架（第 3 层：每回合强制注入）──
+  const { stage: anchorStage, reqId: anchorReq } = currentStage(st.projectDir)
+  const effectiveReqId = st.reqId || anchorReq
+  const anchor = effectiveReqId
+    ? anchorBlock({ reqId: effectiveReqId, projectDir: st.projectDir, stage: anchorStage })
+    : ''
+
+  const promptBody = routedPrompt({
+    intent,
+    userText: text,
+    bind: {
+      reqId: effectiveReqId,
+      stage: anchorStage,
+      waitingLabel: st.waitingLabel,
+    },
+  })
 
   if (isDryRun) {
-    log(`[dry-run] 将执行的 prompt：\n${text}`)
-    await sendPlain(groupId, `[dry-run] 收到，不实际执行。sessionId=${st.sessionId || '无'}`, { replyTo })
+    log(`[dry-run] 意图=${intent} 绑定=${effectiveReqId ?? '无'}\nprompt：\n${anchor}\n${promptBody}`)
+    await sendPlain(groupId, `[dry-run] 收到，不实际执行。`, { replyTo })
     return
   }
 
-  handleTurn(groupId, text, { isContinuation, replyTo, resumeHint }).catch((e) => log(`回合启动失败：${e.message}`))
+  handleTurn(groupId, text, {
+    isContinuation,
+    replyTo,
+    anchor,
+    promptBody,
+    intent,
+  }).catch((e) => log(`回合启动失败：${e.message}`))
 })
 
 // ────────────────────────────── 启动 ──────────────────────────────
