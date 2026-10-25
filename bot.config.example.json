@@ -3,40 +3,33 @@
   "skillDir": "",
   "dshBin": "dsh",
   "profile": "qqbot",
-
   "bot": {
     "qq": "",
     "name": "产品同学"
   },
-
   "onebot": {
     "ws": "ws://127.0.0.1:3001",
     "token": ""
   },
-
   "groupPolicy": {
     "mode": "auto"
   },
-
   "approval": "manual",
-
   "limits": {
     "maxMessagesPerMinute": 10,
     "chunkChars": 3000,
     "maxChunksPerTurn": 4
   },
-
   "heartbeat": {
     "enabled": true,
     "idleMinutes": 10
   },
-
   "upload": {
     "enabled": true,
     "maxFiles": 8,
     "maxFileMB": 20
   },
-
   "turnTimeoutMs": 2700000,
-  "verbose": false
+  "verbose": false,
+  "envHints": ""
 }
