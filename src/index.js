@@ -610,6 +610,17 @@ bot.connect()
 
 const shutdown = () => {
   log('正在退出…')
+  // 有回合在跑时告知群里，避免「发了消息没下文」
+  try {
+    for (const groupId of machine.active.keys()) {
+      if (machine.isRunning(groupId)) {
+        // 尽力而为：连接可能已断
+        bot.sendGroupMsg(groupId, 'bridge 正在重启，当前回合的结果可能不会送达。重启后发「继续」可以接着跑。').catch(() => {})
+      }
+    }
+  } catch {
+    /* ignore */
+  }
   bot.close()
   process.exit(0)
 }
