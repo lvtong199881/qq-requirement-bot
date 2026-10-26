@@ -72,7 +72,7 @@ export const MESSAGE_TEMPLATES = {
     label: '没有进行中阶段 · 有等待事项',
     desc: '比上一条多带出「在等什么」，用户才知道该确认什么',
     vars: ['stageDone', 'waitingLabel'],
-    template: '{{stageDone}}阶段已完成，等你确认：{{waitingLabel}}',
+    template: '{{stageDone}}阶段已完成，等你确认：\n{{waitingLabel}}',
   },
   ackIdle: {
     group: '回执（消息 1）',

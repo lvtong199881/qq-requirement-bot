@@ -97,7 +97,11 @@ console.log('\n== 默认渲染 ==')
     stageDone: '验收',
     waitingLabel: '确认按这两条提交吗？回复「提交」我就执行',
   })
-  check('有等待事项时带出内容', pending === '验收阶段已完成，等你确认：确认按这两条提交吗？回复「提交」我就执行', pending)
+  check(
+    '等待内容另起一行',
+    pending === '验收阶段已完成，等你确认：\n确认按这两条提交吗？回复「提交」我就执行',
+    JSON.stringify(pending),
+  )
 
   const dec = renderMessage('decision', { content: '1）大字体\n- A 不改\n- B 改' })
   check('决策换行排版', dec === '需要决策：\n1）大字体\n- A 不改\n- B 改', JSON.stringify(dec))
