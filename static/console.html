@@ -865,11 +865,23 @@ createApp({
       const { inst, g } = menu.value
       menu.value = null
       modal.value = { inst, group: g, logs: [] }
+      const pid = inst.instance?.pid
       try {
-        const r = await fetch('/api/logs?pid=' + inst.instance?.pid + '&n=200')
-        const d = await r.json()
-        modal.value = { ...modal.value, logs: d.logs || [] }
-      } catch { /* 拿不到就留空 */ }
+        // 详情单独拉完整状态：列表接口只带列表画得出的字段（没有阶段表和事件流）
+        const [detailRes, logsRes] = await Promise.all([
+          fetch('/api/instances/' + pid).then((r) => r.json()),
+          fetch('/api/logs?pid=' + pid + '&n=200')
+            .then((r) => r.json())
+            .catch(() => ({ logs: [] })),
+        ])
+        const full = detailRes?.instance && Array.isArray(detailRes.groups) ? detailRes : null
+        const group = full
+          ? full.groups.find((x) => String(x.groupId) === String(g.groupId)) ?? g
+          : g
+        modal.value = { inst: full ?? inst, group, logs: logsRes.logs || [] }
+      } catch {
+        /* 拿不到完整状态就用手上的列表数据兜底，日志留空 */
+      }
     }
 
     const closeAll = () => { menu.value = null }

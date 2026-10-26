@@ -19,6 +19,7 @@ node test/full.js             # 全链路：注入群消息 → 跑 dsh → 收�
 node test/e2e.js --no-llm     # 只测 OneBot 收发与路由，不起 dsh
 node test/full.js --no-llm    # 起真实 bridge 进程，验证握手与路由
 node test/resilience.js       # NapCat 没起来 / 中途断开时，bridge 必须活着并自愈
+node test/panel-api.js        # 面板接口分层：列表拿精简数据、详情单独拉完整状态
 ```
 
 ## 纯逻辑单测

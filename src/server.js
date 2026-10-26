@@ -33,6 +33,7 @@ async function readBody(req) {
  * @param {import('./runtime.js').Runtime} o.runtime
  * @param {object} o.config
  * @param {() => object} o.snapshot  组装本实例完整状态的函数（由 index.js 提供）
+ * @param {() => object=} o.summary  精简版快照，只含面板列表要画的字段
  * @param {(groupId: string) => Promise<object>} o.stopGroup
  * @param {(groupId: string) => Promise<object>} o.restartGroup
  * @param {string=} o.token  写操作需要的令牌；不给则只允许本机无 token
@@ -41,6 +42,7 @@ export function createBridgeServer({
   runtime,
   config,
   snapshot,
+  summary,
   stopGroup,
   restartGroup,
   applySettings,
@@ -61,6 +63,11 @@ export function createBridgeServer({
       // ── 只读 ──
       if (method === 'GET' && path === '/api/status') {
         return json(res, 200, snapshot())
+      }
+
+      // 精简版：面板大盘每 3 秒轮询的就是这个
+      if (method === 'GET' && path === '/api/summary') {
+        return json(res, 200, summary ? summary() : snapshot())
       }
 
       if (method === 'GET' && path === '/api/logs') {

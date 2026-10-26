@@ -49,12 +49,12 @@ QQ 群名、发起人、当前阶段状态徽章，每行末尾 `⋯` 菜单提�
 ```
 bridge（每个实例）
 ├── .instances/<pid>.json   启动时注册，退出时删除——面板靠它发现实例
-└── 127.0.0.1:7878          /api/status、/api/logs、/api/ping、/api/settings、
-                            /api/groups/:id/{stop,restart}
+└── 127.0.0.1:7878          /api/summary、/api/status、/api/logs、/api/ping、
+                            /api/settings、/api/groups/:id/{stop,restart}
 
 panel（一个进程）
 ├── 扫描 .instances/        发现所有实例
-├── 逐个拉 /api/status      聚合成一份数据
+├── 逐个拉 /api/summary     聚合成列表（只含列表要画的字段）
 └── 127.0.0.1:7879          /console 页面 + 转发操作到对应实例
 ```
 
@@ -64,15 +64,21 @@ panel（一个进程）
 
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/status` | 本实例完整状态（bridge） |
+| `GET /api/summary` | 本实例的精简状态，只含列表要画的字段（bridge） |
+| `GET /api/status` | 本实例完整状态，含阶段表与最近 50 条事件（bridge） |
 | `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000（bridge） |
 | `GET /api/ping` | 存活探测，返回 pid（bridge） |
 | `POST /api/settings` | 面板推配置过来时热更新本实例（bridge） |
 | `POST /api/groups/:id/stop` | 终止该群当前任务（bridge） |
 | `POST /api/groups/:id/restart` | 重启该群任务，先掐断再用「继续」骨架重跑（bridge） |
-| `GET /api/instances` | 聚合所有实例（panel） |
+| `GET /api/instances` | 聚合所有实例的精简状态（panel） |
+| `GET /api/instances/:pid` | 单个实例的完整状态，点「详细信息」时才拉（panel） |
 | `GET /api/settings` | 读取白名单与群消息文案（panel） |
 | `PUT /api/settings` | 保存白名单 / 文案并热更新所有实例（panel） |
+
+**为什么分两个接口**：需求大盘每 3 秒轮询一次，`/api/instances` 若带上每个实例的
+最近 50 条事件和阶段表，绝大部分字段页面根本不画。列表走 `/api/summary`，完整状态
+留给 `/api/instances/:pid`，只在点开「详细信息」时按需拉一次。
 
 写操作需要 `panel.token` 非空时携带 `x-panel-token`；留空则只依赖「仅监听 127.0.0.1」。
 

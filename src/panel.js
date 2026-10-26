@@ -49,11 +49,11 @@ function serveStatic(res, name) {
 }
 
 /** 拉一个实例的状态；失败返回带 error 的占位对象 */
-async function fetchStatus(inst, timeoutMs = 2500) {
+async function fetchStatus(inst, path = '/api/status', timeoutMs = 2500) {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   try {
-    const r = await fetch(`http://127.0.0.1:${inst.port}/api/status`, { signal: ac.signal })
+    const r = await fetch(`http://127.0.0.1:${inst.port}${path}`, { signal: ac.signal })
     if (!r.ok) throw new Error(`HTTP ${r.status}`)
     return await r.json()
   } catch (err) {
@@ -70,7 +70,7 @@ async function fetchStatus(inst, timeoutMs = 2500) {
 /** 把操作转发给「持有某个群」的那个实例 */
 async function dispatch(instances, groupId, action, token) {
   for (const inst of instances) {
-    const status = await fetchStatus(inst)
+    const status = await fetchStatus(inst, '/api/summary')
     if (status.unreachable) continue
     const owns = (status.groups ?? []).some((g) => String(g.groupId) === String(groupId))
     if (!owns) continue
@@ -202,11 +202,19 @@ export function startPanel({ repoRoot, port = 7879, token }) {
       if (path === '/' || path === '/console') return serveStatic(res, 'console.html')
       if (path === '/vue.js') return serveStatic(res, 'vue.global.prod.js')
 
-      // 聚合所有实例
+      // 聚合所有实例 —— 只拉精简快照，需求大盘每 3 秒轮询一次
       if (path === '/api/instances') {
         const list = registry.list({ cleanup: true })
-        const statuses = await Promise.all(list.map((i) => fetchStatus(i)))
+        const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
         return json(res, 200, { instances: statuses, at: Date.now() })
+      }
+
+      // 单个实例的完整状态 —— 点「详细信息」时才拉
+      const detailMatch = path.match(/^\/api\/instances\/(\d+)$/)
+      if (detailMatch && req.method === 'GET') {
+        const inst = registry.list().find((x) => String(x.pid) === detailMatch[1])
+        if (!inst) return json(res, 404, { ok: false, error: '这个实例已经不在运行了' })
+        return json(res, 200, await fetchStatus(inst, '/api/status'))
       }
 
       // 某实例的日志

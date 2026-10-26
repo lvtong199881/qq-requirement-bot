@@ -1133,8 +1133,16 @@ cleanupOrphanStates()
 
 // ─────────────────── 管理面板的 HTTP API ───────────────────
 
-/** 组装本实例的完整状态快照（面板 /api/status 的唯一数据源） */
-function buildSnapshot() {
+/**
+ * 组装本实例的状态快照。
+ *
+ * full=true  → /api/status，面板「详细信息」用：带阶段表和最近 50 条事件。
+ * full=false → /api/summary，需求大盘列表用：只留列表画得出来的字段。
+ *
+ * 两者共用同一份计算，避免列表和详情各算一套、结果对不上。
+ * 列表每 3 秒轮询一次，把 50 条日志和阶段表都带上纯属浪费带宽。
+ */
+function buildSnapshot({ full = true } = {}) {
   const groups = machine
     .listAll()
     // 过滤掉项目目录已消失的残留（比如测试用临时目录留下的 state 文件）
@@ -1150,25 +1158,28 @@ function buildSnapshot() {
     const stages = table.stages
     const running = stages.find((x) => x.status.includes('进行中'))
     const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
-    return {
+    const item = {
       groupId: g.groupId,
       groupName: knownGroups.get(g.groupId)?.name ?? null,
       // state 里丢了就用编排记录恢复（面板不该显示「未绑定需求」）
       reqId: g.reqId ?? table.reqId ?? null,
       stage: (running ?? lastDone)?.name ?? null,
       stageStatus: running ? '进行中' : lastDone ? '已完成' : '未开始',
-      stageStartedAt: g.stageStartedAt || null,
       status: g.status,
       waitingLabel: g.waitingLabel || '',
       turn: g.turn ?? 0,
       initiator: g.initiator ?? null,
       lastActiveAt: g.lastActiveAt ?? null,
       activeTurn: runtime.turnInfo(g.groupId),
-      stages: stages.map((x) => ({ name: x.name, status: x.status })),
     }
+    if (full) {
+      item.stageStartedAt = g.stageStartedAt || null
+      item.stages = stages.map((x) => ({ name: x.name, status: x.status }))
+    }
+    return item
   })
 
-  return {
+  const snap = {
     instance: {
       pid: process.pid,
       port: apiPort,
@@ -1195,9 +1206,10 @@ function buildSnapshot() {
     },
     groups,
     resources: runtime.resources(),
-    recentEvents: runtime.recentLogs(50),
     at: Date.now(),
   }
+  if (full) snap.recentEvents = runtime.recentLogs(50)
+  return snap
 }
 
 /** 面板：终止某群当前任务 */
@@ -1251,6 +1263,7 @@ function startApi() {
     runtime,
     config,
     snapshot: buildSnapshot,
+    summary: () => buildSnapshot({ full: false }),
     stopGroup,
     restartGroup,
     // 面板保存设置后热更新，不用重启 bridge
