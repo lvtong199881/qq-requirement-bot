@@ -778,9 +778,15 @@ createApp({
      */
     function badgeOf(g) {
       const stage = g.stage || ''
-      // 回合正在跑
+      // 回合正在跑。但只有编排记录里真有「进行中」阶段时才说「XX中」，
+      // 否则会出现「验收已完成」的同时面板写「验收中」这种自相矛盾。
       if (g.activeTurn) {
-        return { cls: 'b-green', name: stage ? `${stage}中` : '执行中', dur: fmtDur(g.activeTurn.elapsedMs) }
+        const running = g.stageStatus === '进行中'
+        return {
+          cls: 'b-green',
+          name: running && stage ? `${stage}中` : '执行中',
+          dur: fmtDur(g.activeTurn.elapsedMs),
+        }
       }
       // 有明确的等待事项
       if (g.waitingLabel) {
