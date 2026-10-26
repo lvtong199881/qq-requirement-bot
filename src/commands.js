@@ -64,7 +64,7 @@ export function helpText({ isAdmin, statusLine, templates }) {
     {
       list,
       statusLine: statusLine ? `\n\n${statusLine}` : '',
-      permissionNote: '只有群主和群管理员能让 bot 干活，其他成员的 @ 会被静默忽略。',
+      permissionNote: '只有群主、群管理员和 adminUsers 白名单能让 bot 干活（superAdmin 不受群限制），其他成员的 @ 会被静默忽略。',
     },
     templates,
   )

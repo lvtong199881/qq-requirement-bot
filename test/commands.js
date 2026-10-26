@@ -54,7 +54,7 @@ console.log('\n== 帮助文案 ==')
   check('列出 /stop', forUser.includes('/stop'))
   check('列出 /release', forUser.includes('/release'))
   check('标注管理员指令', forUser.includes('（管理员）'))
-  check('说明权限模型', forUser.includes('只有群主和群管理员'))
+  check('说明权限模型', forUser.includes('只有群主、群管理员'))
   check('带当前状态', forUser.includes('当前状态：开发阶段中。'))
 }
 
@@ -71,7 +71,8 @@ console.log('\n== release 确认 ==')
 console.log('\n== 权限拒绝文案 ==')
 {
   const d = deniedText('release')
-  check('说明需要群管权限', d.includes('群主或群管理员'))
+  check('说明需要群主权限', d.includes('需要群主权限'))
+  check('点明群管理员不能执行', d.includes('群管理员不能执行'))
   check('带上指令名', d.includes('/release'))
 }
 

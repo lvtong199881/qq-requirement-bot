@@ -202,7 +202,7 @@ export const MESSAGE_TEMPLATES = {
     group: '指令与操作',
     label: '无权限使用指令',
     vars: ['cmd'],
-    template: '/{{cmd}} 需要群主或群管理员权限。',
+    template: '/{{cmd}} 需要群主权限（群管理员不能执行）。要放开请把 QQ 号加进 adminUsers。',
   },
   help: {
     group: '指令与操作',
