@@ -1,5 +1,7 @@
 # qq-requirement-bot
 
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 把 `requirement-spec` skill 接到 QQ 群：在群里 @产品同学 说一句需求，它按「产品需求 → 设计 → 技术方案 → 开发 → 代码评审 → 测试 → 验收」全流程自动跑，各阶段进度和产物自动同步回群里。
 
 ```
@@ -28,11 +30,11 @@ bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合�
 
 ## 文档
 
-从 **[安装指南](docs/INSTALL.md)** 开始——前置条件、NapCat、skill 准备、profile、配置、自检、启动都在里面。其余按需查阅：
+最快一条命令：`./install.sh` —— 环境检查、profile、配置、NapCat 容器全都备好，只剩扫码登录。详见 **[安装指南](docs/INSTALL.md)**。其余按需查阅：
 
 | 文档 | 内容 |
 | --- | --- |
-| [安装指南](docs/INSTALL.md) | 前置条件、NapCat、skill 准备、profile、配置、自检、启动、验证 |
+| [安装指南](docs/INSTALL.md) | 一键脚本用法、手动安装全流程、NapCat 的 Docker 与 macOS 两种装法 |
 | [配置说明](docs/CONFIG.md) | 全部配置字段、群策略（auto / allowlist / deny）、skillDir 自动探测 |
 | [群里的指令](docs/COMMANDS.md) | 斜杠指令、权限模型、自然语言识别词、群消息类型、ASK 机制 |
 | [管理面板](docs/PANEL.md) | 需求大盘 / 实例 / 设置三页、进程架构、HTTP API、日志 |
@@ -46,4 +48,8 @@ bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合�
 3. **headless 没有 `ask_user_question`**。所有提问都是纯文本 + `[[WAITING]]` 停下，靠下一次 @ 回答。这是 headless 任务模型的限制，不是实现偷懒。
 4. **同一项目目录只能绑一个群**。两个群绑同一目录会并发写坏 `技术方案.md`。
 5. **回合之间进程重启**。shell 环境、临时变量不跨回合；流程状态靠 `docs/requirements/<需求标识>/编排记录.md` 和 `技术方案.md` 的开发内容表续跑，这本来就是 requirement-spec 的设计。
+
+## 许可证
+
+[MIT](LICENSE) © lvtong199881
 
