@@ -972,7 +972,15 @@ bot.on('message', async (frame) => {
   }
 
   // 消息 1：用户发消息后立刻回一条当前状态（不等 agent）
-  await sendAck(groupId, st, replyTo, intent)
+  const ack = await sendAck(groupId, st, replyTo, intent)
+
+  // 需求已经收尾完成：不再起回合。
+  // 之前只改回执不改行为，用户说「提交」照样会拉起一个回合，
+  // agent 面对一个已经交付完的需求只能瞎问，群里就不断冒出「需要决策」。
+  if (ack?.allDone && intent !== INTENT.NEW_REQ) {
+    log(`[${groupId}] 需求已完成，这条不计入回合：${text.slice(0, 40)}`)
+    return
+  }
 
   handleTurn(groupId, text, {
     isContinuation,

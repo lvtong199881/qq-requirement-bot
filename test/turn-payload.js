@@ -73,6 +73,15 @@ console.log('\n== 排队补跑重新构造 prompt ==')
   check('排队分支传了 anchor', /anchor/.test(queueBlock))
 }
 
+console.log('\n== 需求完成后不再起回合 ==')
+{
+  check('主流程有 allDone 拦截', /ack\?\.allDone && intent !== INTENT\.NEW_REQ/.test(src))
+  // 拦截必须在 handleTurn 之前，否则回合已经起了
+  const idxAck = src.indexOf('ack?.allDone')
+  const idxTurn = src.indexOf('handleTurn(groupId, text', idxAck)
+  check('拦截在 handleTurn 之前', idxAck > 0 && idxTurn > idxAck, `ack@${idxAck} turn@${idxTurn}`)
+}
+
 console.log('\n== 群消息出口都走模板 ==')
 {
   const sendLines = src

@@ -76,18 +76,18 @@ export function ackFor(st, intent, templates) {
     return { text: renderMessage('ackIdle', vars, templates), reqIdToBind, idle: stages.length === 0 }
   }
 
+  // 需求已经全部收尾：先告诉用户这件事，别再提「等你确认」。
+  // 收尾之后 agent 还可能残留一个 waitingLabel，拿它当回执会让人以为还有事要拍板。
+  const allDone = isRequirementDone(stages)
+  if (allDone && intent !== 'new_req') {
+    return { text: renderMessage('allDone', vars, templates), reqIdToBind, idle: false, allDone: true }
+  }
+
   // 有等待事项时，优先告诉用户「在等什么」。
   // 否则用户说「继续」会收到「验收阶段已完成，正在继续」——可他需要知道的是
   // 自己还欠一个决定（比如要不要推远端），这句话把真正的问题盖掉了。
   if (st.waitingLabel) {
     return { text: renderMessage('ackPendingLabel', vars, templates), reqIdToBind, idle: false }
-  }
-
-  // 需求确实收尾了、也没有等待事项：只有「继续」这种情况是真的没活干，
-  // 换成「全部完成」的提示。其他意图（尤其新需求）照常走。
-  const allDone = isRequirementDone(stages)
-  if (allDone && intent === 'continue') {
-    return { text: renderMessage('allDone', vars, templates), reqIdToBind, idle: false, allDone: true }
   }
 
   const key = { approve: 'ackApprove', reject: 'ackReject', continue: 'ackContinue', new_req: 'ackNewReq' }[intent]
@@ -155,6 +155,13 @@ export function planStageAnnounce(st, templates) {
   // 需求收尾阶段刚完成 → 需求真的结束了，补一句交付结论
   const justWrappedUp = completedNow.some((n) => n.includes('需求收尾'))
   const requirementDone = justWrappedUp && !running
+
+  // 整个需求都收尾了：阶段名落到「需求收尾」，并且把过期的等待事项清掉——
+  // 否则回执会继续说「XX阶段已完成，等你确认」，可实际上没有任何事在等用户。
+  if (isRequirementDone(stages)) {
+    patch.stage = '需求收尾'
+    if (st.waitingLabel) patch.waitingLabel = ''
+  }
 
   return { messages, running, finishedNow, patch, completedNow, startedNow, done: requirementDone }
 }
