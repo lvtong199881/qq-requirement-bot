@@ -472,9 +472,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         finalAnswer.length > MAX
           ? `${finalAnswer.slice(0, MAX)}\n……（还有 ${finalAnswer.length - MAX} 字，完整内容见需求文档）`
           : finalAnswer
-      // 单行短问句接在同一行，多行/长内容另起一段，读起来更顺
-      const inline = !body.includes('\n') && body.length <= 40
-      lines.push(inline ? `需要决策：${body}` : `需要决策：\n${body}`)
+      lines.push(`需要决策：\n${body}`)
     } else if (!lines.length && pendingNote) {
       // agent 没给正文时才用 waitingLabel 兜底
       lines.push(pendingNote)

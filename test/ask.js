@@ -64,12 +64,11 @@ console.log('\n== 过程文字不受影响 ==')
 
 console.log('\n== bridge 拼接 ==')
 {
-  /** 复刻 index.js 的拼接规则：[prefix] + 内容（单行短内容接同一行） */
+  /** 复刻 index.js 的拼接规则：一律「需要决策：」换行接内容 */
   const compose = (gate) => {
     const body = (gate.ask || '').trim() || (gate.cleaned || '').trim()
     if (!body) return ''
-    const inline = !body.includes('\n') && body.length <= 40
-    return inline ? `需要决策：${body}` : `需要决策：\n${body}`
+    return `需要决策：\n${body}`
   }
 
   const g = parseGate('阶段完成。\n[[WAITING]]等你定这两项\n[[ASK]]\n- A\n- B')
@@ -80,18 +79,19 @@ console.log('\n== bridge 拼接 ==')
 
   const g2 = parseGate('[[WAITING]]等你确认\n[[ASK]]要不要改蓝色？')
   const out2 = compose(g2)
-  check('单行短问句接在同一行', out2 === '需要决策：要不要改蓝色？', out2)
+  check('单行也换行排', out2 === '需要决策：\n要不要改蓝色？', JSON.stringify(out2))
 
   const g3 = parseGate('阶段完成，请确认。\n[[WAITING]]等你确认')
   const out3 = compose(g3)
   check('无 ask 时回退整段答复', out3.includes('阶段完成，请确认'))
   check('回退时也带前缀', out3.startsWith('需要决策：'), out3)
 
-  // 长单行走换行排版
+  // 无论长短一律换行，不再按长度分流
   const longLine = '这个改动会影响所有页面的字体缩放，是否需要在本需求里一并处理？另外还要确认样式回归的范围和回归清单。'
   const g4 = parseGate(`[[WAITING]]等你确认\n[[ASK]]${longLine}`)
   const out4 = compose(g4)
-  check('超过 40 字的单行走换行', out4.startsWith('需要决策：\n'), out4.slice(0, 20))
+  check('长单行同样换行', out4.startsWith('需要决策：\n'), out4.slice(0, 20))
+  check('前缀后紧跟内容', out4.split('\n')[1] === longLine)
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)
