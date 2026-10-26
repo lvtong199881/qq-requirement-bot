@@ -14,6 +14,7 @@ import { sanitize, RateLimiter, sleep, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
 import { resolveStageStart, ackFor, planStageAnnounce } from './stage.js'
 import { renderMessage } from './messages.js'
+import { parseDecision, formatDecision } from './decision.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
@@ -444,8 +445,24 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     // 首选 [[ASK]] 段：agent 按要求把「具体要判断什么」写在标记后面，bridge 负责拼接。
     // 没写 ASK 时退回整段答复（兜底，不至于又只剩一句「等你确认」）。
     let finalAnswer = ''
+    let decisionInvalid = false
     if (gate.state === 'waiting' || gate.state === 'done') {
-      finalAnswer = (gate.ask || '').trim() || (gate.cleaned || '').trim()
+      const ask = (gate.ask || '').trim()
+      if (ask) {
+        // 决策内容必须是「1. 标题 / A. 选项」结构，不合规就不转发原文——
+        // 无脑贴 agent 的散文，用户根本不知道要选什么。
+        const parsed = parseDecision(ask)
+        if (parsed.ok) {
+          finalAnswer = formatDecision(parsed.items)
+        } else {
+          log(`[${groupId}] 决策格式不合规：${parsed.reason}`)
+          decisionInvalid = true
+          finalAnswer = renderMessage('decisionInvalid', { reason: parsed.reason }, config.messageTemplates)
+        }
+      } else {
+        // 没写 ASK：退回整段答复（兜底，至少不丢信息）
+        finalAnswer = (gate.cleaned || '').trim()
+      }
     }
 
     const pendingNote = gate.state === 'waiting' && gate.label ? `等你确认：${gate.label}` : ''
@@ -474,7 +491,10 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         finalAnswer.length > MAX
           ? `${finalAnswer.slice(0, MAX)}\n……（还有 ${finalAnswer.length - MAX} 字，完整内容见需求文档）`
           : finalAnswer
-      lines.push(renderMessage('decision', { content: body }, config.messageTemplates))
+      // 格式不合规的提示自身已经说清楚，别再套一层「需要决策：」
+      lines.push(
+        decisionInvalid ? body : renderMessage('decision', { content: body }, config.messageTemplates),
+      )
     } else if (!lines.length && pendingNote) {
       // agent 没给正文时才用 waitingLabel 兜底
       lines.push(pendingNote)

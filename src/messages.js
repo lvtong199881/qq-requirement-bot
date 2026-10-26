@@ -162,6 +162,13 @@ export const MESSAGE_TEMPLATES = {
     vars: [],
     template: '这个需求跑完了。要新需求直接 @我 说。',
   },
+  decisionInvalid: {
+    group: '交互提示',
+    label: '需要决策 · 但 agent 格式不合规',
+    desc: '不转发原文，只告诉用户这次没拿到合规的决策内容',
+    vars: ['reason'],
+    template: 'agent 这次的决策内容格式不对，没法展示给你。\n回「继续」可以让它重新整理一遍；反复出现请联系 bot 管理员。',
+  },
   groupTaken: {
     group: '交互提示',
     label: '群里已有需求，不能再开新的',
