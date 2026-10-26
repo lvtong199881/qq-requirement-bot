@@ -27,8 +27,8 @@ export function resolveStageStart(st, runningName) {
  *
  * @param {object} st 群状态
  * @param {string} intent 意图
- * @returns {{text: string, reqIdToBind: string|null}}
- *   文本 + 建议写回的 reqId（绑定丢失时从编排记录找回）
+ * @returns {{text: string, reqIdToBind: string|null, idle: boolean}}
+ *   文本 + 建议写回的 reqId + 是否是「什么都没开始」的空状态
  */
 export function ackFor(st, intent) {
   const table = stageTable(st.projectDir, st.reqId ?? undefined)
@@ -41,6 +41,7 @@ export function ackFor(st, intent) {
     return {
       text: runningText(running.name, resolveStageStart({ ...st, reqId: st.reqId ?? table.reqId }, running.name)),
       reqIdToBind,
+      idle: false,
     }
   }
 
@@ -54,7 +55,8 @@ export function ackFor(st, intent) {
     new_req: '收到，开始新需求。',
   }
   const text = byIntent[intent] ?? (lastDone ? `${tag}等你确认。` : '当前没有进行中的阶段。')
-  return { text, reqIdToBind }
+  // idle = 这个群连一个阶段都还没有，可以补一句怎么用
+  return { text, reqIdToBind, idle: stages.length === 0 }
 }
 
 /**

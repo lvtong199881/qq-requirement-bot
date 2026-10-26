@@ -64,6 +64,29 @@ console.log('\n== ackFor：没有进行中阶段，按意图区分 ==')
   check('都带已完成阶段名', ackFor(st, 'approve').text.includes('测试阶段已完成'))
 }
 
+console.log('\n== ackFor：idle 标记（空消息是否补引导）==')
+{
+  writeBoard(['| 1 产品需求 | 进行中 | 0 | — |'])
+  const active = ackFor({ stage: null, stageStartedAt: 0, projectDir: root, reqId: 'demo' }, 'content')
+  check('有进行中阶段时 idle=false', active.idle === false)
+
+  writeBoard(['| 1 产品需求 | 已完成 | 0 | ok |'])
+  const done = ackFor({ stage: '产品需求', stageStartedAt: 1, projectDir: root, reqId: 'demo' }, 'content')
+  check('有已完成阶段时 idle=false', done.idle === false)
+
+  // 空的阶段表 = 全新群。注意把它的 mtime 调早，
+  // 否则「最近改动的编排记录」会选中它，影响后面按 reqId=null 的用例。
+  const emptyDir = join(root, 'docs/requirements/blank')
+  mkdirSync(emptyDir, { recursive: true })
+  const emptyBoard = join(emptyDir, '编排记录.md')
+  writeFileSync(emptyBoard, '# 编排记录：blank\n')
+  const old = (Date.now() - 3600 * 1000) / 1000
+  utimesSync(emptyBoard, old, old)
+  const blank = ackFor({ stage: null, stageStartedAt: 0, projectDir: root, reqId: 'blank' }, 'content')
+  check('一个阶段都没有时 idle=true', blank.idle === true, JSON.stringify(blank))
+  check('空状态回执是「当前没有进行中的阶段」', blank.text === '当前没有进行中的阶段。', blank.text)
+}
+
 console.log('\n== ackFor：绑定丢失时给出 reqId ==')
 {
   const st = { stage: null, stageStartedAt: 0, projectDir: root, reqId: null }

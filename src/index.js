@@ -176,6 +176,7 @@ async function sendAck(groupId, st, replyTo, intent) {
   }
 
   await sendPlain(groupId, ack.text, { replyTo })
+  return ack
 }
 
 // ─────────────────── 群消息播报（四类，全部由 bridge 生成）───────────────────
@@ -815,9 +816,15 @@ bot.on('message', async (frame) => {
     st.status = STATES.IDLE
   }
 
-  // 空消息
+  // 空消息（只 @ 了 bot，没说内容）：走统一回执，不另写一套话术。
+  // 只有这个群还什么都没推进过时，才补一句引导——否则老群里回一句
+  // 「直接说要做什么」很突兀。
   if (!text.trim()) {
-    await sendPlain(groupId, `我在。直接说要做什么就行。发「帮助」看完整说明。`, { replyTo })
+    const ack = await sendAck(groupId, st, replyTo, INTENT.CONTENT)
+    // 只有连一个阶段都没有的全新群才补引导
+    if (ack.idle) {
+      await sendPlain(groupId, '直接把需求说给我就行，比如「首页加个欢迎弹窗，手动批准」。', { replyTo })
+    }
     return
   }
 
