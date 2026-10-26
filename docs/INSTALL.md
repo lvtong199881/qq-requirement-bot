@@ -17,8 +17,12 @@
 | 1 | 检查 Node ≥ 22、`dsh`、`DEEPSEEK_API_KEY`、requirement-spec skill |
 | 2 | 把 `profiles/qqbot` 复制到 `~/.dsh/profiles/qqbot`（已存在则跳过） |
 | 3 | 生成 `bot.config.json`（已存在则不覆盖） |
-| 4 | 准备 NapCat：容器没建就建、停了就起，并检查 OneBot 端口 |
+| 4 | 准备 NapCat：**没装 Docker 就用 Homebrew 装**；容器没建就建、停了就起；最后检查 OneBot 端口 |
 | 5 | 跑 `node src/doctor.js` 自检 |
+
+Docker 是跑 NapCat 的强依赖，脚本会负责到底：`docker` 命令不在就 `brew install --cask docker`，
+装了但 daemon 没起就拉起来并等它就绪（最多 3 分钟）。Docker Desktop 首次启动要在界面里
+接受协议、输一次管理员密码——这一步没法自动化，脚本会提示你。
 
 **幂等**，随时可以重跑，已配好的东西会跳过。
 
@@ -31,6 +35,7 @@
 | `-y` / `--yes` | 全部用默认值，不问任何问题（适合脚本化） |
 | `--no-napcat` | 跳过第 4 步，自己管 NapCat |
 | `--skip-doctor` | 跳过最后自检 |
+| `--dry-run` | 只打印会执行的操作，不动系统（预览用） |
 
 ### 脚本做不了的 3 件事
 
@@ -51,6 +56,7 @@
 | Node.js | ≥ 22（需要内置 `WebSocket` 和 `fetch`） | `node -v` |
 | `dsh` | 命令行可用，且已装 `headless` profile | `dsh --version` |
 | DEEPSEEK_API_KEY | 环境变量，或存在 `~/.dsh/.credentials.yaml` | `echo $DEEPSEEK_API_KEY` |
+| Docker | 走 Docker 路线跑 NapCat 时必需（脚本会自动装） | `docker info` |
 | NapCat | 一个 QQ 号，开启**正向 WebSocket** | 见下一节 |
 | requirement-spec skill | 一份带 `name: requirement-spec` 的 skill 目录 | 见下文 |
 

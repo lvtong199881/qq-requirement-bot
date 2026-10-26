@@ -30,7 +30,7 @@ bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合�
 
 ## 文档
 
-最快一条命令：`./install.sh` —— 环境检查、profile、配置、NapCat 容器全都备好，只剩扫码登录。详见 **[安装指南](docs/INSTALL.md)**。其余按需查阅：
+最快一条命令：`./install.sh` —— 环境检查、profile、配置、Docker、NapCat 容器全都备好，只剩扫码登录。详见 **[安装指南](docs/INSTALL.md)**。其余按需查阅：
 
 | 文档 | 内容 |
 | --- | --- |

@@ -7,6 +7,7 @@
 #   ./install.sh -y                   全部用默认值，不问任何问题
 #   ./install.sh --no-napcat          不管 NapCat，跳过第 4 步
 #   ./install.sh --skip-doctor        跳过最后的自检
+#   ./install.sh --dry-run            只演示会做什么，不动系统
 #
 # 脚本是幂等的：已经配好的东西会跳过，随时可以重跑。
 set -euo pipefail
@@ -17,9 +18,10 @@ QQ=""
 ASSUME_YES=0
 SKIP_DOCTOR=0
 SKIP_NAPCAT=0
+DRY_RUN=0
 
 usage() {
-  sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -30,6 +32,7 @@ while [ $# -gt 0 ]; do
     -y|--yes) ASSUME_YES=1; shift ;;
     --skip-doctor) SKIP_DOCTOR=1; shift ;;
     --no-napcat) SKIP_NAPCAT=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage ;;
     *) echo "未知参数：$1（用 --help 看用法）" >&2; exit 2 ;;
   esac
@@ -49,7 +52,14 @@ dim()  { printf '  %s%s%s\n' "$C_DIM" "$1" "$C_END"; }
 
 ERRORS=0
 fail() { bad "$1"; ERRORS=$((ERRORS + 1)); }
-ask() { printf '  %s [y/N] ' "$1"; read -r _ans; [ "${_ans:-n}" = y ] || [ "${_ans:-n}" = Y ]; }
+ask() {
+  printf '  %s [y/N] ' "$1"
+  read -r _ans || return 1
+  case "${_ans:-n}" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # 端口探测：连通退出 0
 port_open() {
@@ -62,6 +72,86 @@ port_open() {
     s.on("timeout", () => done(1))
     s.on("error", () => done(1))
   ' 2>/dev/null
+}
+
+# ── Docker：强依赖，缺了就帮着装 ────────────────────────────────────
+docker_ready() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
+
+# 等 daemon 起来，每 5 秒探一次，最多 $1 次
+wait_docker() {
+  local _n=0
+  printf '  %s等待 Docker daemon' "$C_DIM"
+  while [ "$_n" -lt "${1:-36}" ]; do
+    if docker_ready; then printf '%s\n' "$C_END"; return 0; fi
+    printf '.'
+    sleep 5
+    _n=$((_n + 1))
+  done
+  printf '%s\n' "$C_END"
+  return 1
+}
+
+# 返回 0 表示 docker 可用。缺了就装，没起就拉起来。
+ensure_docker() {
+  docker_ready && return 0
+
+  # 有 CLI、daemon 没起
+  if command -v docker >/dev/null 2>&1; then
+    if [ -d /Applications/Docker.app ]; then
+      warn 'docker 命令在，但 daemon 没运行，正在拉起 Docker Desktop'
+      if [ "$DRY_RUN" -eq 1 ]; then
+        dim '[dry-run] open -a Docker'
+        return 1
+      fi
+      open -a Docker >/dev/null 2>&1 || true
+      if wait_docker 36; then ok 'Docker 已就绪'; return 0; fi
+      warn '等了 3 分钟还没起来'
+      dim 'Docker Desktop 首次启动需要在界面里接受协议 + 输管理员密码'
+      return 1
+    fi
+    if command -v colima >/dev/null 2>&1; then
+      dim '尝试 colima start …'
+      if colima start >/dev/null 2>&1 && docker_ready; then ok 'colima 已就绪'; return 0; fi
+    fi
+    warn 'docker 命令在，但连不上 daemon'
+    return 1
+  fi
+
+  # 完全没装
+  if [ "$(uname -s)" != Darwin ]; then
+    warn '没装 Docker（本项目强依赖它跑 NapCat）'
+    dim 'Linux：sudo apt install docker.io，或 dnf install docker'
+    return 1
+  fi
+
+  BREW="$(command -v brew || { [ -x /opt/homebrew/bin/brew ] && echo /opt/homebrew/bin/brew; } || true)"
+  if [ -z "$BREW" ]; then
+    warn '没装 Docker，也没找到 Homebrew'
+    dim '任选其一：装 Homebrew 后重跑本脚本，或手动装 Docker Desktop'
+    dim 'https://www.docker.com/products/docker-desktop/'
+    return 1
+  fi
+
+  warn '没装 Docker（本项目强依赖它跑 NapCat）'
+  if [ "$ASSUME_YES" -eq 1 ] || ask '用 Homebrew 装 Docker Desktop？（约 600 MB）'; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      dim "[dry-run] $BREW install --cask docker"
+      return 1
+    fi
+    dim 'brew install --cask docker …'
+    if HOMEBREW_NO_AUTO_UPDATE=1 "$BREW" install --cask docker >/dev/null 2>&1; then
+      ok 'Docker Desktop 已安装'
+      open -a Docker >/dev/null 2>&1 || true
+      dim '首次启动可能要在界面里接受协议、输管理员密码'
+      if wait_docker 36; then ok 'Docker 已就绪'; return 0; fi
+      warn '装好了但 daemon 没起来，手动打开 Docker.app 完成首次设置后重跑'
+      return 1
+    fi
+    warn 'brew 安装失败，看输出：brew install --cask docker'
+    return 1
+  fi
+  dim '已跳过安装，但 NapCat 需要 Docker 才能自动化部署'
+  return 1
 }
 
 # ── 1. 环境检查 ─────────────────────────────────────────────────────
@@ -164,7 +254,7 @@ NAPCAT_READY=0
 
 if [ "$SKIP_NAPCAT" -eq 1 ]; then
   warn '已要求跳过（--no-napcat）'
-elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+elif ensure_docker; then
   if docker ps --format '{{.Names}}' | grep -qx napcat; then
     ok 'napcat 容器已运行'
     NAPCAT_READY=1
@@ -218,8 +308,8 @@ YAML
     fi
   fi
 else
-  warn '没检测到可用的 Docker'
-  dim 'macOS 可走官方安装器（需要图形界面点几下）：'
+  warn 'Docker 不可用，NapCat 走不了自动化部署'
+  dim '备选：macOS 官方安装器（图形界面点几下）'
   dim 'https://github.com/NapNeko/NapCat-Mac-Installer/releases/latest'
 fi
 
