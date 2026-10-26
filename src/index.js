@@ -12,7 +12,14 @@ import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, RateLimiter, sleep, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
-import { resolveStageStart, ackFor, planStageAnnounce } from './stage.js'
+import {
+  ackFor,
+  planStageAnnounce,
+  isFreshGroup,
+  groupStageTable,
+  recoverReqId,
+  heartbeatMessage,
+} from './stage.js'
 import { renderMessage } from './messages.js'
 import { parseDecisionJson, formatDecision, DECISION_JSON_EXAMPLE } from './decision.js'
 import { InstanceRegistry, isAlive } from './instances.js'
@@ -26,6 +33,7 @@ import {
   currentStage,
   stageTable,
   guessStageStart,
+  isDeliverable,
 } from './artifacts.js'
 import {
   parseCommand,
@@ -224,8 +232,10 @@ async function requestDecisionFix(groupId, sessionId, reason, round, { stageMess
  * 结果子进程收到空 stdin，dsh 报 `a task is required` 然后异常退出。
  */
 function buildTurnPayload(st, text, intent, intentDetail) {
-  const { stage: anchorStage, reqId: anchorReq } = currentStage(st.projectDir)
-  const effectiveReqId = st.reqId || anchorReq
+  // 新群不去读「最近的编排记录」：那条可能是别人的需求，会把新需求锚到已完成的任务上
+  const recovered = isFreshGroup(st) ? { stage: null, reqId: null } : currentStage(st.projectDir)
+  const anchorStage = recovered.stage
+  const effectiveReqId = st.reqId || recovered.reqId
 
   const anchor = effectiveReqId
     ? anchorBlock({
@@ -251,8 +261,8 @@ function buildTurnPayload(st, text, intent, intentDetail) {
 }
 
 /** 消息 1 的发送壳：文案来自 stage.js 的 ackFor（纯函数，可单测） */
-async function sendAck(groupId, st, replyTo, intent) {
-  const ack = ackFor(st, intent, config.messageTemplates)
+async function sendAck(groupId, st, replyTo, intent, opts = {}) {
+  const ack = ackFor(st, intent, config.messageTemplates, opts)
 
   // 回执说「当前验收阶段中」的同时，把阶段状态也推进——否则这一回合结束时
   // planStageAnnounce 会补报一句「测试阶段已完成」，看起来像和回执打架。
@@ -316,7 +326,6 @@ async function handleTurn(
   runtime.beginTurn(groupId)
   const before = snapshot(st.projectDir)
   let pendingText = ''
-  let turnDone = false // runTurn 是否已 resolve
 
   // 消息 3：心跳——只要群里「距上次发言」够久就补一条状态。
   // 默认 5 分钟，可配 heartbeat.idleMinutes。话术固定，不含任何 agent 内容。
@@ -324,24 +333,19 @@ async function handleTurn(
   const heartbeat = setInterval(() => {
     if (config.heartbeat?.enabled === false) return
     if (Date.now() - lastActivityAt < idleMs) return
-    // 只在有进行中阶段时发（阶段都完成了就没必要报心跳）
-    const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
-    const running = stages.find((x) => x.status.includes('进行中'))
-    if (!running) return
+    // 阶段没收尾就报阶段，收尾了还在跑就报回合总时长——不再因为「没有进行中阶段」
+    // 整条哑掉（验收后追加修复时能安静半小时，用户以为卡死了）。
+    const { key, vals } = heartbeatMessage(st, started)
     lastActivityAt = Date.now()
-    const start = resolveStageStart(st, running.name)
-    sendPlain(
-      groupId,
-      renderMessage(
-        'heartbeat',
-        { stage: running.name, duration: start ? formatDuration(Date.now() - start) : '' },
-        config.messageTemplates,
-      ),
-    ).catch(() => {})
+    sendPlain(groupId, renderMessage(key, vals, config.messageTemplates)).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {
-    store.save(groupId, { ...st, ...patch, lastActiveAt: Date.now() })
+    // peek() 的状态视图不含 queued（那是队列内部字段），整体覆盖写盘会把排队中的
+    // 消息从盘上抹掉，重启后就无法提示用户「这几条没执行」。
+    const saved = store.get(groupId)
+    const keepQueued = Array.isArray(saved?.queued) ? { queued: saved.queued } : {}
+    store.save(groupId, { ...st, ...patch, ...keepQueued, lastActiveAt: Date.now() })
   }
   persist({ status: STATES.RUNNING })
 
@@ -370,11 +374,12 @@ async function handleTurn(
       onChild: (child) => {
         // 把子进程 pid 交给面板展示（判断「agent 到底活着没有」）
         runtime.beginTurn(groupId, { childPid: child.pid })
-        child.on('close', () => {
-          if (!turnDone) {
-            log(`[${groupId}] 子进程提前退出`)
-            clearInterval(heartbeat)
-          }
+        child.on('close', (code) => {
+          // 别在 close 里判断「提前退出」：runTurn 的 resolve 也挂在这个 close 上，
+          // 微任务还没跑，此时任何「回合是否结束」的标志都必然还是旧值——等于每次
+          // 正常退出都误报（排查线上问题时被这条日志带偏过）。看 exitCode 就够了。
+          clearInterval(heartbeat)
+          if (code !== 0) log(`[${groupId}] 子进程异常退出（exitCode=${code}）`)
         })
       },
       onEvent: (ev) => {
@@ -391,7 +396,6 @@ async function handleTurn(
       },
     })
 
-    turnDone = true
     const gate = parseGate(result.finalText || pendingText)
 
     // agent 的文字不再进群（用户要求：只有四类 bridge 状态消息）。
@@ -442,7 +446,11 @@ async function handleTurn(
     let uploadedNames = []
     if (config.upload.enabled) {
       const after = snapshot(st.projectDir)
-      const all = diffSnapshot(before, after, config.upload)
+      // accept = 阶段投递白名单：群里每阶段只收一份产物，其余改动只落盘
+      const all = diffSnapshot(before, after, {
+        ...config.upload,
+        accept: (p) => isDeliverable(p),
+      })
 
       // ── 第 4 层：输出审计 ──
       // 绑定需求之外的 docs/requirements 目录被改动 = agent 越界。
@@ -621,15 +629,24 @@ async function handleTurn(
     if (queued.length) {
       const next = queued.join('\n')
       const cur = machine.peek(groupId)
-      if (cur) {
-        const nextIntent = classifyMessage(next).intent
-        const payload = buildTurnPayload(cur, next, nextIntent, '')
-        handleTurn(groupId, next, {
-          isContinuation: !!cur.sessionId && cur.status !== STATES.IDLE,
-          anchor: payload.anchor,
-          promptBody: payload.promptBody,
-          intent: nextIntent,
-        }).catch((e) => log(`排队回合失败：${e.message}`))
+      if (!cur) {
+        // 队列已经从内存和盘上一起清掉了，这里再不吭声就彻底查不到。
+        log(`[${groupId}] 排队消息补跑失败：群状态不可用，丢弃 ${queued.length} 条 — ${next.slice(0, 60)}`)
+      } else {
+        log(`[${groupId}] 补跑排队消息 ${queued.length} 条：${next.slice(0, 60)}`)
+        try {
+          const nextIntent = classifyMessage(next).intent
+          const payload = buildTurnPayload(cur, next, nextIntent, '')
+          // 不 await：补跑本身就是下一回合，交给 finally 之后继续跑
+          handleTurn(groupId, next, {
+            isContinuation: !!cur.sessionId && cur.status !== STATES.IDLE,
+            anchor: payload.anchor,
+            promptBody: payload.promptBody,
+            intent: nextIntent,
+          }).catch((e) => log(`排队回合失败：${e.message}`))
+        } catch (err) {
+          log(`[${groupId}] 排队消息补跑失败：${err.message} — ${next.slice(0, 60)}`)
+        }
       }
     }
   }
@@ -830,7 +847,7 @@ bot.on('message', async (frame) => {
     }
 
     if (cmd.name === 'help') {
-      const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+      const { stages } = groupStageTable(st)
       const running = stages.find((x) => x.status.includes('进行中'))
       const statusLine = running
         ? `当前状态：${running.name}阶段中，已进行 ${formatDuration(Date.now() - (st.stageStartedAt || Date.now()))}。`
@@ -858,7 +875,7 @@ bot.on('message', async (frame) => {
         await sendPlain(groupId, renderMessage('releaseAlready', {}, config.messageTemplates), { replyTo })
         return
       }
-      const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+      const { stages } = groupStageTable(st)
       const running = stages.find((x) => x.status.includes('进行中'))
       st.pendingRelease = { at: Date.now(), by: initiator.userId }
       store.save(groupId, { ...st, pendingRelease: st.pendingRelease })
@@ -971,7 +988,8 @@ bot.on('message', async (frame) => {
 
   if (intent === INTENT.INFO) {
     const info = knownGroups.get(groupId)
-    const { stage } = currentStage(st.projectDir)
+    // 新群显示「未知」，不要拿最近一条编排记录冒充这个群的需求
+    const stage = isFreshGroup(st) ? null : currentStage(st.projectDir).stage
     await sendPlain(
       groupId,
       [
@@ -994,8 +1012,7 @@ bot.on('message', async (frame) => {
   if (intent === INTENT.NEW_REQ) {
     // 一个群只做一个需求：做完也还占着这个群。
     // 只有从来没绑过需求的空群才受理新需求，其余一律让用户另开群。
-    const existingReq =
-      st.reqId || stageTable(st.projectDir, undefined).reqId || null
+    const existingReq = st.reqId || recoverReqId(st)
     if (existingReq) {
       await sendPlain(
         groupId,
@@ -1021,7 +1038,7 @@ bot.on('message', async (frame) => {
   // 只有这个群还什么都没推进过时，才补一句引导——否则老群里回一句
   // 「直接说要做什么」很突兀。
   if (!text.trim()) {
-    const ack = await sendAck(groupId, st, replyTo, INTENT.CONTENT)
+    const ack = await sendAck(groupId, st, replyTo, INTENT.CONTENT, { hasContent: false })
     // 只有连一个阶段都没有的全新群才补引导
     if (ack.idle) {
       await sendPlain(groupId, renderMessage('idleHint', {}, config.messageTemplates), { replyTo })
@@ -1031,7 +1048,7 @@ bot.on('message', async (frame) => {
 
   // 打回但没给修改意见：先追问，别让 agent 拿着一个「打回」二字去瞎改
   if (intent === INTENT.REJECT && !intentDetail) {
-    const { stages, reqId: tableReqId } = stageTable(st.projectDir, st.reqId ?? undefined)
+    const { stages, reqId: tableReqId } = groupStageTable(st)
     const running = stages.find((x) => x.status.includes('进行中'))
     const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
     const targetStage = running?.name ?? lastDone?.name ?? null
@@ -1051,12 +1068,12 @@ bot.on('message', async (frame) => {
     (intent === INTENT.APPROVE || intent === INTENT.REJECT || intent === INTENT.CONTINUE) &&
     !st.reqId
   ) {
-    // 尝试从编排记录恢复绑定（bridge 重启/状态丢失的自愈）
-    const { stage, reqId } = currentStage(st.projectDir)
-    if (reqId) {
-      st.reqId = reqId
-      store.save(groupId, { ...st, reqId })
-      log(`[${groupId}] 绑定自愈：从编排记录恢复 reqId=${reqId}`)
+    // 尝试从编排记录恢复绑定（bridge 重启/状态丢失的自愈）；新群不猜别人的需求
+    const recoveredId = recoverReqId(st)
+    if (recoveredId) {
+      st.reqId = recoveredId
+      store.save(groupId, { ...st, reqId: recoveredId })
+      log(`[${groupId}] 绑定自愈：从编排记录恢复 reqId=${recoveredId}`)
     } else {
       await sendPlain(
         groupId,
@@ -1085,7 +1102,7 @@ bot.on('message', async (frame) => {
   }
 
   // 消息 1：用户发消息后立刻回一条当前状态（不等 agent）
-  const ack = await sendAck(groupId, st, replyTo, intent)
+  const ack = await sendAck(groupId, st, replyTo, intent, { hasContent: !!text.trim() })
 
   // 需求已经收尾完成：不再起回合。
   // 之前只改回执不改行为，用户说「提交」照样会拉起一个回合，
@@ -1094,6 +1111,20 @@ bot.on('message', async (frame) => {
   if (ack?.allDone) {
     log(`[${groupId}] 需求已完成，这条不计入回合：${text.slice(0, 40)}`)
     return
+  }
+
+  // 新需求刚受理：编排记录还不存在，阶段播报要等回合结束才会说「产品需求阶段已开始」，
+  // 中间几分钟群里一片安静。这里先补一条，并把阶段写进状态，
+  // 回合收尾时 planStageAnnounce 不会再把同一句「已开始」重复一遍。
+  if (ack?.kickoff) {
+    const startedAt = Date.now()
+    store.save(groupId, { ...st, stage: '产品需求', stageStartedAt: startedAt })
+    Object.assign(st, { stage: '产品需求', stageStartedAt: startedAt })
+    await sendPlain(
+      groupId,
+      renderMessage('stageStart', { stage: '产品需求' }, config.messageTemplates),
+      { replyTo },
+    )
   }
 
   handleTurn(groupId, text, {
@@ -1154,7 +1185,7 @@ function buildSnapshot({ full = true } = {}) {
       }
     })
     .map((g) => {
-    const table = stageTable(g.projectDir, g.reqId ?? undefined)
+    const table = groupStageTable(g)
     const stages = table.stages
     const running = stages.find((x) => x.status.includes('进行中'))
     const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
@@ -1230,8 +1261,9 @@ async function restartGroup(groupId) {
   machine.interrupt(groupId)
   await sleep(300)
 
-  const { stage, reqId } = currentStage(st.projectDir)
-  const effectiveReqId = st.reqId || reqId
+  const recovered = isFreshGroup(st) ? { stage: null, reqId: null } : currentStage(st.projectDir)
+  const stage = recovered.stage
+  const effectiveReqId = st.reqId || recovered.reqId
   const bound = { reqId: effectiveReqId, stage, waitingLabel: st.waitingLabel }
   const anchorText = effectiveReqId
     ? anchorBlock({

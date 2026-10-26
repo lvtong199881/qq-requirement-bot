@@ -31,6 +31,7 @@
     "idleMinutes": 5                                // 静默多久报一次「正在XX阶段，已等待X分钟」
   },
 
+  // 回传哪些文件不由 patterns 决定：按 artifacts.js 的阶段白名单，每阶段只发一份产物
   "upload": { "enabled": true, "maxFiles": 8, "maxFileMB": 20 },
   "turnTimeoutMs": 2700000                        // 单回合超时（默认 45 分钟）
 }

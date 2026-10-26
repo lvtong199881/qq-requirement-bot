@@ -91,6 +91,13 @@ export const MESSAGE_TEMPLATES = {
     vars: [],
     template: '当前没有进行中的阶段。',
   },
+  ackKickoff: {
+    group: '回执（消息 1）',
+    label: '空群 · 用户提了新需求',
+    desc: '新群第一次说需求，别回成「没有进行中的阶段」，要说清已经接下了',
+    vars: [],
+    template: '收到，这个需求我接下了，先做产品需求梳理。',
+  },
 
   // ── 消息 2：阶段播报 ──
   stageStart: {
@@ -125,6 +132,13 @@ export const MESSAGE_TEMPLATES = {
     label: '心跳（消息 3）',
     vars: ['stage', 'duration'],
     template: '当前{{stage}}阶段中，已进行 {{duration}}。',
+  },
+  heartbeatRunning: {
+    group: '其他',
+    label: '心跳（消息 3）· 阶段都收尾了但还在跑',
+    desc: '阶段全完成后 agent 仍在干活时用，比如验收后又追加修 bug',
+    vars: ['duration'],
+    template: '还在处理中，已进行 {{duration}}，有结论就发群里。',
   },
 
   // ── 消息 4：异常 ──

@@ -3,7 +3,7 @@
  * 这些函数以前埋在 index.js 里无法import，出过「函数被删只有真跑才报错」的事故。
  *   node test/stage.js
  */
-import { resolveStageStart, ackFor, planStageAnnounce, isRequirementDone } from '../src/stage.js'
+import { resolveStageStart, ackFor, planStageAnnounce, isRequirementDone, heartbeatMessage } from '../src/stage.js'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -158,14 +158,19 @@ console.log('\n== ackFor：idle 标记（空消息是否补引导）==')
   writeFileSync(emptyBoard, '# 编排记录：blank\n')
   const old = (Date.now() - 3600 * 1000) / 1000
   utimesSync(emptyBoard, old, old)
-  const blank = ackFor({ stage: null, stageStartedAt: 0, projectDir: root, reqId: 'blank' }, 'content')
+  // hasContent=false 表示「只 @ 了 bot、没说内容」——那是要补引导的场景；
+  // 空群里真说了需求时回 kickoff 文案，见 test/fresh-group.js
+  const blank = ackFor({ stage: null, stageStartedAt: 0, projectDir: root, reqId: 'blank' }, 'content', undefined, {
+    hasContent: false,
+  })
   check('一个阶段都没有时 idle=true', blank.idle === true, JSON.stringify(blank))
   check('空状态回执是「当前没有进行中的阶段」', blank.text === '当前没有进行中的阶段。', blank.text)
 }
 
 console.log('\n== ackFor：绑定丢失时给出 reqId ==')
 {
-  const st = { stage: null, stageStartedAt: 0, projectDir: root, reqId: null }
+  // 跑过回合的老群才谈得上「绑定丢失」；全新群不猜（见 test/fresh-group.js）
+  const st = { stage: null, stageStartedAt: 0, projectDir: root, reqId: null, turn: 3, sessionId: 'sid-1' }
   const ack = ackFor(st, 'continue')
   check('建议写回 reqId', ack.reqIdToBind === 'demo', String(ack.reqIdToBind))
 }
@@ -220,6 +225,39 @@ console.log('\n== resolveStageStart ==')
   const fixed = resolveStageStart({ stage: '测试', stageStartedAt: at, projectDir: root, reqId: 'demo' }, '验收')
   check('阶段不一致时重估', fixed !== at)
   check('无阶段名返回 null', resolveStageStart({ projectDir: root, reqId: 'demo' }, null) === null)
+}
+
+console.log('\n== heartbeatMessage：有进行中阶段 ==')
+{
+  writeBoard(['| 6 测试 | 已完成 | 0 | ok |', '| 7 验收 | 进行中 | 0 | — |'])
+  const now = Date.now()
+  const st = { stage: '验收', stageStartedAt: now - 5 * 60 * 1000, projectDir: root, reqId: 'demo' }
+  const hb = heartbeatMessage(st, now - 30 * 60 * 1000, now)
+  check('报阶段心跳', hb.key === 'heartbeat', hb.key)
+  check('阶段名正确', hb.vals.stage === '验收', hb.vals.stage)
+  check('时长按阶段起点算', hb.vals.duration === '5分钟', hb.vals.duration)
+}
+
+console.log('\n== heartbeatMessage：阶段全完成但仍在跑（修复前的静默场景）==')
+{
+  // 验收完又追加修 bug：阶段表全绿，回合却还在跑。
+  // 以前这里返回 null 整条心跳哑掉，群里能安静半小时。
+  writeBoard(['| 6 测试 | 已完成 | 0 | ok |', '| 7 验收 | 已完成 | 0 | ok |'])
+  const now = Date.now()
+  const st = { stage: '需求收尾', stageStartedAt: 0, projectDir: root, reqId: 'demo' }
+  const hb = heartbeatMessage(st, now - 31 * 60 * 1000, now)
+  check('退回「还在处理中」', hb.key === 'heartbeatRunning', hb.key)
+  check('时长按回合起点算', hb.vals.duration === '31分钟', hb.vals.duration)
+  check('不再返回空值', hb.key !== null && hb.key !== undefined)
+}
+
+console.log('\n== heartbeatMessage：没有编排记录也不哑 ==')
+{
+  const now = Date.now()
+  const st = { stage: null, stageStartedAt: 0, projectDir: root, reqId: 'not-exist' }
+  const hb = heartbeatMessage(st, now - 20 * 60 * 1000, now)
+  check('仍能给出心跳', hb.key === 'heartbeatRunning', hb.key)
+  check('时长合理', hb.vals.duration === '20分钟', hb.vals.duration)
 }
 
 rmSync(root, { recursive: true, force: true })

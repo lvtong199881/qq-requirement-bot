@@ -145,6 +145,12 @@ export class GroupStateMachine {
       groupId,
       projectDir: saved?.projectDir ?? g.projectDir,
       approval: g.approval,
+      // 绑定过的需求标识。以前没回读这一行：写进盘里的 reqId 每次都被丢掉，
+      // 所有判定只能退化成「读最近的编排记录」——新群因此会认领到别人的需求，
+      // 一 @ 就被告知「本需求已全部完成」。
+      // 反过来，旧版本把这个猜来的 reqId 写回了盘：turn=0 且没有 sessionId
+      // 说明这个群从没真跑过回合，那样的绑定不是用户建的，读的时候丢掉。
+      reqId: saved?.turn || saved?.sessionId ? (saved?.reqId ?? null) : null,
       sessionId: saved?.sessionId ?? null,
       status: saved?.status ?? IDLE,
       waitingLabel: saved?.waitingLabel ?? '',

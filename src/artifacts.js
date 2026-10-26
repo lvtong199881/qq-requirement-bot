@@ -46,13 +46,80 @@ export function snapshot(projectDir, onlyReqId) {
 }
 
 /**
+ * 群投递白名单：每个阶段只回传一份产物，其余文件照常落盘、只是不回传。
+ *
+ * 依据 requirement-spec 的「bot 调用模式」一节：阶段 5（开发）没有投递物，
+ * 编排记录只在阶段 9 收尾后才投一次。`test(rel)` 的 rel 是需求目录内的相对路径。
+ */
+const DELIVERABLES = [
+  { stage: 1, label: '待提问清单', test: (rel) => rel === '待提问清单.md' },
+  { stage: 2, label: 'PRD', test: (rel) => rel === 'PRD.md' },
+  {
+    stage: 3,
+    label: '设计稿',
+    test: (rel) =>
+      /^design-images\/[^/]+\.(png|jpe?g)$/i.test(rel) ||
+      /^figma-import\/[^/]+\.zip$/i.test(rel) ||
+      /^figma-import[^/]*\.zip$/i.test(rel),
+  },
+  { stage: 4, label: '技术方案', test: (rel) => rel === '技术方案.md' },
+  { stage: 6, label: '代码评审报告', test: (rel) => rel === '代码评审报告.md' },
+  { stage: 7, label: '测试报告', test: (rel) => rel === '测试报告.md' },
+  { stage: 8, label: '验收文档', test: (rel) => rel === '验收文档.md' },
+  { stage: 9, label: '编排记录', test: (rel) => rel === '编排记录.md' },
+]
+
+/** 取 docs/requirements/<需求标识>/ 之内的相对路径；不在其内返回 null */
+export function relWithinReq(filePath) {
+  const marker = DOC_ROOT + '/'
+  const idx = filePath.indexOf(marker)
+  if (idx < 0) return null
+  const rest = filePath.slice(idx + marker.length).split('/')
+  return rest.length >= 2 ? rest.slice(1).join('/') : null
+}
+
+/**
+ * 编排记录里的「收尾结论」是否已写。
+ * 模板里那一段一开始只有 HTML 注释，写了才会有「判定：」行——靠它区分
+ * 「过程更新」和「阶段 9 的收尾投递」，否则编排记录每阶段都会被回传。
+ */
+export function wrapupWritten(boardPath) {
+  if (!existsSync(boardPath)) return false
+  let text
+  try {
+    text = readFileSync(boardPath, 'utf8')
+  } catch {
+    return false
+  }
+  const head = text.match(/^##\s*收尾结论\s*$/m)
+  if (!head) return false
+  const rest = text.slice(head.index + head[0].length)
+  const next = rest.search(/^##\s/m)
+  const body = (next >= 0 ? rest.slice(0, next) : rest).replace(/<!--[\s\S]*?-->/g, '').trim()
+  return /判定[:：]/.test(body)
+}
+
+/** 这份文件是不是本阶段该投到群里的产物 */
+export function isDeliverable(filePath) {
+  const rel = relWithinReq(filePath)
+  if (!rel) return false
+  const hit = DELIVERABLES.find((d) => d.test(rel))
+  if (!hit) return false
+  if (hit.stage === 9) {
+    const board = filePath.slice(0, filePath.length - '编排记录.md'.length) + '编排记录.md'
+    return wrapupWritten(board)
+  }
+  return true
+}
+
+/**
  * 对比快照，找出新增或改动文件。
  * @param {Map} before
  * @param {Map} after
- * @param {{patterns: string[], maxFiles: number, maxFileMB: number}} opts
+ * @param {{patterns: string[], maxFiles: number, maxFileMB: number, accept?: (path: string) => boolean}} opts
  */
 export function diffSnapshot(before, after, opts) {
-  const keepExt = new Set(['.md', '.png', '.jpg', '.jpeg'])
+  const keepExt = new Set(['.md', '.png', '.jpg', '.jpeg', '.zip'])
   const changed = []
 
   for (const [path, meta] of after) {
@@ -60,6 +127,8 @@ export function diffSnapshot(before, after, opts) {
     if (prev && prev.mtimeMs === meta.mtimeMs && prev.size === meta.size) continue
     if (!keepExt.has(extname(path).toLowerCase())) continue
     if (meta.size > opts.maxFileMB * 1024 * 1024) continue
+    // 先按白名单过滤再截断，否则需求卡片这类不该发的文件会挤掉真正的产物
+    if (opts.accept && !opts.accept(path)) continue
     changed.push({ path, size: meta.size, isNew: !prev })
   }
 

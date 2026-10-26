@@ -6,7 +6,7 @@
  *   · index.js 只负责编排与发送
  *   · 这里的函数可以直接单测，不需要起 bridge
  */
-import { stageTable, guessStageStart } from './artifacts.js'
+import { stageTable, guessStageStart, currentStage } from './artifacts.js'
 import { formatDuration } from './format.js'
 import { renderMessage } from './messages.js'
 
@@ -37,15 +37,49 @@ export function isRequirementDone(stages) {
 }
 
 /**
+ * 这个群是不是从没做过任何需求。
+ *
+ * 新群不该被别的需求的编排记录「冒充」：`stageTable` 在没给 reqId 时会退回
+ * 「最近改动的编排记录」，新群里那条往往是一个已经收尾的需求，于是 @ 一下
+ * 就被告知「本需求已全部完成」，还顺手把群绑定到了别人的需求上。
+ */
+export function isFreshGroup(st) {
+  if (!st) return true
+  // 有 reqId 就是绑定过的群（state.peek 已经把旧版本猜来的脏 reqId 滤掉了）
+  if (st.reqId) return false
+  // 否则看有没有真跑过回合：turn 在回合结束才 +1，sessionId 是 dsh 会话 id。
+  // 不能拿 stage / finishedStages 判断——旧版本正是把猜来的阶段写进了这两个字段。
+  return !st.turn && !st.sessionId
+}
+
+/**
+ * 取这个群对应需求的阶段表。新群一律空表，不去猜别人的需求。
+ * @returns {{reqId: string|null, stages: Array<{name: string, status: string}>}}
+ */
+export function groupStageTable(st) {
+  if (isFreshGroup(st)) return { reqId: null, stages: [] }
+  return stageTable(st.projectDir, st.reqId ?? undefined)
+}
+
+/** 从编排记录自愈恢复 reqId（bridge 重启、状态丢失时用）；新群不猜。 */
+export function recoverReqId(st) {
+  if (isFreshGroup(st)) return null
+  return currentStage(st.projectDir).reqId ?? null
+}
+
+/**
  * 用户发消息后的回执文案（消息 1）。
  *
  * @param {object} st 群状态
  * @param {string} intent 意图
+ * @param {object} [templates] 群级话术覆盖
+ * @param {{hasContent?: boolean}} [opts] 用户这句话是否带了内容（只 @ 不说话时为 false）
  * @returns {{text: string, reqIdToBind: string|null, idle: boolean}}
  *   文本 + 建议写回的 reqId + 是否是「什么都没开始」的空状态
  */
-export function ackFor(st, intent, templates) {
-  const table = stageTable(st.projectDir, st.reqId ?? undefined)
+export function ackFor(st, intent, templates, opts = {}) {
+  const { hasContent = true } = opts
+  const table = groupStageTable(st)
   const { stages } = table
   const reqIdToBind = st.reqId ? null : (table.reqId ?? null)
   const running = stages.find((x) => x.status.includes('进行中'))
@@ -75,7 +109,11 @@ export function ackFor(st, intent, templates) {
   }
 
   if (!lastDone) {
-    // 完全没有阶段的空群
+    // 空群里说了具体需求：回「当前没有进行中的阶段」等于没接住话头
+    if (hasContent && intent === 'content') {
+      return { text: renderMessage('ackKickoff', vars, templates), reqIdToBind, idle: false, kickoff: true }
+    }
+    // 只 @ 不说话、或说了别的：回到空状态话术（调用方会补引导）
     return { text: renderMessage('ackIdle', vars, templates), reqIdToBind, idle: stages.length === 0 }
   }
 
@@ -116,7 +154,11 @@ export function ackFor(st, intent, templates) {
  * @returns {{messages: string[], running: string|null, finishedNow: string[], patch: object}}
  */
 export function planStageAnnounce(st, templates) {
-  const table = stageTable(st.projectDir, st.reqId ?? undefined)
+  // 新群没有阶段可播报，也不往状态里落 finishedStages（否则会写个空数组进去）
+  if (isFreshGroup(st)) {
+    return { messages: [], running: null, finishedNow: [], patch: {}, completedNow: [], startedNow: null, done: false }
+  }
+  const table = groupStageTable(st)
   const { stages } = table
   const reqIdForTime = st.reqId ?? table.reqId
   const running = stages.find((x) => x.status.includes('进行中'))?.name ?? null
@@ -174,4 +216,31 @@ export function planStageAnnounce(st, templates) {
   }
 
   return { messages, running, finishedNow, patch, completedNow, startedNow, done: requirementDone }
+}
+
+/**
+ * 心跳该报什么（消息 3）。
+ *
+ * 以前只在「有进行中阶段」时才发心跳。可阶段全部完成、agent 还在跑的场景很常见
+ * （验收完又追加修 bug 就是），那时一条都不会发，群里能安静半小时以上，用户只能
+ * 干等——真实踩过，以为 bot 卡死了。现在退回报回合总时长，任何回合都有进展可见。
+ *
+ * @param {object} st 群状态
+ * @param {number} startedAt 本回合开始时间
+ * @param {number} [now] 当前时间，测试用
+ * @returns {{key: string, vals: object}} 交给 renderMessage 的模板键与变量
+ */
+export function heartbeatMessage(st, startedAt, now = Date.now()) {
+  const { stages } = groupStageTable(st)
+  const running = stages.find((x) => x.status.includes('进行中'))
+
+  if (running) {
+    const start = resolveStageStart(st, running.name)
+    return {
+      key: 'heartbeat',
+      vals: { stage: running.name, duration: start ? formatDuration(now - start) : '' },
+    }
+  }
+
+  return { key: 'heartbeatRunning', vals: { duration: formatDuration(now - startedAt) } }
 }
