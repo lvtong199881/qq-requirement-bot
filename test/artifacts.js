@@ -3,7 +3,7 @@
  * 依据 requirement-spec「bot 调用模式」一节，以及 artifacts.js 的 DELIVERABLES/收尾判定。
  *   node test/artifacts.js
  */
-import { isDeliverable, wrapupWritten, diffSnapshot, snapshot, relWithinReq } from '../src/artifacts.js'
+import { isDeliverable, wrapupWritten, diffSnapshot, snapshot, relWithinReq, isStageRunning, currentStage } from '../src/artifacts.js'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -75,6 +75,35 @@ console.log('\n== 不传 accept 时行为不变（兼容旧调用） ==')
   const empty = new Map()
   const all = diffSnapshot(empty, snapshot(root, 'demo'), { patterns: [], maxFiles: 8, maxFileMB: 20 })
   check('无 accept 时不过滤', all.some((f) => f.path.endsWith('需求卡片.md')))
+}
+
+console.log('\n== 阶段状态判定：只有两个端点固定，中间词都算在跑 ==')
+{
+  check('进行中算在跑', isStageRunning('进行中'))
+  // 真实踩过：agent 把状态写成「定稿中」，字面匹配「进行中」失败，
+  // 群里回执退化成「当前没有进行中的阶段」。
+  check('定稿中算在跑', isStageRunning('定稿中（疑点已按推荐答案回填）'))
+  check('返工中算在跑', isStageRunning('返工中'))
+  check('已完成不算', !isStageRunning('已完成'))
+  check('未开始不算', !isStageRunning('未开始'))
+  check('待起不算', !isStageRunning('待起'))
+  check('空值不算', !isStageRunning('') && !isStageRunning(null))
+}
+
+console.log('\n== currentStage：认「定稿中」并跳过表头 ==')
+{
+  const reqDir = join(root, 'docs', 'requirements', 'stage-word')
+  mkdirSync(reqDir, { recursive: true })
+  writeFileSync(join(reqDir, '编排记录.md'), [
+    '# 编排记录：stage-word', '', '## 阶段进度',
+    '| 阶段 | 执行 agent | 状态 | 产物 | 返工次数 |',
+    '| --- | --- | --- | --- | --- |',
+    '| 1 产品需求 | 需求 agent | 定稿中 | PRD.md | 0 |',
+    '| 2 设计 | 待起 | 未开始 | — | 0 |', '',
+    '## 下一节',
+  ].join('\n'))
+  const cur = currentStage(root)
+  check('阶段名取自状态列非「未开始」的那行', cur.stage === '产品需求', String(cur.stage))
 }
 
 rmSync(root, { recursive: true, force: true })

@@ -35,6 +35,7 @@ import {
   stageTable,
   guessStageStart,
   isDeliverable,
+  isStageRunning,
 } from './artifacts.js'
 import {
   parseCommand,
@@ -849,7 +850,7 @@ bot.on('message', async (frame) => {
 
     if (cmd.name === 'help') {
       const { stages } = groupStageTable(st)
-      const running = stages.find((x) => x.status.includes('进行中'))
+      const running = stages.find((x) => isStageRunning(x.status))
       const statusLine = running
         ? `当前状态：${running.name}阶段中，已进行 ${formatDuration(Date.now() - (st.stageStartedAt || Date.now()))}。`
         : st.waitingLabel
@@ -877,7 +878,7 @@ bot.on('message', async (frame) => {
         return
       }
       const { stages } = groupStageTable(st)
-      const running = stages.find((x) => x.status.includes('进行中'))
+      const running = stages.find((x) => isStageRunning(x.status))
       st.pendingRelease = { at: Date.now(), by: initiator.userId }
       store.save(groupId, { ...st, pendingRelease: st.pendingRelease })
       await sendPlain(
@@ -1050,7 +1051,7 @@ bot.on('message', async (frame) => {
   // 打回但没给修改意见：先追问，别让 agent 拿着一个「打回」二字去瞎改
   if (intent === INTENT.REJECT && !intentDetail) {
     const { stages, reqId: tableReqId } = groupStageTable(st)
-    const running = stages.find((x) => x.status.includes('进行中'))
+    const running = stages.find((x) => isStageRunning(x.status))
     const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
     const targetStage = running?.name ?? lastDone?.name ?? null
     st.reqId = st.reqId || tableReqId || null
@@ -1188,7 +1189,7 @@ function buildSnapshot({ full = true } = {}) {
     .map((g) => {
     const table = groupStageTable(g)
     const stages = table.stages
-    const running = stages.find((x) => x.status.includes('进行中'))
+    const running = stages.find((x) => isStageRunning(x.status))
     const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
     const item = {
       groupId: g.groupId,

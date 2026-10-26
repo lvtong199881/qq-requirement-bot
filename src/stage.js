@@ -6,7 +6,7 @@
  *   · index.js 只负责编排与发送
  *   · 这里的函数可以直接单测，不需要起 bridge
  */
-import { stageTable, guessStageStart, currentStage } from './artifacts.js'
+import { stageTable, guessStageStart, currentStage, isStageRunning } from './artifacts.js'
 import { formatDuration } from './format.js'
 import { renderMessage } from './messages.js'
 
@@ -95,7 +95,7 @@ export function ackFor(st, intent, templates, opts = {}) {
   const table = groupStageTable(st)
   const { stages } = table
   const reqIdToBind = st.reqId ? null : (table.reqId ?? null)
-  const running = stages.find((x) => x.status.includes('进行中'))
+  const running = stages.find((x) => isStageRunning(x.status))
 
   // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
   if (running) {
@@ -174,7 +174,7 @@ export function planStageAnnounce(st, templates) {
   const table = groupStageTable(st)
   const { stages } = table
   const reqIdForTime = st.reqId ?? table.reqId
-  const running = stages.find((x) => x.status.includes('进行中'))?.name ?? null
+  const running = stages.find((x) => isStageRunning(x.status))?.name ?? null
   const finishedNow = stages.filter((x) => x.status.includes('已完成')).map((x) => x.name)
 
   const messages = []
@@ -245,7 +245,7 @@ export function planStageAnnounce(st, templates) {
  */
 export function heartbeatMessage(st, startedAt, now = Date.now()) {
   const { stages } = groupStageTable(st)
-  const running = stages.find((x) => x.status.includes('进行中'))
+  const running = stages.find((x) => isStageRunning(x.status))
 
   if (running) {
     const start = resolveStageStart(st, running.name)

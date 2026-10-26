@@ -10,6 +10,22 @@ import { join, extname, basename, relative } from 'node:path'
 const DOC_ROOT = 'docs/requirements'
 
 /**
+ * 阶段状态算不算「正在跑」。
+ *
+ * 只认两个端点：写明「已完成」就是结束，「未开始 / 待起」就是没动，其余一律
+ * 当作进行中。编排记录是 agent 写的，状态列它会自由发挥（「定稿中」「返工中」
+ * 都出现过），以前按字面匹配「进行中」，一换词回执和心跳就集体退化成
+ * 「当前没有进行中的阶段」——用户发「继续」时真踩到过。
+ */
+export function isStageRunning(status) {
+  const s = String(status ?? '').trim()
+  if (!s) return false
+  if (s.includes('已完成')) return false
+  if (s.includes('未开始') || s.includes('待起')) return false
+  return true
+}
+
+/**
  * 递归扫需求目录，返回 path → {mtimeMs, size}
  * @param {string} projectDir 项目根
  * @param {string} [onlyReqId] 只扫这一个需求目录（避免把别的需求的历史文件也回传）
@@ -214,13 +230,16 @@ export function currentStage(projectDir) {
     }
     if (inSection && /^##\s/.test(t)) break // 到下一个小节
     if (!inSection) continue
-    if (!t.includes('进行中')) continue
+    if (!t.startsWith('|')) continue
 
     // 表格行：| 2 设计 | 进行中 | 0 | — |
+    // 状态在第 3 列，按 isStageRunning 判，别在这行匹配字面「进行中」。
     const cells = t.split('|').map((c) => c.trim()).filter(Boolean)
-    if (cells.length === 0) continue
+    if (cells.length < 3) continue
     const name = cells[0].replace(/^\d+\s*/, '').trim()
-    if (name && !name.includes('---')) return { stage: name, reqId: newest.id }
+    if (!name || name.includes('---') || name === '阶段') continue
+    if (!isStageRunning(cells[2])) continue
+    return { stage: name, reqId: newest.id }
   }
   return { stage: null, reqId: newest.id }
 }
