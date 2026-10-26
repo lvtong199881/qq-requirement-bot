@@ -180,16 +180,38 @@ export class GroupStateMachine {
   }
 
   /** 用户在运行中插话：排队，等本回合结束再处理 */
+  /**
+   * 排队一条消息。同时写进 state 文件——bridge 重启时内存队列会丢，
+   * 落盘之后至少能在下次启动时告诉用户「这几条没执行，请重发」。
+   */
   enqueue(groupId, text) {
     const slot = this.#slot(groupId)
     slot.queue.push(text)
+    const st = this.store.get(groupId)
+    if (st) this.store.save(groupId, { ...st, queued: [...(st.queued ?? []), text] })
     return slot.queue.length
+  }
+
+  /** 读持久化的待执行消息（重启后用来提示用户） */
+  pendingQueued(groupId) {
+    const st = this.store.get(groupId)
+    return Array.isArray(st?.queued) ? st.queued : []
+  }
+
+  /** 清掉持久化的待执行消息 */
+  clearQueued(groupId) {
+    const st = this.store.get(groupId)
+    if (!st) return
+    if (!st.queued) return
+    const { queued, ...rest } = st
+    this.store.save(groupId, rest)
   }
 
   drainQueue(groupId) {
     const slot = this.#slot(groupId)
     const q = slot.queue.slice()
     slot.queue.length = 0
+    this.clearQueued(groupId)
     return q
   }
 

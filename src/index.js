@@ -240,9 +240,14 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
   const aborter = new AbortController()
   const release = machine.acquire(groupId, aborter)
   if (!release) {
-    // 消息排队等下一轮，不再额外播报——回执已经告诉用户当前状态了，
-    // 多说一句「上一个回合还在跑」只是泄露内部机制。
+    // 排队时必须说出来。之前不吭声，用户以为消息被处理了，
+    // 实际上在等上一个回合，而且 bridge 一重启就丢——真实踩过。
     machine.enqueue(groupId, userText)
+    await sendPlain(
+      groupId,
+      renderMessage('queued', { text: userText }, config.messageTemplates),
+      { replyTo },
+    ).catch(() => {})
     return
   }
 
@@ -589,6 +594,24 @@ bot.on('connected', async () => {
       if (excluded.length) log(`排除名单：${excluded.join(', ')}（写在 bot.config.json 的 excludeGroups）`)
     } else {
       log('bot 还不在任何群里，把它拉进群后 @ 它就行。')
+    }
+    // 上次退出时还排在队列里的消息，bridge 重启不会自动补跑——
+    // 明确告诉用户是哪几条，让人自己决定要不要重发。
+    for (const g of groups) {
+      const pending = machine.pendingQueued(g.group_id)
+      if (!pending.length) continue
+      log(`[${g.group_id}] 有 ${pending.length} 条重启前未执行的消息，已提示用户重发`)
+      bot
+        .sendGroupMsg(
+          g.group_id,
+          renderMessage(
+            'queuedLost',
+            { count: pending.length, list: pending.map((t) => `· ${t}`).join('\n') },
+            config.messageTemplates,
+          ),
+        )
+        .catch(() => {})
+      machine.clearQueued(g.group_id)
     }
   } catch (err) {
     log(`拉取群列表失败（不影响使用，收到消息时会自动识别）：${err.message}`)

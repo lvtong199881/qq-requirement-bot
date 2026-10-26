@@ -25,6 +25,8 @@ export const MESSAGE_VARS = {
   statusLine: '当前状态一句话，可能为空',
   permissionNote: '权限说明那句',
   list: '指令列表（bridge 自动生成）',
+  count: '条数',
+  text: '用户原话',
 }
 
 export const MESSAGE_TEMPLATES = {
@@ -246,6 +248,20 @@ export const MESSAGE_TEMPLATES = {
     label: '绑定已清空',
     vars: [],
     template: '已清空。下一条消息发新需求，我来绑定。',
+  },
+  queued: {
+    group: '指令与操作',
+    label: '消息已排队',
+    desc: '上一回合还在跑，这条先排队等它结束',
+    vars: ['text'],
+    template: '上一回合还在跑，这条已经排队，等它结束就执行：\n{{text}}',
+  },
+  queuedLost: {
+    group: '系统通知',
+    label: '重启后有没执行的消息',
+    desc: 'bridge 重启导致排队消息丢失时的提醒',
+    vars: ['list'],
+    template: 'bridge 重启前有 {{count}} 条消息没来得及执行：\n{{list}}\n需要的话请重新发一次。',
   },
   dryRun: {
     group: '指令与操作',

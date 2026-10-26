@@ -45,6 +45,14 @@ console.log('\n== 指令与操作反馈 ==')
   check('清空绑定', renderMessage('cleared', {}).includes('下一条消息发新需求'))
   check('dry-run', renderMessage('dryRun', {}).includes('[dry-run]'))
 
+  const q = renderMessage('queued', { text: '提交' })
+  check('排队提示带原话', q.includes('已经排队') && q.includes('提交'), q)
+
+  const lost = renderMessage('queuedLost', { count: 2, list: '· 提交\n· 通过' })
+  check('丢失提示带条数', lost.includes('2 条'), lost)
+  check('丢失提示逐条列出', lost.includes('· 提交') && lost.includes('· 通过'))
+  check('丢失提示让用户重发', lost.includes('重新发一次'))
+
   const rel = renderMessage('releaseAsk', { target: '「demo」', stage: '开发' })
   check('释放确认带需求名', rel.includes('「demo」'))
   check('释放确认带阶段', rel.includes('「开发」'))
