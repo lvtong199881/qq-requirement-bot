@@ -160,6 +160,39 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 // ────────────────────────────── 一回合 ──────────────────────────────
 
+/**
+ * 构造一次回合要投给 agent 的内容：锚点 + 路由骨架。
+ *
+ * 主流程和「排队消息补跑」都要用，之前排队的那个分支忘了传 prompt，
+ * 结果子进程收到空 stdin，dsh 报 `a task is required` 然后异常退出。
+ */
+function buildTurnPayload(st, text, intent, intentDetail) {
+  const { stage: anchorStage, reqId: anchorReq } = currentStage(st.projectDir)
+  const effectiveReqId = st.reqId || anchorReq
+
+  const anchor = effectiveReqId
+    ? anchorBlock({
+        reqId: effectiveReqId,
+        projectDir: st.projectDir,
+        stage: anchorStage,
+        envHints: config.envHints,
+      })
+    : ''
+
+  const promptBody = routedPrompt({
+    intent,
+    userText: text,
+    bind: {
+      reqId: effectiveReqId,
+      stage: anchorStage,
+      waitingLabel: st.waitingLabel,
+      rejectReason: intentDetail,
+    },
+  })
+
+  return { anchor, promptBody, effectiveReqId, anchorStage }
+}
+
 /** 消息 1 的发送壳：文案来自 stage.js 的 ackFor（纯函数，可单测） */
 async function sendAck(groupId, st, replyTo, intent) {
   const ack = ackFor(st, intent, config.messageTemplates)
@@ -469,21 +502,29 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const stageName = currentStage(st.projectDir).stage ?? '当前'
     await sendPlain(
       groupId,
-      `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${err.message}`,
+      renderMessage('abnormal', { stage: stageName, reason: err.message }, config.messageTemplates),
     ).catch(() => {})
     persist({ status: STATES.WAITING })
   } finally {
     clearInterval(heartbeat)
     runtime.endTurn(groupId)
     release()
-    // 处理排队消息
+    // 处理排队消息：prompt 必须重新构造，不能只把用户原话扔进去
+    //（之前漏了这一步，子进程收到空 stdin，dsh 报 a task is required 直接异常退出）
     const queued = machine.drainQueue(groupId)
     if (queued.length) {
       const next = queued.join('\n')
       const cur = machine.peek(groupId)
-      handleTurn(groupId, next, { isContinuation: !!cur?.sessionId }).catch((e) =>
-        log(`排队回合失败：${e.message}`),
-      )
+      if (cur) {
+        const nextIntent = classifyMessage(next).intent
+        const payload = buildTurnPayload(cur, next, nextIntent, '')
+        handleTurn(groupId, next, {
+          isContinuation: !!cur.sessionId && cur.status !== STATES.IDLE,
+          anchor: payload.anchor,
+          promptBody: payload.promptBody,
+          intent: nextIntent,
+        }).catch((e) => log(`排队回合失败：${e.message}`))
+      }
     }
   }
 }
@@ -896,22 +937,7 @@ bot.on('message', async (frame) => {
   const isContinuation = !!st.sessionId && st.status !== STATES.IDLE
 
   // ── 编排锚点 + 路由骨架（第 3 层：每回合强制注入）──
-  const { stage: anchorStage, reqId: anchorReq } = currentStage(st.projectDir)
-  const effectiveReqId = st.reqId || anchorReq
-  const anchor = effectiveReqId
-    ? anchorBlock({ reqId: effectiveReqId, projectDir: st.projectDir, stage: anchorStage, envHints: config.envHints })
-    : ''
-
-  const promptBody = routedPrompt({
-    intent,
-    userText: text,
-    bind: {
-      reqId: effectiveReqId,
-      stage: anchorStage,
-      waitingLabel: st.waitingLabel,
-      rejectReason: intentDetail,
-    },
-  })
+  const { anchor, promptBody, effectiveReqId } = buildTurnPayload(st, text, intent, intentDetail)
 
   if (isDryRun) {
     log(`[dry-run] 意图=${intent} 绑定=${effectiveReqId ?? '无'}\nprompt：\n${anchor}\n${promptBody}`)
