@@ -65,10 +65,13 @@ export function ackFor(st, intent, templates) {
 
   // 没有进行中阶段：按意图回执，避免同一句话重复出现
   const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
+  const reqId = st.reqId ?? table.reqId ?? ''
   const vars = {
     stageDone: lastDone?.name ?? '',
-    target: st.reqId ? `需求 ${st.reqId}` : '当前需求',
+    target: reqId ? `需求 ${reqId}` : '当前需求',
     waitingLabel: st.waitingLabel || '',
+    reqId,
+    reqIdPad: reqId ? ` ${reqId} ` : '',
   }
 
   if (!lastDone) {
@@ -78,9 +81,16 @@ export function ackFor(st, intent, templates) {
 
   // 需求已经全部收尾：先告诉用户这件事，别再提「等你确认」。
   // 收尾之后 agent 还可能残留一个 waitingLabel，拿它当回执会让人以为还有事要拍板。
+  // 新需求也不放行——一个群只做一个需求，做完仍占着这个群。
   const allDone = isRequirementDone(stages)
-  if (allDone && intent !== 'new_req') {
-    return { text: renderMessage('allDone', vars, templates), reqIdToBind, idle: false, allDone: true }
+  if (allDone) {
+    const key = intent === 'new_req' ? 'groupTaken' : 'allDone'
+    return {
+      text: renderMessage(key, vars, templates),
+      reqIdToBind,
+      idle: false,
+      allDone: true,
+    }
   }
 
   // 有等待事项时，优先告诉用户「在等什么」。

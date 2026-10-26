@@ -30,6 +30,22 @@ console.log('\n== 四类消息都在 ==')
   check('需求完成', !!MESSAGE_TEMPLATES.done)
   check('每条都有分组和标签', Object.values(MESSAGE_TEMPLATES).every((t) => t.group && t.label && t.template))
   check('每条都声明了可用变量', Object.values(MESSAGE_TEMPLATES).every((t) => Array.isArray(t.vars)))
+
+  check(
+    '全部完成提示带需求名',
+    renderMessage('allDone', { reqId: 'welcome-dialog', reqIdPad: ' welcome-dialog ' }) ===
+      '本需求 welcome-dialog 已全部完成，新需求请开新群。',
+    renderMessage('allDone', { reqId: 'welcome-dialog', reqIdPad: ' welcome-dialog ' }),
+  )
+  check(
+    '没有需求名也通顺',
+    renderMessage('allDone', { reqId: '', reqIdPad: '' }) === '本需求已全部完成，新需求请开新群。',
+    renderMessage('allDone', { reqId: '', reqIdPad: '' }),
+  )
+
+  const taken = renderMessage('groupTaken', { reqId: 'welcome-dialog' })
+  check('群已占用用引号包需求名', taken.includes('「welcome-dialog」'), taken.split('\n')[0])
+  check('群已占用提示另开群', taken.includes('另开一个群'), taken)
 }
 
 console.log('\n== 指令与操作反馈 ==')

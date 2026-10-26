@@ -100,11 +100,14 @@ console.log('\n== 需求已收尾：任何意图都回「全部完成」 ==')
   const st = { stage: '需求收尾', stageStartedAt: 0, projectDir: root, reqId: 'demo' }
   for (const intent of ['continue', 'approve', 'reject', 'content']) {
     const ack = ackFor(st, intent)
-    check(`${intent} → 全部完成提示`, ack.text.includes('所有阶段都已完成'), ack.text)
+    check(`${intent} → 全部完成提示`, ack.text.includes('已全部完成'), ack.text)
     check(`${intent} → allDone 标记`, ack.allDone === true)
   }
-  // 新需求不受影响
-  check('new_req 不拦', ackFor(st, 'new_req').text === '收到，开始新需求。', ackFor(st, 'new_req').text)
+  // 新需求也拦：一个群只做一个需求，做完仍占着这个群
+  const nr = ackFor(st, 'new_req')
+  check('new_req 也被拦', nr.text.includes('一个群只做一个需求'), nr.text)
+  check('new_req 提示另开群', nr.text.includes('另开一个群'), nr.text)
+  check('new_req 也标记 allDone', nr.allDone === true)
 }
 
 console.log('\n== 收尾后残留的 waitingLabel 不会盖掉「已完成」 ==')
@@ -118,7 +121,7 @@ console.log('\n== 收尾后残留的 waitingLabel 不会盖掉「已完成」 ==
     waitingLabel: '确认提交范围',
   }
   const ack = ackFor(st, 'continue')
-  check('仍然说全部完成', ack.text.includes('所有阶段都已完成'), ack.text)
+  check('仍然说全部完成', ack.text.includes('已全部完成'), ack.text)
   check('不提等你确认', !ack.text.includes('等你确认'), ack.text)
 }
 

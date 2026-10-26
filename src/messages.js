@@ -27,6 +27,8 @@ export const MESSAGE_VARS = {
   list: '指令列表（bridge 自动生成）',
   count: '条数',
   text: '用户原话',
+  reqId: '需求标识，如 welcome-dialog（纯值）',
+  reqIdPad: '需求标识，前后各带一个空格，适合嵌在句子中间',
 }
 
 export const MESSAGE_TEMPLATES = {
@@ -160,12 +162,19 @@ export const MESSAGE_TEMPLATES = {
     vars: [],
     template: '这个需求跑完了。要新需求直接 @我 说。',
   },
+  groupTaken: {
+    group: '交互提示',
+    label: '群里已有需求，不能再开新的',
+    desc: '一个群只做一个需求，做完也占着这个群',
+    vars: ['reqId'],
+    template: '这个群已经绑定了需求「{{reqId}}」，一个群只做一个需求（做完也算）。\n新需求请另开一个群，把 bot 拉进去再 @ 它；要看已完成需求的细节，直接问我就行。',
+  },
   allDone: {
     group: '交互提示',
-    label: '所有阶段都已完成',
-    desc: '用户说「继续」但已经没有可推进的阶段时',
-    vars: [],
-    template: '这个需求的所有阶段都已完成，没有可以继续推进的了。\n要开新需求直接说需求内容；想复查某一步，指明是哪一步。',
+    label: '需求已全部完成',
+    desc: '需求收尾后，用户再发任何消息（新需求除外）都回这句',
+    vars: ['reqId'],
+    template: '本需求{{reqIdPad}}已全部完成，新需求请开新群。',
   },
   ambiguous: {
     group: '交互提示',

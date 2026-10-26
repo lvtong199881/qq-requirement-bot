@@ -75,7 +75,7 @@ console.log('\n== 排队补跑重新构造 prompt ==')
 
 console.log('\n== 需求完成后不再起回合 ==')
 {
-  check('主流程有 allDone 拦截', /ack\?\.allDone && intent !== INTENT\.NEW_REQ/.test(src))
+  check('主流程有 allDone 拦截', /if \(ack\?\.allDone\)/.test(src))
   // 拦截必须在 handleTurn 之前，否则回合已经起了
   const idxAck = src.indexOf('ack?.allDone')
   const idxTurn = src.indexOf('handleTurn(groupId, text', idxAck)

@@ -892,12 +892,25 @@ bot.on('message', async (frame) => {
 
   // 新需求：显式换绑。带描述就受理新需求，不带描述就清绑定
   if (intent === INTENT.NEW_REQ) {
+    // 一个群只做一个需求：做完也还占着这个群。
+    // 只有从来没绑过需求的空群才受理新需求，其余一律让用户另开群。
+    const existingReq =
+      st.reqId || stageTable(st.projectDir, undefined).reqId || null
+    if (existingReq) {
+      await sendPlain(
+        groupId,
+        renderMessage('groupTaken', { reqId: existingReq, reqIdPad: ` ${existingReq} ` }, config.messageTemplates),
+        { replyTo },
+      )
+      return
+    }
+
     if (!intentDetail) {
       store.clear(groupId)
       await sendPlain(groupId, renderMessage('cleared', {}, config.messageTemplates), { replyTo })
       return
     }
-    // 带描述：清掉旧绑定，把描述作为新需求受理（回合结束后绑定新 reqId）
+    // 空群里带描述：作为新需求受理（回合结束后绑定新 reqId）
     store.clear(groupId)
     st.reqId = null
     st.sessionId = null
@@ -977,7 +990,8 @@ bot.on('message', async (frame) => {
   // 需求已经收尾完成：不再起回合。
   // 之前只改回执不改行为，用户说「提交」照样会拉起一个回合，
   // agent 面对一个已经交付完的需求只能瞎问，群里就不断冒出「需要决策」。
-  if (ack?.allDone && intent !== INTENT.NEW_REQ) {
+  // 新需求同样不起回合——这个群已经占给这个需求了，只回一句「请另开群」。
+  if (ack?.allDone) {
     log(`[${groupId}] 需求已完成，这条不计入回合：${text.slice(0, 40)}`)
     return
   }
