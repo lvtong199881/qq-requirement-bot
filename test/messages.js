@@ -46,6 +46,7 @@ console.log('\n== 四类消息都在 ==')
   const taken = renderMessage('groupTaken', { reqId: 'welcome-dialog' })
   check('群已占用用引号包需求名', taken.includes('「welcome-dialog」'), taken.split('\n')[0])
   check('群已占用提示另开群', taken.includes('另开一个群'), taken)
+  check('不再多说「直接问我」', !taken.includes('直接问我'), taken)
 }
 
 console.log('\n== 指令与操作反馈 ==')

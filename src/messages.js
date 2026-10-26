@@ -167,7 +167,7 @@ export const MESSAGE_TEMPLATES = {
     label: '群里已有需求，不能再开新的',
     desc: '一个群只做一个需求，做完也占着这个群',
     vars: ['reqId'],
-    template: '这个群已经绑定了需求「{{reqId}}」，一个群只做一个需求（做完也算）。\n新需求请另开一个群，把 bot 拉进去再 @ 它；要看已完成需求的细节，直接问我就行。',
+    template: '这个群已经绑定了需求「{{reqId}}」，一个群只做一个需求（做完也算）。\n新需求请另开一个群，把 bot 拉进去再 @ 它。',
   },
   allDone: {
     group: '交互提示',
