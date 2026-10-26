@@ -18,7 +18,7 @@
   /* 左侧菜单 + 右侧内容 */
   .app{display:flex;height:100vh}
   .sidebar{width:186px;flex:0 0 186px;background:var(--side);border-right:1px solid var(--line);
-    display:flex;flex-direction:column;padding:16px 10px;}
+    display:flex;flex-direction:column;padding:16px 10px;color-scheme:dark;}
   .brand{font-size:15px;font-weight:600;padding:6px 10px 18px;letter-spacing:.01em}
   .nav{display:flex;flex-direction:column;gap:2px}
   .nav button{display:block;width:100%;text-align:left;background:none;
@@ -28,7 +28,17 @@
   .nav button.active{background:#222833;color:var(--text);font-weight:600}
 
 
-  .content{flex:1;overflow:auto;padding:22px 26px}
+  /* 内容区亮色主题：只覆盖变量，侧栏仍用 :root 的深色 */
+  .content{
+    flex:1;overflow:auto;padding:22px 26px;
+    --bg:#ffffff; --card:#ffffff; --card2:#f6f8fa; --line:#e4e8ed;
+    --text:#1f2328; --dim:#5c6672; --dim2:#6b7480;
+    --green:#146c2e; --yellow:#845d00; --red:#cf222e; --blue:#0969da; --gray:#57606a;
+    --surface:#ffffff; --surface2:#f6f8fa; --surface3:#eef1f4;
+    --hover:#f3f6f9; --hairline:#eef1f4;
+    background:var(--bg);color:var(--text);
+    color-scheme:light; /* 滚动条/表单控件用亮色，别在白色内容区里冒出黑滚动条 */
+  }
   .page-head{display:flex;align-items:baseline;gap:14px;margin-bottom:18px;flex-wrap:wrap}
   .page-head h1{font-size:16px;font-weight:600;margin:0}
   .page-head .stats{display:flex;gap:14px;color:var(--dim);font-size:12px;margin-left:auto}
@@ -41,14 +51,14 @@
   .inst-head .pid{color:var(--text);font-weight:600;font-family:ui-monospace,Menlo,monospace}
   .inst-head .sep{color:var(--dim2)}
   .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
-  .tag{padding:1px 7px;border-radius:5px;background:#22262f;color:var(--dim);font-size:11px}
+  .tag{padding:1px 7px;border-radius:5px;background:var(--surface3);color:var(--dim);font-size:11px}
 
   table{width:100%;border-collapse:collapse}
   th{text-align:left;font-weight:500;color:var(--dim);font-size:11px;letter-spacing:.04em;
-    padding:9px 14px;border-bottom:1px solid var(--line);background:#141821}
-  td{padding:11px 14px;border-bottom:1px solid #1d212a;vertical-align:middle}
+    padding:9px 14px;border-bottom:1px solid var(--line);background:var(--surface2)}
+  td{padding:11px 14px;border-bottom:1px solid var(--hairline);vertical-align:middle}
   tr:last-child td{border-bottom:none}
-  tbody tr:hover{background:#1a1e26}
+  tbody tr:hover{background:var(--hover)}
 
   .req{font-weight:600}
   .req small{display:block;color:var(--dim2);font-weight:400;font-size:11px;margin-top:2px}
@@ -60,30 +70,30 @@
   .badge .bname{font-weight:600}
   .badge .bdur{font-weight:400;opacity:.75;font-variant-numeric:tabular-nums}
   .badge .bsep{opacity:.35;font-weight:400}
-  .b-green{background:rgba(63,185,80,.13);color:var(--green)}
-  .b-yellow{background:rgba(210,153,34,.13);color:var(--yellow)}
-  .b-red{background:rgba(248,81,73,.13);color:var(--red)}
-  .b-gray{background:rgba(110,118,129,.13);color:var(--gray)}
-  .b-blue{background:rgba(88,166,255,.13);color:var(--blue)}
+  .b-green{background:#e6f4ea;color:var(--green)}
+  .b-yellow{background:#fdf3d9;color:var(--yellow)}
+  .b-red{background:#fdeaea;color:var(--red)}
+  .b-gray{background:#eef1f4;color:var(--gray)}
+  .b-blue{background:#e7f0fb;color:var(--blue)}
   .b-green .dot{background:var(--green)} .b-yellow .dot{background:var(--yellow)}
   .b-red .dot{background:var(--red)} .b-gray .dot{background:var(--gray)} .b-blue .dot{background:var(--blue)}
 
   .menu-btn{background:none;border:1px solid var(--line);color:var(--dim);border-radius:7px;
     padding:5px 11px;cursor:pointer;font-size:12px;font-family:inherit;transition:.12s}
-  .menu-btn:hover{background:#22262f;color:var(--text);border-color:#333a48}
+  .menu-btn:hover{background:var(--surface3);color:var(--text);border-color:#cfd6dd}
   .menu-btn:disabled{opacity:.5;cursor:not-allowed}
-  .menu{position:fixed;z-index:60;background:#1c2029;border:1px solid #2c333f;border-radius:9px;
-    padding:5px;min-width:132px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+  .menu{position:fixed;z-index:60;background:var(--surface);border:1px solid #d8dee4;border-radius:9px;
+    padding:5px;min-width:132px;box-shadow:0 10px 30px rgba(31,35,40,.14)}
   .menu button{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);
     padding:8px 11px;border-radius:6px;cursor:pointer;font-size:12.5px;font-family:inherit}
-  .menu button:hover{background:#262c37}
+  .menu button:hover{background:var(--surface2)}
   .menu button.danger{color:var(--red)}
-  .menu hr{border:none;border-top:1px solid #2c333f;margin:4px 0}
+  .menu hr{border:none;border-top:1px solid var(--line);margin:4px 0}
 
-  .mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;
+  .mask{position:fixed;inset:0;background:rgba(31,35,40,.42);display:flex;align-items:flex-start;
     justify-content:center;padding:52px 20px;z-index:100;overflow:auto}
-  .modal{background:var(--card);border:1px solid #2c333f;border-radius:12px;width:100%;max-width:720px;
-    box-shadow:0 24px 70px rgba(0,0,0,.65)}
+  .modal{background:var(--surface);border:1px solid #d8dee4;border-radius:12px;width:100%;max-width:720px;
+    box-shadow:0 24px 70px rgba(31,35,40,.22)}
   .modal-head{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line)}
   .modal-head h2{margin:0;font-size:14px;font-weight:600}
   .x{margin-left:auto;background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer;
@@ -98,7 +108,7 @@
     margin:22px 0 10px;font-weight:600}
   h3:first-child{margin-top:0}
 
-  .logs{background:#0b0d11;border:1px solid var(--line);border-radius:8px;padding:11px;
+  .logs{background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:11px;
     font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.7;
     max-height:260px;overflow:auto;white-space:pre-wrap;word-break:break-all}
   .logs .t{color:var(--dim2)}
@@ -111,33 +121,33 @@
     overflow:hidden;word-break:break-word;line-height:1.45;
   }
   .empty{color:var(--dim2);text-align:center;padding:44px;font-size:12.5px}
-  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1c2029;
-    border:1px solid #2c333f;padding:10px 18px;border-radius:9px;font-size:12.5px;
-    z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.5)}
-  .toast.err{border-color:rgba(248,81,73,.5);color:#ffb4af}
-  .btn-danger{background:rgba(248,81,73,.14);border-color:rgba(248,81,73,.45);color:#ff9c96}
-  .btn-danger:hover{background:rgba(248,81,73,.24);color:#ffc4c0}
-  .btn-primary{background:rgba(88,166,255,.14);border-color:rgba(88,166,255,.45);color:#9ccbff}
-  .btn-primary:hover{background:rgba(88,166,255,.24);color:#c9e2ff}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface);
+    border:1px solid #d8dee4;padding:10px 18px;border-radius:9px;font-size:12.5px;
+    z-index:200;box-shadow:0 10px 30px rgba(31,35,40,.18)}
+  .toast.err{border-color:#f0b3b3;color:#cf222e}
+  .btn-danger{background:#fdeaea;border-color:#f0b3b3;color:#cf222e}
+  .btn-danger:hover{background:#fbd8d8;color:#a40e26}
+  .btn-primary{background:#e7f0fb;border-color:#b6d3f2;color:#0969da}
+  .btn-primary:hover{background:#d6e6fa;color:#0757b8}
 
   /* 设置页 */
   .panel{width:100%}
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
   .card h2{margin:0 0 6px;font-size:13.5px;font-weight:600}
   .card .desc{margin:0 0 16px;color:var(--dim);font-size:12.5px;line-height:1.75}
-  .field{width:100%;background:#0b0d11;border:1px solid var(--line);border-radius:8px;
+  .field{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;
     color:var(--text);padding:10px 12px;font:13px/1.6 ui-monospace,Menlo,monospace;
     outline:none;transition:.12s;resize:vertical}
-  .field:focus{border-color:#3b4557}
-  .field.invalid{border-color:rgba(248,81,73,.6)}
+  .field:focus{border-color:#9cc0e8}
+  .field.invalid{border-color:#e5928f}
   .field::placeholder{color:var(--dim2)}
   .hint{margin:10px 0 0;color:var(--dim2);font-size:11.5px;line-height:1.7}
   .row{display:flex;align-items:center;gap:12px;margin-top:16px;flex-wrap:wrap}
   .msg{font-size:12px}
-  .msg.err{color:#ff9c96}
+  .msg.err{color:#cf222e}
   .msg.ok{color:var(--green)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
-  .chip{background:#222833;border-radius:6px;padding:3px 9px;font-size:11.5px;
+  .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
 </style>
 </head>
