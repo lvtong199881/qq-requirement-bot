@@ -133,7 +133,7 @@ node src/index.js
 `adminUsers` 是额外放行的兜底名单，通常不用配：
 
 ```json
-"adminUsers": ["2293983846"]
+"adminUsers": ["10001"]
 ```
 
 后续加危险操作（清库、改配置）在新指令上标 `scope: 'admin'` 即可，分发逻辑不用动。

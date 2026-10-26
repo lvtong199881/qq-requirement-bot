@@ -382,7 +382,7 @@
             多个 QQ 号用逗号分隔（中英文都行）；留空表示不额外放行任何成员。
           </p>
           <textarea class="field" :class="{ invalid: !!settingsError }" v-model="adminInput"
-                    rows="4" placeholder="2293983846, 123456789"
+                    rows="4" placeholder="10001, 10002"
                     @input="settingsError = ''; settingsOk = ''"></textarea>
           <div class="row">
             <button class="menu-btn btn-primary" @click="saveSettings()" :disabled="settingsSaving">
