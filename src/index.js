@@ -48,6 +48,9 @@ import { existsSync, readdirSync, statSync } from 'node:fs'
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const isDryRun = process.argv.includes('--dry-run')
 
+/** 决策格式不合规时，自动让 agent 重写的最大次数 */
+const MAX_DECISION_RETRY = 3
+
 let config
 try {
   config = loadConfig(configPath)
@@ -162,6 +165,61 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 // ────────────────────────────── 一回合 ──────────────────────────────
 
 /**
+ * 决策格式不合规时，让 agent 重写 ASK 的纠正指令。
+ * 走同一个会话续跑，不重复正文，只要求重发标记部分。
+ */
+function decisionFixPrompt(reason, round) {
+  return [
+    `你上一条输出的 [[ASK]] 格式不符合要求，已被拦下（第 ${round} 次重写）：${reason}`,
+    '',
+    '必须是这个结构，除事项行和选项行之外一行都不许有：',
+    '  [[WAITING]]<一句话说明在等什么>',
+    '  [[ASK]]',
+    '  1. <事项标题>',
+    '     A. <选项>',
+    '     B. <选项>',
+    '  2. <事项标题>',
+    '     A. <选项>',
+    '     B. <选项>',
+    '',
+    '要求：',
+    '- 事项用「1.」「2.」，选项用「A.」「B.」「C.」「D.」，选项缩进 3 个空格。',
+    '- 每个事项下面至少 1 个选项，最多 4 个。',
+    '- 不写开场白、不写小结、不写小标题、不写 markdown 列表。',
+    '- 推荐项写进选项文本里，如「（推荐）」。',
+    '',
+    '现在请重新输出：只输出 [[WAITING]] 和 [[ASK]] 两段，不要重复已经说过的正文。',
+  ].join('\n')
+}
+
+/**
+ * 静默让 agent 重写决策内容。
+ *
+ * 不给用户发任何消息（除了第一次可能要先补阶段播报），
+ * 直接拿同一个会话续跑，把纠正要求和格式模板喂回去。
+ */
+async function requestDecisionFix(groupId, sessionId, reason, round, { stageMessages } = {}) {
+  const st = machine.peek(groupId)
+  if (!st) return
+
+  // 第一轮重写时把本回合的阶段播报补出去——阶段变了该让用户知道，
+  // 只是决策内容还在重写。后续轮次不再重复。
+  if (round === 1 && stageMessages?.length) {
+    for (const m of stageMessages) await sendPlain(groupId, m).catch(() => {})
+  }
+
+  const payload = buildTurnPayload(st, '（重写决策内容）', INTENT.CONTINUE, '')
+  handleTurn(groupId, '（重写决策内容）', {
+    isContinuation: true,
+    anchor: payload.anchor,
+    promptBody: decisionFixPrompt(reason, round),
+    intent: INTENT.CONTINUE,
+    silent: true,
+    retried: true,
+  }).catch((e) => log(`决策重写失败：${e.message}`))
+}
+
+/**
  * 构造一次回合要投给 agent 的内容：锚点 + 路由骨架。
  *
  * 主流程和「排队消息补跑」都要用，之前排队的那个分支忘了传 prompt，
@@ -234,7 +292,11 @@ async function sendAck(groupId, st, replyTo, intent) {
 
 /** 消息 1：用户发消息后的回执 */
 
-async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent, retried = false }) {
+async function handleTurn(
+  groupId,
+  userText,
+  { isContinuation, replyTo, anchor, promptBody, intent, retried = false, silent = false },
+) {
   const st = machine.peek(groupId)
   if (!st) return
 
@@ -441,6 +503,23 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const reqIdToBind2 = st.reqId || stageInfo2.reqId
     const planned = planStageAnnounce({ ...st, reqId: reqIdToBind2 })
 
+    // ── 阶段播报先拼好 ──
+    // 决策内容可能要重写，但阶段变了这件事不该跟着延迟。
+    const stageLines = []
+    for (const msg of silent ? [] : planned.messages) {
+      if (msg.endsWith('阶段已完成。')) {
+        const parts = [msg]
+        if (uploadedNames.length) {
+          parts.push(
+            renderMessage('artifactsLine', { artifacts: uploadedNames.join('、') }, config.messageTemplates),
+          )
+        }
+        stageLines.push(parts.join('\n'))
+      } else {
+        stageLines.push(msg)
+      }
+    }
+
     // ── 要用户拍板时发什么 ──
     // 首选 [[ASK]] 段：agent 按要求把「具体要判断什么」写在标记后面，bridge 负责拼接。
     // 没写 ASK 时退回整段答复（兜底，不至于又只剩一句「等你确认」）。
@@ -454,8 +533,22 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         const parsed = parseDecision(ask)
         if (parsed.ok) {
           finalAnswer = formatDecision(parsed.items)
+          if (st.decisionRetry) persist({ decisionRetry: 0 }) // 成功就清零
         } else {
-          log(`[${groupId}] 决策格式不合规：${parsed.reason}`)
+          const round = (st.decisionRetry ?? 0) + 1
+          log(`[${groupId}] 决策格式不合规（第 ${round}/${MAX_DECISION_RETRY} 次）：${parsed.reason}`)
+
+          if (round <= MAX_DECISION_RETRY) {
+            // 不打扰用户，直接让 agent 重写。阶段播报照常，只是这条决策先压着。
+            persist({ decisionRetry: round, sessionId: result.sessionId ?? st.sessionId })
+            await requestDecisionFix(groupId, result.sessionId ?? st.sessionId, parsed.reason, round, {
+              stageMessages: stageLines,
+            })
+            return
+          }
+
+          // 三次都没改对：这才告诉用户，并把重试计数清零
+          persist({ decisionRetry: 0 })
           decisionInvalid = true
           finalAnswer = renderMessage('decisionInvalid', { reason: parsed.reason }, config.messageTemplates)
         }
@@ -467,21 +560,10 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
 
     const pendingNote = gate.state === 'waiting' && gate.label ? `等你确认：${gate.label}` : ''
 
-    const lines = []
-    for (const msg of planned.messages) {
-      if (msg.endsWith('阶段已完成。')) {
-        const parts = [msg]
-        if (uploadedNames.length) {
-          parts.push(
-            renderMessage('artifactsLine', { artifacts: uploadedNames.join('、') }, config.messageTemplates),
-          )
-        }
-        // 有最终答复时不再重复 waitingLabel——答复里已经把选项写清楚了
-        if (!finalAnswer && pendingNote) parts.push(pendingNote)
-        lines.push(parts.join('\n'))
-      } else {
-        lines.push(msg)
-      }
+    const lines = [...stageLines]
+    // 有最终答复时不再重复 waitingLabel——答复里已经把选项写清楚了
+    if (!finalAnswer && pendingNote && lines.length) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]}\n${pendingNote}`
     }
 
     // 要用户拍板的内容，前面明确写「需要决策：」，让人一眼知道这段是等他决定的

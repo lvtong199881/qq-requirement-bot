@@ -89,7 +89,8 @@ console.log('\n== 群消息出口都走模板 ==')
     .filter((l) => /sendPlain\(groupId,/.test(l))
     .filter((l) => !/async function sendPlain|text, \{ replyTo \}|line, \{ replyTo \}/.test(l))
   const raw = sendLines.filter(
-    (l) => !/renderMessage|ack\.text|deniedText|helpText|ambiguousReply/.test(l),
+    // stageMessages 来自 planStageAnnounce，已经是模板渲染好的文本
+    (l) => !/renderMessage|ack\.text|deniedText|helpText|ambiguousReply|stageMessages/.test(l),
   )
   check('没有硬编码文案的 sendPlain', raw.length === 0, raw.map((l) => l.trim().slice(0, 50)).join(' | '))
 }
