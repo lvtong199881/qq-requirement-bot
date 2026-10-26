@@ -48,7 +48,9 @@ console.log('\n== 意图分类 ==')
 console.log('\n== 含糊判定 ==')
 {
   const waitingState = { waitingLabel: '请回复 Q-1～Q-4 的选择' }
-  check('短含糊消息 + 有等待 → 反问', isAmbiguous('AAAA', waitingState) === true)
+  // 设计变更：不再因为「短且没针对性」就反问——那样会把用户照着提示给的回答
+  // （如「提交」）也判成没看懂，流程直接卡死。现在只有纯语气词才反问。
+  check('随便一串字不反问（交给 agent 判断）', isAmbiguous('AAAA', waitingState) === false)
   check('短含糊消息 + 无等待 → 不反问', isAmbiguous('AAAA', null) === false)
   check('长消息 → 不反问', isAmbiguous('首页加一个欢迎弹窗，关闭方式包括back', waitingState) === false)
   check('已识别意图 → 不反问', isAmbiguous('通过', waitingState) === false)
@@ -97,6 +99,30 @@ console.log('\n== 路由骨架 ==')
   // 无等待时内容消息原样透传
   const raw = routedPrompt({ intent: INTENT.CONTENT, userText: '首页加弹窗', bind: { reqId: null, stage: null, waitingLabel: '' } })
   check('无等待时内容原样透传', raw === '首页加弹窗')
+}
+
+console.log('\n== 含糊判定：不能把明确回答当成没看懂 ==')
+{
+  const label = '确认按这两条提交吗？回复「提交」我就执行；想合并成一条、或先不提交截图，也可以直接说'
+  const st = { waitingLabel: label }
+
+  // 这些是用户照着提示给的明确回答，绝不能反问
+  for (const t of ['提交', '确认', '不提交', '合并成一条', '都行', '按这两条']) {
+    check(`「${t}」不反问`, isAmbiguous(t, st) === false)
+  }
+
+  // 纯语气词才反问
+  check('「嗯」反问', isAmbiguous('嗯', st) === true)
+  check('「哦」反问', isAmbiguous('哦', st) === true)
+  check('「在吗」反问', isAmbiguous('在吗', st) === true)
+
+  // 长句、带标点、明确意图都不反问
+  check('长句不反问', isAmbiguous('我想确认一下这两条截图是不是都保留', st) === false)
+  check('带标点不反问', isAmbiguous('提交，谢谢', st) === false)
+  check('「好的」是批准意图', isAmbiguous('好的', st) === false)
+
+  // 没有等待事项时一律不反问
+  check('无等待事项不反问', isAmbiguous('嗯', {}) === false)
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)

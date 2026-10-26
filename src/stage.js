@@ -50,7 +50,11 @@ export function ackFor(st, intent, templates) {
 
   // 没有进行中阶段：按意图回执，避免同一句话重复出现
   const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
-  const vars = { stageDone: lastDone?.name ?? '', target: st.reqId ? `需求 ${st.reqId}` : '当前需求' }
+  const vars = {
+    stageDone: lastDone?.name ?? '',
+    target: st.reqId ? `需求 ${st.reqId}` : '当前需求',
+    waitingLabel: st.waitingLabel || '',
+  }
 
   if (!lastDone) {
     // 完全没有阶段的空群
@@ -58,8 +62,10 @@ export function ackFor(st, intent, templates) {
   }
 
   const key = { approve: 'ackApprove', reject: 'ackReject', continue: 'ackContinue', new_req: 'ackNewReq' }[intent]
+  // 没有明确意图但有等待事项：把等待内容带出来，别只说「等你确认」
+  const fallback = st.waitingLabel ? 'ackPendingLabel' : 'ackPending'
   return {
-    text: renderMessage(key ?? 'ackPending', vars, templates),
+    text: renderMessage(key ?? fallback, vars, templates),
     reqIdToBind,
     idle: false,
   }

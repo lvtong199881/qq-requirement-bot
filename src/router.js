@@ -69,15 +69,35 @@ export function classifyMessage(text) {
  * @param {string} text
  * @param {{waitingLabel: string}|null} state
  */
+/**
+ * 这条消息是不是「看不出在说什么」，需要用一句话反问。
+ *
+ * 只在该反问时才返回 true。曾经只要短、无标点、有 waitingLabel 就反问，
+ * 结果 waitingLabel 里明写「回复「提交」我就执行」，用户照回「提交」却被
+ * 判成没看懂，流程直接卡死——真实事故。
+ *
+ * 现在的判定：只有当整条消息是纯语气词/寒暄时才算含糊。
+ * waitingLabel 里点名过的说法一律视为明确回答。
+ */
 export function isAmbiguous(text, state) {
   const t = (text ?? '').trim()
-  // 有结构的长句（带标点分句或超过 16 字）不算含糊：
-  // 真实需求描述常在 15-30 字之间，不能只看长度
+  if (!t) return false
   if (t.length > 16) return false
   if (/[，。；、]/.test(t)) return false
   if (classifyMessage(t).intent !== INTENT.CONTENT) return false
-  // 有明确等待事项、且消息短到看不出针对性 → 反问
-  return !!state?.waitingLabel
+
+  const label = state?.waitingLabel
+  if (!label) return false
+
+  // 纯语气词和寒暄，无论 waitingLabel 里出现过没有，都算没看懂
+  if (/^(嗯+|哦+|噢+|啊+|额+|呃+|唉+|哈+|呵+|在吗|在不在|喂|你好|hi|hello|hey|？+|\?+|。+|…+|\.+)$/i.test(t)) {
+    return true
+  }
+
+  // 等待提示里点过这个说法（「回复「提交」我就执行」），用户照着说就是明确回答
+  if (label.includes(t)) return false
+
+  return false
 }
 
 /**

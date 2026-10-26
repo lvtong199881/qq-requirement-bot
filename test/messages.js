@@ -93,6 +93,12 @@ console.log('\n== 默认渲染 ==')
   const ab = renderMessage('abnormal', { stage: '测试', reason: '进程退出码 1' })
   check('异常带原因', ab.includes('测试阶段异常') && ab.includes('进程退出码 1'))
 
+  const pending = renderMessage('ackPendingLabel', {
+    stageDone: '验收',
+    waitingLabel: '确认按这两条提交吗？回复「提交」我就执行',
+  })
+  check('有等待事项时带出内容', pending === '验收阶段已完成，等你确认：确认按这两条提交吗？回复「提交」我就执行', pending)
+
   const dec = renderMessage('decision', { content: '1）大字体\n- A 不改\n- B 改' })
   check('决策换行排版', dec === '需要决策：\n1）大字体\n- A 不改\n- B 改', JSON.stringify(dec))
 }
