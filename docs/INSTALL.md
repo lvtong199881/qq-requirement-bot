@@ -1,6 +1,6 @@
 # 安装指南
 
-从零到在群里跑通第一个需求，大约 10 分钟。遇到问题先看主 README 的「排错」表。
+从零到在群里跑通第一个需求，大约 10 分钟。遇到问题先看 [排错](TROUBLESHOOTING.md)。
 
 ## 1. 前置条件
 
@@ -16,7 +16,7 @@
 
 ## 2. 准备 NapCat
 
-1. 按 [NapCat 官方文档](https://napcat.napcat.wiki/) 装好并登录一个 **QQ 小号**（风控提示见主 README「已知限制」第 2 条）。
+1. 按 [NapCat 官方文档](https://napcat.napcat.wiki/) 装好并登录一个 **QQ 小号**（风控提示见 [已知限制](../README.md#已知限制) 第 2 条）。
 2. 在 NapCat 里开启**正向 WebSocket**，默认端口 `3001`。
 3. 记下地址（形如 `ws://127.0.0.1:3001`）和 token——如果设了 token，要填进下一步的配置里。
 
@@ -54,7 +54,7 @@ $EDITOR bot.config.json
 
 **必改的只有 `projectDir`**（需求落在哪个项目里）。群号不用填——bot 连上 NapCat 后会自己报出它所在的群，你把它拉进哪个群，它就在哪个群工作。
 
-其余字段（限流、心跳、上传白名单、群策略、superAdmin）都有合理默认值，含义见主 README 的「配置说明」。
+其余字段（限流、心跳、上传白名单、群策略、superAdmin）都有合理默认值，含义见 [配置说明](CONFIG.md)。
 
 ## 6. 自检
 
@@ -91,7 +91,7 @@ node src/index.js             # 前台跑，日志直接打屏
 
 | 现象 | 去哪看 |
 | --- | --- |
-| 启动但群里没反应 | 主 README「排错」：先查 `bot.qq` 与 `frame.self_id` 是否一致 |
+| 启动但群里没反应 | 见 [排错](TROUBLESHOOTING.md)：先查 `bot.qq` 与 `frame.self_id` 是否一致 |
 | `MISSING_CREDENTIAL` | 密钥没被读到，重新 `export` 或在 DSH Web GUI 的 Models 页保存 |
 | 连不上 ws | NapCat 的正向 WS 没开，或端口/token 不对 |
 | 找不到 skill | 跑 `node src/doctor.js`，它会打印尝试过的全部路径 |
