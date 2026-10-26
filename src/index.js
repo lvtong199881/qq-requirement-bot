@@ -745,6 +745,7 @@ bot.on('message', async (frame) => {
         waitingLabel: st.waitingLabel,
         rejectReason: t,
       },
+      routes: config.promptRoutes,
     })
     handleTurn(groupId, t, {
       isContinuation: !!st.sessionId && st.status !== STATES.IDLE,
@@ -898,6 +899,7 @@ bot.on('message', async (frame) => {
       waitingLabel: st.waitingLabel,
       rejectReason: intentDetail,
     },
+    routes: config.promptRoutes,
   })
 
   if (isDryRun) {
@@ -1042,7 +1044,12 @@ async function restartGroup(groupId) {
         envHints: config.envHints,
       })
     : ''
-  const promptBody = routedPrompt({ intent: INTENT.CONTINUE, userText: '（管理员从面板重启）', bind: bound })
+  const promptBody = routedPrompt({
+    intent: INTENT.CONTINUE,
+    userText: '（管理员从面板重启）',
+    bind: bound,
+    routes: config.promptRoutes,
+  })
 
   handleTurn(groupId, '（管理员从面板重启）', {
     isContinuation: !!st.sessionId && st.status !== STATES.IDLE,
@@ -1071,6 +1078,13 @@ function startApi() {
       if (Array.isArray(patch?.adminUsers)) {
         config.adminUsers = patch.adminUsers.map((x) => String(x))
         runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)
+      }
+      if (patch?.promptRoutes !== undefined) {
+        config.promptRoutes = Object.fromEntries(
+          Object.entries(patch.promptRoutes).filter(([, v]) => typeof v === 'string' && v.trim()),
+        )
+        const n = Object.keys(config.promptRoutes).length
+        runtime.info(n ? `[面板] 消息路由已更新（${n} 条自定义）` : '[面板] 消息路由已全部回到默认')
       }
       if (patch?.promptTemplate !== undefined) {
         config.promptTemplate = patch.promptTemplate || null

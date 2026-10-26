@@ -187,6 +187,14 @@
   .var-chip{background:var(--surface3);border-radius:6px;padding:3px 8px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim);cursor:pointer;border:none}
   .var-chip:hover{background:#e3e8ee;color:var(--text)}
+  .route{border:1px solid var(--line);border-radius:9px;padding:14px 16px;margin-bottom:12px;background:var(--surface2)}
+  .route-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap}
+  .route-head .t{font-size:12.5px;font-weight:600;color:var(--text)}
+  .route-head .badge-c{font-size:10.5px;padding:1px 7px;border-radius:5px;background:#e7f0fb;color:#0969da}
+  .route-head .badge-d{font-size:10.5px;padding:1px 7px;border-radius:5px;background:var(--surface3);color:var(--dim2)}
+  .route .desc{margin:0 0 10px;color:var(--dim);font-size:11.5px;line-height:1.65}
+  .route .vars{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 0}
+  .field.small{font:12px/1.65 ui-monospace,Menlo,monospace;min-height:96px;white-space:pre;overflow:auto;background:var(--surface)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
@@ -378,6 +386,39 @@
         </div>
 
         <div class="card">
+          <h2>消息路由</h2>
+          <p class="desc">
+            用户发的每类消息，最终送给 agent 的 prompt 内容。改这里能调整 agent 如何理解你的意图。<br>
+            可用变量：<code v-for="(d, n) in routeVars" :key="n" style="margin-right:8px">{{ '{' + '{' + n + '}' + '}' }}</code>
+            留空保存即恢复该条默认。
+          </p>
+          <div class="route" v-for="r in routes" :key="r.key">
+            <div class="route-head">
+              <span class="t">{{ r.label }}</span>
+              <span :class="r.custom ? 'badge-c' : 'badge-d'">{{ r.custom ? '自定义' : '默认' }}</span>
+              <button class="menu-btn" style="margin-left:auto;padding:3px 9px;font-size:11px"
+                      @click="resetRoute(r)">恢复默认</button>
+            </div>
+            <p class="desc">{{ r.desc }}</p>
+            <textarea class="field small" :class="{ invalid: !!routeErrors[r.key] }"
+                      :data-route="r.key"
+                      v-model="r.template" spellcheck="false"
+                      @input="routeErrors[r.key] = ''; routesOk = ''"></textarea>
+            <div class="vars">
+              <button class="var-chip" v-for="v in r.vars" :key="v" @click="insertRouteVar(r, v)">{{ '{' + '{' + v + '}' + '}' }}</button>
+              <span v-if="routeErrors[r.key]" class="msg err" style="margin-left:auto">{{ routeErrors[r.key] }}</span>
+            </div>
+          </div>
+          <div class="row">
+            <button class="menu-btn btn-primary" @click="saveRoutes()" :disabled="routesSaving">
+              {{ routesSaving ? '保存中…' : '保存全部' }}
+            </button>
+            <button class="menu-btn" @click="resetAllRoutes()" :disabled="routesSaving">全部恢复默认</button>
+            <span v-if="routesOk" class="msg ok">{{ routesOk }}</span>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>Prompt 模板</h2>
           <p class="desc">
             每个新会话开始时注入给 agent 的群聊协议。改这里会直接影响 agent 的行为，请谨慎。<br>
@@ -554,6 +595,11 @@ createApp({
     const promptError = ref('')
     const promptOk = ref('')
     const promptSaving = ref(false)
+    const routes = ref([])
+    const routeVars = ref({})
+    const routeErrors = ref({})
+    const routesOk = ref('')
+    const routesSaving = ref(false)
     const settingsError = ref('')
     const settingsOk = ref('')
     const settingsSaving = ref(false)
@@ -633,6 +679,10 @@ createApp({
         superAdminUsers.value = d.superAdmin || []
         adminInput.value = (d.adminUsers || []).join(', ')
 
+        routes.value = (d.routes || []).map((r) => ({ ...r }))
+        routeVars.value = d.routeVars || {}
+        routeErrors.value = {}
+
         const p = d.prompt || {}
         promptCustom.value = !!p.custom
         promptDefault.value = p.defaultTemplate || ''
@@ -672,6 +722,70 @@ createApp({
       }
     }
 
+    /** 在某个路由的编辑框里插入占位符 */
+    function insertRouteVar(route, name) {
+      const token = `{{${name}}}`
+      const el = document.querySelector(`textarea.field.small[data-route="${route.key}"]`)
+      if (!el) {
+        route.template += token
+        return
+      }
+      const start = el.selectionStart ?? route.template.length
+      const end = el.selectionEnd ?? start
+      route.template = route.template.slice(0, start) + token + route.template.slice(end)
+      requestAnimationFrame(() => {
+        el.focus()
+        el.selectionStart = el.selectionEnd = start + token.length
+      })
+    }
+
+    function resetRoute(route) {
+      route.template = route.defaultTemplate
+      routeErrors.value[route.key] = ''
+      routesOk.value = ''
+    }
+
+    function resetAllRoutes() {
+      for (const r of routes.value) r.template = r.defaultTemplate
+      routeErrors.value = {}
+      routesOk.value = '已全部填入默认模板，点保存生效'
+    }
+
+    async function saveRoutes() {
+      routeErrors.value = {}
+      routesOk.value = ''
+      routesSaving.value = true
+      try {
+        // 只提交和默认不同的，空的也就不提交（等于回默认）
+        const payload = {}
+        for (const r of routes.value) {
+          const t = (r.template || '').trim()
+          if (t && t !== r.defaultTemplate) payload[r.key] = r.template
+        }
+        const r = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ promptRoutes: payload }),
+        })
+        const d = await r.json()
+        if (!d.ok) {
+          routesOk.value = ''
+          routeErrors.value = { _: d.error || '保存失败' }
+          return
+        }
+        routes.value = (d.routes || []).map((x) => ({ ...x }))
+        const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
+        const n = routes.value.filter((x) => x.custom).length
+        routesOk.value = n
+          ? `已保存 ${n} 条自定义${reloaded ? `，${reloaded} 个实例已生效` : ''}`
+          : `已全部回到默认${reloaded ? `，${reloaded} 个实例已生效` : ''}`
+      } catch (e) {
+        routeErrors.value = { _: '保存失败：' + e.message }
+      } finally {
+        routesSaving.value = false
+      }
+    }
+
     /** 在光标处插入占位符 */
     function insertVar(name) {
       const token = `{{${name}}}`
@@ -706,6 +820,10 @@ createApp({
           promptError.value = d.error || '保存失败'
           return
         }
+        routes.value = (d.routes || []).map((r) => ({ ...r }))
+        routeVars.value = d.routeVars || {}
+        routeErrors.value = {}
+
         const p = d.prompt || {}
         promptCustom.value = !!p.custom
         promptInput.value = p.template || p.defaultTemplate || ''
@@ -841,6 +959,7 @@ createApp({
       instanceCount, groupCount, alertCount, groupRows,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
       promptInput, promptVars, promptCustom, promptError, promptOk, promptSaving, insertVar, savePrompt, resetPrompt,
+      routes, routeVars, routeErrors, routesOk, routesSaving, insertRouteVar, resetRoute, resetAllRoutes, saveRoutes,
       switchView, loadSettings, saveSettings,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
     }
