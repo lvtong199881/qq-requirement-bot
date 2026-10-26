@@ -37,7 +37,15 @@ async function readBody(req) {
  * @param {(groupId: string) => Promise<object>} o.restartGroup
  * @param {string=} o.token  写操作需要的令牌；不给则只允许本机无 token
  */
-export function createBridgeServer({ runtime, config, snapshot, stopGroup, restartGroup, token }) {
+export function createBridgeServer({
+  runtime,
+  config,
+  snapshot,
+  stopGroup,
+  restartGroup,
+  applySettings,
+  token,
+}) {
   const needToken = (req) => {
     if (!token) return true
     const got = req.headers['x-panel-token'] ?? new URL(req.url, 'http://x').searchParams.get('token')
@@ -68,6 +76,13 @@ export function createBridgeServer({ runtime, config, snapshot, stopGroup, resta
       // ── 写操作 ──
       if (method === 'POST') {
         if (!needToken(req)) return json(res, 403, { ok: false, error: 'token 无效' })
+
+        // 面板改了配置后通知本实例热更新（避免让用户重启 bridge）
+        if (path === '/api/settings') {
+          const body = await readBody(req)
+          const result = applySettings?.(body) ?? { ok: false, error: '本实例不支持热更新' }
+          return json(res, result.ok ? 200 : 400, result)
+        }
 
         const m = path.match(/^\/api\/groups\/([^/]+)\/(stop|restart)$/)
         if (m) {

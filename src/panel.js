@@ -8,7 +8,7 @@
  * 面板与 bridge 分离的好处：bridge 崩了面板还活着，能告诉你它崩了。
  */
 import { createServer } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from './instances.js'
@@ -84,6 +84,82 @@ async function dispatch(instances, groupId, action, token) {
   return { ok: false, error: `没有实例在服务群 ${groupId}` }
 }
 
+/**
+ * 解析用户输入的 QQ 白名单。
+ * 允许中英文逗号、空格、换行分隔；容忍空值（= 清空白名单）。
+ * 返回 { ok, list } 或 { ok:false, error }。
+ */
+export function parseAdminUsers(raw) {
+  if (raw == null) return { ok: true, list: [] }
+  const text = String(raw).trim()
+  if (!text) return { ok: true, list: [] }
+
+  const parts = text
+    .split(/[,，\s]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+
+  const bad = parts.filter((x) => !/^\d{4,12}$/.test(x))
+  if (bad.length) {
+    return {
+      ok: false,
+      error: `这些不是合法的 QQ 号（只能是 4~12 位数字）：${bad.join('、')}`,
+    }
+  }
+
+  // 去重但保留顺序
+  const list = [...new Set(parts)]
+  if (list.length > 50) return { ok: false, error: `最多 50 个，当前 ${list.length} 个` }
+  return { ok: true, list }
+}
+
+/** 读 bot.config.json 里的可编辑项 */
+function readSettings(repoRoot) {
+  const file = join(repoRoot, 'bot.config.json')
+  try {
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    return { ok: true, adminUsers: raw.adminUsers ?? [] }
+  } catch (err) {
+    return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [] }
+  }
+}
+
+/** 写回 bot.config.json，只改传进来的字段，其余原样保留 */
+function writeSettings(repoRoot, patch) {
+  const file = join(repoRoot, 'bot.config.json')
+  let raw
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (err) {
+    return { ok: false, error: `读配置失败：${err.message}` }
+  }
+  if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
+  try {
+    writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: `写配置失败：${err.message}` }
+  }
+}
+
+/** 通知所有活着的实例热更新设置 */
+async function pushSettings(instances, patch, token) {
+  const results = []
+  for (const inst of instances) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${inst.port}/api/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(token ? { 'x-panel-token': token } : {}) },
+        body: JSON.stringify(patch),
+      })
+      results.push({ pid: inst.pid, ok: r.ok })
+    } catch (err) {
+      results.push({ pid: inst.pid, ok: false, error: err.message })
+    }
+  }
+  return results
+}
+
 export function startPanel({ repoRoot, port = 7879, token }) {
   const registry = new InstanceRegistry(repoRoot)
 
@@ -112,6 +188,36 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         const n = Math.min(1000, Number(url.searchParams.get('n') ?? 200) || 200)
         const r = await fetch(`http://127.0.0.1:${inst.port}/api/logs?n=${n}`)
         return json(res, 200, await r.json())
+      }
+
+      // 设置：读
+      if (path === '/api/settings' && req.method === 'GET') {
+        return json(res, 200, readSettings(repoRoot))
+      }
+
+      // 设置：写（校验 → 落盘 → 通知各实例热更新）
+      if (path === '/api/settings' && req.method === 'PUT') {
+        let body = {}
+        try {
+          const chunks = []
+          for await (const c of req) chunks.push(c)
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+        } catch {
+          return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
+        }
+
+        const parsed = parseAdminUsers(body.adminUsers)
+        if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
+
+        const written = writeSettings(repoRoot, { adminUsers: parsed.list })
+        if (!written.ok) return json(res, 500, written)
+
+        const pushed = await pushSettings(registry.list(), { adminUsers: parsed.list }, token)
+        return json(res, 200, {
+          ok: true,
+          adminUsers: parsed.list,
+          hotReloaded: pushed,
+        })
       }
 
       // 操作：终止 / 重启

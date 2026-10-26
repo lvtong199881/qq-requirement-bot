@@ -1063,6 +1063,14 @@ function startApi() {
     snapshot: buildSnapshot,
     stopGroup,
     restartGroup,
+    // 面板保存设置后热更新，不用重启 bridge
+    applySettings: (patch) => {
+      if (Array.isArray(patch?.adminUsers)) {
+        config.adminUsers = patch.adminUsers.map((x) => String(x))
+        runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)
+      }
+      return { ok: true }
+    },
     token: config.panel?.token ?? '',
   })
   const tryListen = (port, attempt = 0) => {
