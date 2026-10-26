@@ -867,21 +867,23 @@ createApp({
     async function detail() {
       const { row } = menu.value
       menu.value = null
-      const pid = row.pid
+      const { pid, groupId } = row
       // 先用行数据垫着，完整状态拉回来再替换（列表接口不带阶段表和事件流）
       modal.value = { inst: {}, group: row, logs: [] }
       try {
+        const qs = `pid=${encodeURIComponent(pid)}&groupId=${encodeURIComponent(groupId)}`
         const [detailRes, logsRes] = await Promise.all([
-          fetch('/api/instances?pid=' + encodeURIComponent(pid)).then((r) => r.json()),
+          fetch('/api/board/detail?' + qs).then((r) => r.json()),
           fetch('/api/logs?pid=' + encodeURIComponent(pid) + '&n=200')
             .then((r) => r.json())
             .catch(() => ({ logs: [] })),
         ])
-        const full = detailRes?.instance && Array.isArray(detailRes.groups) ? detailRes : null
-        const group = full
-          ? full.groups.find((x) => String(x.groupId) === String(row.groupId)) ?? row
-          : row
-        modal.value = { inst: full ?? {}, group, logs: logsRes.logs || [] }
+        // 接口直接回这一行对应的群，前端不用再从 groups 里翻
+        modal.value = {
+          inst: detailRes ?? {},
+          group: detailRes?.group ?? row,
+          logs: logsRes.logs || [],
+        }
       } catch {
         /* 拿不到完整状态就只用行数据兜底，日志留空 */
       }

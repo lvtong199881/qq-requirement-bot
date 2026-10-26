@@ -222,18 +222,33 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         return json(res, 200, { rows, alerts, at: Date.now() })
       }
 
-      // 实例页：按「进程」维度。
-      // 带 ?pid= 时返回该实例的完整状态，给「详细信息」弹窗用。
+      // 实例页：按「进程」维度，只在切过去时拉一次
       if (path === '/api/instances') {
         const list = registry.list({ cleanup: true })
-        const pid = url.searchParams.get('pid')
-        if (pid) {
-          const inst = list.find((x) => String(x.pid) === String(pid))
-          if (!inst) return json(res, 404, { ok: false, error: '这个实例已经不在运行了' })
-          return json(res, 200, await fetchStatus(inst, '/api/status'))
-        }
         const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
         return json(res, 200, { instances: statuses, at: Date.now() })
+      }
+
+      // 大盘某一行展开：一个群 + 它所在进程的完整状态
+      if (path === '/api/board/detail') {
+        const pid = url.searchParams.get('pid')
+        const groupId = url.searchParams.get('groupId')
+        if (!pid) return json(res, 400, { ok: false, error: '缺少 pid' })
+        const inst = registry.list().find((x) => String(x.pid) === String(pid))
+        if (!inst) return json(res, 404, { ok: false, error: '这个实例已经不在运行了' })
+
+        const full = await fetchStatus(inst, '/api/status')
+        if (full.unreachable) {
+          return json(res, 200, { instance: full.instance, unreachable: true, error: full.error })
+        }
+        return json(res, 200, {
+          instance: full.instance,
+          config: full.config,
+          onebot: full.onebot,
+          resources: full.resources,
+          // 只回这一行对应的群，前端不用再从 groups 里翻
+          group: (full.groups ?? []).find((g) => String(g.groupId) === String(groupId)) ?? null,
+        })
       }
 
       // 某实例的日志

@@ -73,8 +73,8 @@ panel（一个进程）
 | `POST /api/groups/:id/stop` | 终止该群当前任务（bridge） |
 | `POST /api/groups/:id/restart` | 重启该群任务，先掐断再用「继续」骨架重跑（bridge） |
 | `GET /api/board` | 需求大盘：按群维度摊平的行 + 告警数（panel） |
+| `GET /api/board/detail?pid=<pid>&groupId=<groupId>` | 大盘某一行的完整详情，点「详细信息」时才拉（panel） |
 | `GET /api/instances` | 实例页：按进程维度的列表（panel） |
-| `GET /api/instances?pid=<pid>` | 单个进程的完整状态，点「详细信息」时才拉（panel） |
 | `GET /api/settings` | 读取白名单与群消息文案（panel） |
 | `PUT /api/settings` | 保存白名单 / 文案并热更新所有实例（panel） |
 
@@ -83,10 +83,11 @@ panel（一个进程）
 - 需求大盘每 3 秒轮询，`/api/board` 只返回群维度、列表画得出的字段，连进程的
   `config` / `resources` 都不给
 - 实例页只在切过去时拉一次 `/api/instances`，那边才需要进程级信息
-- 完整状态（阶段表、最近 50 条事件）只在点开「详细信息」时按 `?pid=` 拉一次
+- 详情挂在 `/api/board/detail` 而不是另起一个前缀——它本来就是「大盘某一行」
+  展开（一个群 + 它所在的进程），返回里直接给 `group`，前端不用再从 `groups` 里翻
 
 实机参考：两个群时 `/api/board` 约 660 字节，`/api/instances` 约 1.1 KB，
-详情约 2.6 KB——之前大盘一个接口就把这些全带上。
+`/api/board/detail` 约 1.3 KB——之前大盘一个接口就把这些全带上。
 
 写操作需要 `panel.token` 非空时携带 `x-panel-token`；留空则只依赖「仅监听 127.0.0.1」。
 

@@ -1,8 +1,8 @@
 /**
  * 面板接口分层：
  *   /api/board              需求大盘（群维度）
+ *   /api/board/detail       大盘某一行展开（群 + 它所在的进程）
  *   /api/instances          实例页（进程维度）
- *   /api/instances?pid=xxx  单个进程的完整状态
  *   node test/panel-api.js
  *
  * 用一个假的 bridge 顶替真实实例，不连 QQ、不跑 dsh。
@@ -104,26 +104,33 @@ console.log('\n== 实例页 /api/instances ==')
   check('带群数量用于汇总', Array.isArray(inst.groups) && inst.groups.length === 1)
 }
 
-console.log('\n== 详情 /api/instances?pid= ==')
+console.log('\n== 详情 /api/board/detail ==')
 {
   asked.length = 0
-  const body = await (await fetch(`${base}/api/instances?pid=${process.pid}`)).json()
-  check('返回完整状态', body.full === true)
+  const body = await (await fetch(`${base}/api/board/detail?pid=${process.pid}&groupId=100`)).json()
+  check('带进程的完整信息', body.instance?.pid === process.pid && body.config?.model === 'fake-model')
+  check('带资源占用', body.resources?.rssMb === 10)
   check('走的是 /api/status', asked.some((u) => u.startsWith('/api/status')))
-  check('带完整事件流', Array.isArray(body.recentEvents) && body.recentEvents.length === 1)
-  check('带阶段表', Array.isArray(body.groups?.[0]?.stages))
-  check('带阶段开始时间', typeof body.groups?.[0]?.stageStartedAt === 'number')
+  check('只回这一行对应的群', body.group?.groupId === '100')
+  check('群上带阶段表', Array.isArray(body.group?.stages) && body.group.stages.length === 1)
+  check('群上带阶段开始时间', typeof body.group?.stageStartedAt === 'number')
+  check('不回事件流（弹窗走 /api/logs）', body.recentEvents === undefined)
 }
 
 console.log('\n== 边界 ==')
 {
-  const r = await fetch(`${base}/api/instances?pid=999999`)
+  const r = await fetch(`${base}/api/board/detail?pid=999999&groupId=100`)
   check('不存在的 pid 返回 404', r.status === 404)
-  const body = await r.json()
-  check('给出可读错误', typeof body.error === 'string' && body.error.length > 0)
 
-  const r2 = await fetch(`${base}/api/instances/123`)
-  check('旧的路径式详情已移除', r2.status === 404)
+  const r2 = await fetch(`${base}/api/board/detail?groupId=100`)
+  check('缺 pid 返回 400', r2.status === 400)
+
+  const r3 = await fetch(`${base}/api/instances/123`)
+  check('旧的路径式详情已 404', r3.status === 404)
+
+  const r4 = await fetch(`${base}/api/instances?pid=${process.pid}`)
+  const body4 = await r4.json()
+  check('/api/instances 不再兼任详情', Array.isArray(body4.instances) && body4.full === undefined)
 }
 
 await new Promise((r) => panel.close(r))
