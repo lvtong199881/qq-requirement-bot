@@ -2,7 +2,7 @@
  * 管理面板：常驻进程，聚合所有 bridge 实例，提供 /console 页面。
  *
  * 架构：
- *   bridge  ← 暴露 /api/status、/api/logs、/api/groups/:id/{stop,restart}
+ *   bridge  ← 暴露 /api/status、/api/logs、/api/groups/{stop,restart}
  *   panel   ← 扫描 .instances/*.json 发现实例，逐个拉状态，转发操作
  *
  * 面板与 bridge 分离的好处：bridge 崩了面板还活着，能告诉你它崩了。
@@ -48,6 +48,20 @@ function serveStatic(res, name) {
   res.end(readFileSync(file))
 }
 
+/** 读 JSON 请求体：空体返回 {}，非法 JSON 返回 null（调用方据此回 400） */
+async function readJsonBody(req) {
+  const chunks = []
+  for await (const c of req) chunks.push(c)
+  const text = Buffer.concat(chunks).toString('utf8').trim()
+  if (!text) return {}
+  try {
+    const v = JSON.parse(text)
+    return v && typeof v === 'object' ? v : {}
+  } catch {
+    return null
+  }
+}
+
 /** 拉一个实例的状态；失败返回带 error 的占位对象 */
 async function fetchStatus(inst, path = '/api/status', timeoutMs = 2500) {
   const ac = new AbortController()
@@ -75,10 +89,11 @@ async function dispatch(instances, groupId, action, token) {
     const owns = (status.groups ?? []).some((g) => String(g.groupId) === String(groupId))
     if (!owns) continue
 
-    const url = `http://127.0.0.1:${inst.port}/api/groups/${groupId}/${action}`
+    const url = `http://127.0.0.1:${inst.port}/api/groups/${action}`
     const r = await fetch(url, {
       method: 'POST',
-      headers: token ? { 'x-panel-token': token } : {},
+      headers: { 'content-type': 'application/json', ...(token ? { 'x-panel-token': token } : {}) },
+      body: JSON.stringify({ groupId: String(groupId) }),
     })
     return await r.json()
   }
@@ -269,14 +284,8 @@ export function startPanel({ repoRoot, port = 7879, token }) {
 
       // 设置：写（校验 → 落盘 → 通知各实例热更新）
       if (path === '/api/settings/save' && req.method === 'POST') {
-        let body = {}
-        try {
-          const chunks = []
-          for await (const c of req) chunks.push(c)
-          body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
-        } catch {
-          return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
-        }
+        const body = await readJsonBody(req)
+        if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
 
         // superAdmin 只能在配置文件里改，面板拒绝
         if (body.superAdmin !== undefined) {
@@ -311,11 +320,14 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         return json(res, 200, { ok: true, ...fresh, hotReloaded: pushed })
       }
 
-      // 操作：终止 / 重启
-      const m = path.match(/^\/api\/groups\/([^/]+)\/(stop|restart)$/)
+      // 操作：终止 / 重启 —— groupId 走 body，不塞进路径
+      const m = path.match(/^\/api\/groups\/(stop|restart)$/)
       if (m && req.method === 'POST') {
-        const list = registry.list()
-        const result = await dispatch(list, m[1], m[2], token)
+        const body = await readJsonBody(req)
+        if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
+        const groupId = String(body.groupId ?? '')
+        if (!groupId) return json(res, 400, { ok: false, error: '缺少 groupId' })
+        const result = await dispatch(registry.list(), groupId, m[1], token)
         return json(res, result.ok ? 200 : 400, result)
       }
 

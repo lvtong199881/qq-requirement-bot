@@ -34,30 +34,47 @@ const SLIM_GROUP = {
   stageStatus: '进行中',
 }
 
-// ── 假 bridge：记录被问了哪些路径，按路径返回不同体量的数据 ──
+// ── 假 bridge：记录被问了哪些路径和收到的 body，按路径返回不同体量的数据 ──
 const asked = []
-const fakeBridge = createServer((req, res) => {
+let lastPostBody = null
+const fakeBridge = createServer(async (req, res) => {
   asked.push(req.url)
-  const payload = req.url.startsWith('/api/summary')
-    ? {
-        instance: { pid: process.pid, port: 0 },
-        config: { model: 'fake-model' },
-        onebot: { url: 'ws://x', connected: true },
-        resources: { rssMb: 10, heapMb: 5 },
-        groups: [SLIM_GROUP],
-        slim: true,
-      }
-    : req.url.startsWith('/api/status')
-      ? {
-          instance: { pid: process.pid, port: 0 },
-          config: { model: 'fake-model' },
-          onebot: { url: 'ws://x', connected: true },
-          resources: { rssMb: 10, heapMb: 5 },
-          groups: [FULL_GROUP],
-          recentEvents: [{ level: 'info', text: 'something happened' }],
-          full: true,
-        }
-      : { logs: [{ level: 'info', text: 'log line' }] }
+  let raw = ''
+  for await (const c of req) raw += c
+  if (raw) {
+    try {
+      lastPostBody = JSON.parse(raw)
+    } catch {
+      lastPostBody = null
+    }
+  }
+
+  let payload
+  if (req.url.startsWith('/api/summary')) {
+    payload = {
+      instance: { pid: process.pid, port: 0 },
+      config: { model: 'fake-model' },
+      onebot: { url: 'ws://x', connected: true },
+      resources: { rssMb: 10, heapMb: 5 },
+      groups: [SLIM_GROUP],
+      slim: true,
+    }
+  } else if (req.url.startsWith('/api/status')) {
+    payload = {
+      instance: { pid: process.pid, port: 0 },
+      config: { model: 'fake-model' },
+      onebot: { url: 'ws://x', connected: true },
+      resources: { rssMb: 10, heapMb: 5 },
+      groups: [FULL_GROUP],
+      recentEvents: [{ level: 'info', text: 'something happened' }],
+      full: true,
+    }
+  } else if (req.url.startsWith('/api/groups/')) {
+    payload = { ok: true, message: 'done' }
+  } else {
+    payload = { logs: [{ level: 'info', text: 'log line' }] }
+  }
+
   res.writeHead(200, { 'content-type': 'application/json' })
   res.end(JSON.stringify(payload))
 })
@@ -166,6 +183,37 @@ console.log('\n== 配置读写 /api/settings ==')
     body: '{}',
   })
   check('POST /api/settings 不再兼任写入', barePost.status === 404)
+}
+
+console.log('\n== 操作转发 /api/groups ==')
+{
+  asked.length = 0
+  lastPostBody = null
+  const r = await fetch(`${base}/api/groups/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ groupId: '100' }),
+  })
+  check('stop 返回 200', r.status === 200)
+  check('转发到 bridge 的 /api/groups/stop', asked.includes('/api/groups/stop'))
+  check('groupId 从 body 传下去', lastPostBody?.groupId === '100')
+
+  const missing = await fetch(`${base}/api/groups/restart`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  check('缺 groupId 返回 400', missing.status === 400)
+
+  const badJson = await fetch(`${base}/api/groups/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{not json',
+  })
+  check('非法 JSON 返回 400', badJson.status === 400)
+
+  const oldPath = await fetch(`${base}/api/groups/100/stop`, { method: 'POST' })
+  check('旧的路径式操作已 404', oldPath.status === 404)
 }
 
 await new Promise((r) => panel.close(r))

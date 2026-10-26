@@ -851,7 +851,11 @@ createApp({
     }
     async function act(kind, row) {
       try {
-        const r = await fetch('/api/groups/' + row.groupId + '/' + kind, { method: 'POST' })
+        const r = await fetch('/api/groups/' + kind, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ groupId: row.groupId }),
+        })
         const d = await r.json()
         toast.value = {
           text: d.ok ? (kind === 'stop' ? '已终止' : '已重启') : '失败：' + (d.error || d.message),

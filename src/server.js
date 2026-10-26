@@ -91,10 +91,12 @@ export function createBridgeServer({
           return json(res, result.ok ? 200 : 400, result)
         }
 
-        const m = path.match(/^\/api\/groups\/([^/]+)\/(stop|restart)$/)
+        const m = path.match(/^\/api\/groups\/(stop|restart)$/)
         if (m) {
-          const [, groupId, action] = m
-          await readBody(req)
+          const action = m[1]
+          const body = await readBody(req)
+          const groupId = String(body.groupId ?? '')
+          if (!groupId) return json(res, 400, { ok: false, error: '缺少 groupId' })
           const result = action === 'stop' ? await stopGroup(groupId) : await restartGroup(groupId)
           runtime.info(`[面板] ${action} ${groupId} → ${result.ok ? '成功' : '失败'}：${result.message ?? ''}`)
           return json(res, result.ok ? 200 : 400, result)
