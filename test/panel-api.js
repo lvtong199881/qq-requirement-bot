@@ -8,7 +8,7 @@
  * 用一个假的 bridge 顶替真实实例，不连 QQ、不跑 dsh。
  */
 import { createServer } from 'node:http'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { startPanel } from '../src/panel.js'
@@ -72,6 +72,11 @@ writeFileSync(
   JSON.stringify({ pid: process.pid, port: bridgePort, startedAt: Date.now() }),
   'utf8',
 )
+writeFileSync(
+  join(repoRoot, 'bot.config.json'),
+  JSON.stringify({ adminUsers: [], superAdmin: [] }, null, 2),
+  'utf8',
+)
 
 const panel = await startPanel({ repoRoot, port: 0 })
 const base = `http://127.0.0.1:${panel.address().port}`
@@ -131,6 +136,36 @@ console.log('\n== 边界 ==')
   const r4 = await fetch(`${base}/api/instances?pid=${process.pid}`)
   const body4 = await r4.json()
   check('/api/instances 不再兼任详情', Array.isArray(body4.instances) && body4.full === undefined)
+}
+
+console.log('\n== 配置读写 /api/settings ==')
+{
+  const read = await fetch(`${base}/api/settings`)
+  const readBody = await read.json()
+  check('读接口 GET /api/settings 返回 200', read.status === 200 && readBody.ok === true)
+
+  const save = await fetch(`${base}/api/settings/save`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ adminUsers: '10001, 10002' }),
+  })
+  const saved = await save.json()
+  check('写接口是 POST /api/settings/save', save.status === 200 && saved.ok === true)
+  check('写操作已落盘', readFileSync(join(repoRoot, 'bot.config.json'), 'utf8').includes('10001'))
+
+  const oldPut = await fetch(`${base}/api/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  check('旧的 PUT /api/settings 已不可用', oldPut.status === 404)
+
+  const barePost = await fetch(`${base}/api/settings`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+  check('POST /api/settings 不再兼任写入', barePost.status === 404)
 }
 
 await new Promise((r) => panel.close(r))

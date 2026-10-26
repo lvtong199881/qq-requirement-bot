@@ -85,7 +85,7 @@ export function createBridgeServer({
         if (!needToken(req)) return json(res, 403, { ok: false, error: 'token 无效' })
 
         // 面板改了配置后通知本实例热更新（避免让用户重启 bridge）
-        if (path === '/api/settings') {
+        if (path === '/api/settings/apply') {
           const body = await readBody(req)
           const result = applySettings?.(body) ?? { ok: false, error: '本实例不支持热更新' }
           return json(res, result.ok ? 200 : 400, result)

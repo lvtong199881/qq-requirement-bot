@@ -177,7 +177,7 @@ async function pushSettings(instances, patch, token) {
   const results = []
   for (const inst of instances) {
     try {
-      const r = await fetch(`http://127.0.0.1:${inst.port}/api/settings`, {
+      const r = await fetch(`http://127.0.0.1:${inst.port}/api/settings/apply`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(token ? { 'x-panel-token': token } : {}) },
         body: JSON.stringify(patch),
@@ -268,7 +268,7 @@ export function startPanel({ repoRoot, port = 7879, token }) {
       }
 
       // 设置：写（校验 → 落盘 → 通知各实例热更新）
-      if (path === '/api/settings' && req.method === 'PUT') {
+      if (path === '/api/settings/save' && req.method === 'POST') {
         let body = {}
         try {
           const chunks = []

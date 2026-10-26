@@ -51,7 +51,7 @@ PID、需求名、QQ 群名、发起人、当前阶段状态徽章，每行末�
 bridge（每个实例）
 ├── .instances/<pid>.json   启动时注册，退出时删除——面板靠它发现实例
 └── 127.0.0.1:7878          /api/summary、/api/status、/api/logs、/api/ping、
-                            /api/settings、/api/groups/:id/{stop,restart}
+                            /api/settings/apply、/api/groups/:id/{stop,restart}
 
 panel（一个进程）
 ├── 扫描 .instances/        发现所有实例
@@ -69,14 +69,14 @@ panel（一个进程）
 | `GET /api/status` | 本实例完整状态，含阶段表与最近 50 条事件（bridge） |
 | `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000（bridge） |
 | `GET /api/ping` | 存活探测，返回 pid（bridge） |
-| `POST /api/settings` | 面板推配置过来时热更新本实例（bridge） |
+| `POST /api/settings/apply` | 面板推配置过来时热更新本实例（bridge） |
 | `POST /api/groups/:id/stop` | 终止该群当前任务（bridge） |
 | `POST /api/groups/:id/restart` | 重启该群任务，先掐断再用「继续」骨架重跑（bridge） |
 | `GET /api/board` | 需求大盘：按群维度摊平的行 + 告警数（panel） |
 | `GET /api/board/detail?pid=<pid>&groupId=<groupId>` | 大盘某一行的完整详情，点「详细信息」时才拉（panel） |
 | `GET /api/instances` | 实例页：按进程维度的列表（panel） |
 | `GET /api/settings` | 读取白名单与群消息文案（panel） |
-| `PUT /api/settings` | 保存白名单 / 文案并热更新所有实例（panel） |
+| `POST /api/settings/save` | 保存白名单 / 文案并热更新所有实例（panel） |
 
 **为什么按视图分开**：
 

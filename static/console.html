@@ -685,8 +685,8 @@ createApp({
       settingsOk.value = ''
       settingsSaving.value = true
       try {
-        const r = await fetch('/api/settings', {
-          method: 'PUT',
+        const r = await fetch('/api/settings/save', {
+          method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ adminUsers: adminInput.value }),
         })
@@ -748,8 +748,8 @@ createApp({
           const t = (m.template || '').trim()
           if (t && t !== m.defaultTemplate) payload[m.key] = m.template
         }
-        const r = await fetch('/api/settings', {
-          method: 'PUT',
+        const r = await fetch('/api/settings/save', {
+          method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ messageTemplates: payload }),
         })
