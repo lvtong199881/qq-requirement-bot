@@ -597,7 +597,9 @@ bot.on('connected', async () => {
     }
     // 上次退出时还排在队列里的消息，bridge 重启不会自动补跑——
     // 明确告诉用户是哪几条，让人自己决定要不要重发。
-    for (const g of groups) {
+    // 用 list（本次拉到的群），排除名单之外的群不打扰。
+    for (const g of Array.isArray(list) ? list : []) {
+      if ((config.excludeGroups ?? []).includes(String(g.group_id))) continue
       const pending = machine.pendingQueued(g.group_id)
       if (!pending.length) continue
       log(`[${g.group_id}] 有 ${pending.length} 条重启前未执行的消息，已提示用户重发`)
