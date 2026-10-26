@@ -12,6 +12,7 @@ import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, RateLimiter, sleep, runningText, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
+import { resolveStageStart, ackFor, planStageAnnounce } from './stage.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
@@ -158,6 +159,20 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 // ────────────────────────────── 一回合 ──────────────────────────────
 
+/** 消息 1 的发送壳：文案来自 stage.js 的 ackFor（纯函数，可单测） */
+async function sendAck(groupId, st, replyTo, intent) {
+  const ack = ackFor(st, intent)
+
+  // 绑定丢了就从编排记录找回并落盘——否则下次会去读「最近改动的那个需求」，
+  // 项目里并存多个需求时可能读错。
+  if (ack.reqIdToBind) {
+    store.save(groupId, { ...st, reqId: ack.reqIdToBind })
+    log(`[${groupId}] 绑定自愈（回执）：reqId=${ack.reqIdToBind}`)
+  }
+
+  await sendPlain(groupId, ack.text, { replyTo })
+}
+
 // ─────────────────── 群消息播报（四类，全部由 bridge 生成）───────────────────
 // 用户明确要求：agent 的文字一律不进群，群里只出现状态播报。
 //   1. 用户发消息后的回执：当前XX阶段中，已进行 X小时X分钟X秒
@@ -175,80 +190,8 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
  * @param {object} st 群状态
  * @returns {{messages: string[], running: string|null, finishedNow: string[], patch: object}}
  */
-function planStageAnnounce(st) {
-  const table = stageTable(st.projectDir, st.reqId ?? undefined)
-  const { stages } = table
-  const reqIdForTime = st.reqId ?? table.reqId
-  const running = stages.find((x) => x.status.includes('进行中'))?.name ?? null
-  const finishedNow = stages.filter((x) => x.status.includes('已完成')).map((x) => x.name)
-
-  const messages = []
-  const patch = {}
-
-  // 首次观测：把历史已完成阶段全部记为已知，避免把老阶段播报一遍
-  const known = st.finishedStages
-  if (known === null || known === undefined) {
-    patch.finishedStages = finishedNow
-  } else {
-    const knownSet = new Set(known)
-    for (const name of finishedNow) {
-      if (!knownSet.has(name)) {
-        messages.push(`${name}阶段已完成。`)
-        patch.finishedStages = [...finishedNow]
-      }
-    }
-  }
-
-  // 阶段切换 → 播报「已开始」，并重置阶段计时
-  if (running && running !== st.stage) {
-    messages.push(`${running}阶段已开始。`)
-    patch.stage = running
-    // 首次观测到某个阶段在跑时，用编排记录的最近写入时间近似它的开始时间
-    // （阶段切换必然改写编排记录）。比记 Date.now() 更接近真实起点。
-    patch.stageStartedAt = guessStageStart(st.projectDir, reqIdForTime)
-  } else if (running && !st.stageStartedAt) {
-    // 老数据里 stage 已是当前阶段但缺时间戳：补一个，避免播报里缺少时长
-    patch.stageStartedAt = guessStageStart(st.projectDir, reqIdForTime)
-  } else if (!running && st.stage) {
-    // 阶段都完成了但还没进入下一阶段：保留最后一次阶段名，避免回执说「没有阶段」
-    patch.stage = st.stage
-  }
-
-  return { messages, running, finishedNow, patch }
-}
 
 /** 消息 1：用户发消息后的回执 */
-async function sendAck(groupId, st, replyTo, intent) {
-  const table = stageTable(st.projectDir, st.reqId ?? undefined)
-  const { stages } = table
-  const running = stages.find((x) => x.status.includes('进行中'))
-
-  // 绑定丢了就从编排记录找回来并落盘——否则下次会去读「最近改动的那个需求」，
-  // 项目里并存多个需求时可能读错。
-  if (!st.reqId && table.reqId) {
-    st.reqId = table.reqId
-    store.save(groupId, { ...st, reqId: table.reqId })
-    log(`[${groupId}] 绑定自愈（回执）：reqId=${table.reqId}`)
-  }
-
-  // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
-  if (running) {
-    await sendPlain(groupId, runningText(running.name, resolveStageStart(st, running.name)), { replyTo })
-    return
-  }
-
-  // 没有进行中阶段：按意图回执，避免同一句话重复出现
-  const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
-  const tag = lastDone ? `${lastDone.name}阶段已完成，` : ''
-  const byIntent = {
-    approve: `${tag}收到批准，正在启动下一阶段。`,
-    reject: `${tag}收到修改意见，正在转给对应阶段处理。`,
-    continue: `${tag}正在继续。`,
-    new_req: '收到，开始新需求。',
-  }
-  const msg = byIntent[intent] ?? (lastDone ? `${tag}等你确认。` : '当前没有进行中的阶段。')
-  await sendPlain(groupId, msg, { replyTo })
-}
 
 async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, promptBody, intent, retried = false }) {
   const st = machine.peek(groupId)
