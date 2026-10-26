@@ -532,8 +532,17 @@ function stripAt(message) {
 const STOP_WORDS = new Set(['停', '停止', '中断', '停一下', '取消'])
 const HELP_WORDS = new Set(['帮助', 'help', '?', '？', '怎么用'])
 
+// bot 的 QQ 真实昵称（get_login_info 拿），和配置里的自称 bot.name 是两回事
+let botNickname = null
+
 bot.on('connected', async () => {
-  log(`已连接 OneBot：${config.onebot.ws}（bot=${config.bot.name}）`)
+  // 拉 bot 自己的 QQ 资料：面板要显示真实昵称，而不是配置里的自称
+  const login = await bot.getLoginInfo()
+  if (login?.nickname) {
+    botNickname = login.nickname
+    detail(`bot 真实昵称：${botNickname}`)
+  }
+  log(`已连接 OneBot：${config.onebot.ws}（bot=${config.bot.name} / ${botNickname ?? '昵称未知'}）`)
   // 连上就拉一次群列表：群号由 bot 自己报，配置里不用填
   try {
     const list = await bot.call('get_group_list', {}, 8000)
@@ -997,6 +1006,8 @@ function buildSnapshot() {
       startedAt: runtime.startedAt,
       nodeVersion: process.version,
       cwd: process.cwd(),
+      // QQ 真实昵称（get_login_info），和 config.botName（对外自称）区分开
+      botNickname: botNickname ?? null,
     },
     config: {
       profile: config.profile,

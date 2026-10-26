@@ -234,6 +234,15 @@ export class OneBot extends EventEmitter {
     })
   }
 
+  /** bot 自己的 QQ 资料：{ user_id, nickname }。昵称是 QQ 真实昵称，不是配置里的自称 */
+  async getLoginInfo() {
+    try {
+      return await this.call('get_login_info', {})
+    } catch {
+      return null
+    }
+  }
+
   /**
    * 查群成员角色：owner / admin / member。
    * 群管判定用它——比维护一份 QQ 白名单更贴近「谁在这个群里有权限」。

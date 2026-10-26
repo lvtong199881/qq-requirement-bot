@@ -316,7 +316,9 @@
           <span class="dot" :style="{background: inst.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
           <span class="pid">PID {{ inst.instance?.pid ?? '?' }}</span>
           <span class="sep">·</span>
-          <span>{{ inst.config?.botName || '—' }}({{ inst.config?.botQQ || '—' }})</span>
+          <span :title="inst.instance?.botNickname ? 'QQ 昵称' : '昵称未知'">
+            {{ inst.instance?.botNickname || inst.config?.botName || '—' }}({{ inst.config?.botQQ || '—' }})
+          </span>
           <span class="sep">·</span>
           <span class="muted">{{ inst.config?.model || '—' }}</span>
           <span v-if="inst.unreachable" class="tag" style="color:var(--red)">不可达：{{ inst.error }}</span>
@@ -330,7 +332,9 @@
           <div class="kv-item"><span class="k">运行时长</span><span class="v">{{ fmtDur(Date.now() - (inst.instance?.startedAt || Date.now())) }}</span></div>
           <div class="kv-item"><span class="k">内存占用</span><span class="v">{{ inst.resources?.rssMb ?? '—' }} MB（heap {{ inst.resources?.heapMb ?? '—' }} MB）</span></div>
           <div class="kv-item"><span class="k">OneBot</span><span class="v">{{ inst.onebot?.url || '—' }} · {{ inst.onebot?.connected ? '已连接' : '未连接' }}</span></div>
-          <div class="kv-item"><span class="k">bot QQ</span><span class="v">{{ inst.config?.botQQ || '—' }}</span></div>
+          <div class="kv-item"><span class="k">QQ 昵称</span><span class="v">{{ inst.instance?.botNickname || '—' }}</span></div>
+          <div class="kv-item"><span class="k">账号</span><span class="v">{{ inst.config?.botQQ || '—' }}</span></div>
+          <div class="kv-item"><span class="k">对外自称</span><span class="v">{{ inst.config?.botName || '—' }}</span></div>
           <div class="kv-item"><span class="k">模型</span><span class="v">{{ inst.config?.model || '—' }}</span></div>
           <div class="kv-item"><span class="k">profile</span><span class="v">{{ inst.config?.profile || '—' }}</span></div>
           <div class="kv-item"><span class="k">群策略</span><span class="v">{{ inst.config?.groupPolicy || '—' }}</span></div>
