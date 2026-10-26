@@ -181,6 +181,12 @@
   .msg{font-size:12px}
   .msg.err{color:#cf222e}
   .msg.ok{color:var(--green)}
+  .field.mono{font:12px/1.7 ui-monospace,Menlo,monospace;min-height:340px;white-space:pre;overflow:auto}
+  .var-bar{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;align-items:center}
+  .var-bar .lab{font-size:11.5px;color:var(--dim2)}
+  .var-chip{background:var(--surface3);border-radius:6px;padding:3px 8px;font-size:11.5px;
+    font-family:ui-monospace,Menlo,monospace;color:var(--dim);cursor:pointer;border:none}
+  .var-chip:hover{background:#e3e8ee;color:var(--text)}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
@@ -372,6 +378,32 @@
         </div>
 
         <div class="card">
+          <h2>Prompt 模板</h2>
+          <p class="desc">
+            每个新会话开始时注入给 agent 的群聊协议。改这里会直接影响 agent 的行为，请谨慎。<br>
+            支持 <code>{{botName}}</code> 和 <code>{{approval}}</code> 两个占位符；留空保存即恢复默认。
+          </p>
+          <div class="var-bar">
+            <span class="lab">插入：</span>
+            <button class="var-chip" v-for="(desc, name) in promptVars" :key="name"
+                    :title="desc" @click="insertVar(name)">{{ '{' + '{' + name + '}' + '}' }}</button>
+            <span class="lab" style="margin-left:auto">
+              {{ promptCustom ? '当前：自定义' : '当前：内置默认' }} · {{ promptInput.length }} 字符
+            </span>
+          </div>
+          <textarea class="field mono" :class="{ invalid: !!promptError }" v-model="promptInput"
+                    spellcheck="false" @input="promptError = ''; promptOk = ''"></textarea>
+          <div class="row">
+            <button class="menu-btn btn-primary" @click="savePrompt()" :disabled="promptSaving">
+              {{ promptSaving ? '保存中…' : '保存' }}
+            </button>
+            <button class="menu-btn" @click="resetPrompt()" :disabled="promptSaving">恢复默认</button>
+            <span v-if="promptError" class="msg err">{{ promptError }}</span>
+            <span v-else-if="promptOk" class="msg ok">{{ promptOk }}</span>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>超级管理员</h2>
           <p class="desc">
             不受群角色与上面的白名单限制，任何群都能驱动 bot。<br>
@@ -515,6 +547,13 @@ createApp({
     const adminInput = ref('')
     const savedAdminUsers = ref([])
     const superAdminUsers = ref([])
+    const promptInput = ref('')
+    const promptDefault = ref('')
+    const promptVars = ref({})
+    const promptCustom = ref(false)
+    const promptError = ref('')
+    const promptOk = ref('')
+    const promptSaving = ref(false)
     const settingsError = ref('')
     const settingsOk = ref('')
     const settingsSaving = ref(false)
@@ -593,6 +632,12 @@ createApp({
         savedAdminUsers.value = d.adminUsers || []
         superAdminUsers.value = d.superAdmin || []
         adminInput.value = (d.adminUsers || []).join(', ')
+
+        const p = d.prompt || {}
+        promptCustom.value = !!p.custom
+        promptDefault.value = p.defaultTemplate || ''
+        promptVars.value = p.vars || {}
+        promptInput.value = p.template || p.defaultTemplate || ''
       } catch (e) {
         settingsError.value = '读取失败：' + e.message
       }
@@ -625,6 +670,60 @@ createApp({
       } finally {
         settingsSaving.value = false
       }
+    }
+
+    /** 在光标处插入占位符 */
+    function insertVar(name) {
+      const token = `{{${name}}}`
+      const el = document.querySelector('textarea.field.mono')
+      if (!el) {
+        promptInput.value += token
+        return
+      }
+      const start = el.selectionStart ?? promptInput.value.length
+      const end = el.selectionEnd ?? start
+      promptInput.value = promptInput.value.slice(0, start) + token + promptInput.value.slice(end)
+      requestAnimationFrame(() => {
+        el.focus()
+        el.selectionStart = el.selectionEnd = start + token.length
+      })
+    }
+
+    async function savePrompt() {
+      promptError.value = ''
+      promptOk.value = ''
+      promptSaving.value = true
+      try {
+        // 留空 = 恢复默认（后端按 null 处理）
+        const payload = promptInput.value.trim() ? promptInput.value : null
+        const r = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ promptTemplate: payload }),
+        })
+        const d = await r.json()
+        if (!d.ok) {
+          promptError.value = d.error || '保存失败'
+          return
+        }
+        const p = d.prompt || {}
+        promptCustom.value = !!p.custom
+        promptInput.value = p.template || p.defaultTemplate || ''
+        const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
+        promptOk.value = payload
+          ? `已保存${reloaded ? `，${reloaded} 个实例已生效` : ''}`
+          : '已恢复默认模板'
+      } catch (e) {
+        promptError.value = '保存失败：' + e.message
+      } finally {
+        promptSaving.value = false
+      }
+    }
+
+    async function resetPrompt() {
+      promptInput.value = promptDefault.value
+      promptError.value = ''
+      promptOk.value = '已填入默认模板，点保存生效'
     }
 
     // ── 格式化 ──
@@ -741,6 +840,7 @@ createApp({
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
+      promptInput, promptVars, promptCustom, promptError, promptOk, promptSaving, insertVar, savePrompt, resetPrompt,
       switchView, loadSettings, saveSettings,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
     }
