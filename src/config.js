@@ -174,7 +174,12 @@ export function loadConfig(configPath) {
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
-    // 管理员 QQ 号：标 admin 的指令只有这些人能用
+    // 超级管理员：不受群角色与白名单限制，任何群都能驱动 bot。
+    // 只能改配置文件——面板不提供编辑入口，避免把自己锁出去。
+    superAdmin: (Array.isArray(raw.superAdmin) ? raw.superAdmin : raw.superAdmin ? [raw.superAdmin] : []).map(
+      (x) => String(x),
+    ),
+    // 指令白名单：面板可编辑，额外放行非群管的 QQ 号
     adminUsers: Array.isArray(raw.adminUsers)
       ? raw.adminUsers.map((x) => String(x))
       : raw.adminUsers

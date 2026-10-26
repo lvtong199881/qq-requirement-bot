@@ -38,6 +38,9 @@
     "publicPort": 7879,
     "token": ""
   },
+  "superAdmin": [
+    "你的QQ号"
+  ],
   "adminUsers": [
     "你的QQ号"
   ]

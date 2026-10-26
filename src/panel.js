@@ -118,9 +118,14 @@ function readSettings(repoRoot) {
   const file = join(repoRoot, 'bot.config.json')
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8'))
-    return { ok: true, adminUsers: raw.adminUsers ?? [] }
+    return {
+      ok: true,
+      adminUsers: raw.adminUsers ?? [],
+      // 超级管理员只读展示，面板不提供编辑（避免把自己锁出去）
+      superAdmin: raw.superAdmin ?? [],
+    }
   } catch (err) {
-    return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [] }
+    return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
   }
 }
 
@@ -132,6 +137,9 @@ function writeSettings(repoRoot, patch) {
     raw = JSON.parse(readFileSync(file, 'utf8'))
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}` }
+  }
+  if (patch.superAdmin !== undefined) {
+    return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
   }
   if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
   try {
@@ -204,6 +212,15 @@ export function startPanel({ repoRoot, port = 7879, token }) {
           body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
         } catch {
           return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
+        }
+
+        // superAdmin 只能在配置文件里改，面板拒绝
+        if (body.superAdmin !== undefined) {
+          return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
+        }
+        // 不带 adminUsers 就不动它，别把白名单误清空
+        if (body.adminUsers === undefined) {
+          return json(res, 400, { ok: false, error: '缺少 adminUsers 字段' })
         }
 
         const parsed = parseAdminUsers(body.adminUsers)

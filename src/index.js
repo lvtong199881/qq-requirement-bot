@@ -88,11 +88,18 @@ async function memberRole(groupId, userId) {
   return role
 }
 
-/** 只有群主/群管理员能驱动 bot；adminUsers 是额外放行的兜底名单 */
+/**
+ * 谁能驱动 bot：
+ *   1. superAdmin —— 不受任何限制，任何群都可以（只能改配置文件）
+ *   2. 群主 / 群管理员 —— 在本群内可以
+ *   3. adminUsers 白名单 —— 额外放行（面板可编辑）
+ */
 async function canOperate(groupId, userId) {
-  const role = await memberRole(groupId, userId)
+  const uid = String(userId ?? '')
+  if (config.superAdmin.includes(uid)) return { ok: true, role: 'superadmin' }
+  const role = await memberRole(groupId, uid)
   if (role === 'owner' || role === 'admin') return { ok: true, role }
-  if (config.adminUsers.includes(String(userId))) return { ok: true, role: role ?? 'listed' }
+  if (config.adminUsers.includes(uid)) return { ok: true, role: role ?? 'listed' }
   return { ok: false, role }
 }
 
@@ -644,7 +651,10 @@ bot.on('message', async (frame) => {
   const cmd = parseCommand(text)
   if (cmd) {
     // 入口已经保证是群主/群管理员；这里再区分 owner 级与群管级
-    const isAdmin = gatePerm.role === 'owner' || config.adminUsers.includes(initiator.userId)
+    const isAdmin =
+      gatePerm.role === 'superadmin' ||
+      gatePerm.role === 'owner' ||
+      config.adminUsers.includes(initiator.userId)
 
     if (cmd.unknown || !cmd.def) {
       await sendPlain(groupId, `没有 /${cmd.name} 这条指令。发 /help 看可用的。`, { replyTo })
