@@ -3,7 +3,7 @@
  * 依据 requirement-spec「bot 调用模式」一节，以及 artifacts.js 的 DELIVERABLES/收尾判定。
  *   node test/artifacts.js
  */
-import { isDeliverable, wrapupWritten, diffSnapshot, snapshot, relWithinReq, isStageRunning, currentStage } from '../src/artifacts.js'
+import { isDeliverable, wrapupWritten, diffSnapshot, snapshot, relWithinReq, isStageRunning, currentStage, stageTable } from '../src/artifacts.js'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -104,6 +104,46 @@ console.log('\n== currentStage：认「定稿中」并跳过表头 ==')
   ].join('\n'))
   const cur = currentStage(root)
   check('阶段名取自状态列非「未开始」的那行', cur.stage === '产品需求', String(cur.stage))
+}
+
+console.log('\n== stageTable：状态列按表头定位，插了新列也不错位 ==')
+{
+  // 真实事故：requirement-spec 给阶段表加了「执行 agent」「产物」两列，
+  // 而解析还把第 2 列当状态，于是读到 agent 名字、每行都算「进行中」，
+  // 群里播报永远停在「产品需求」。
+  const reqDir = join(root, 'docs', 'requirements', 'col-shift')
+  mkdirSync(reqDir, { recursive: true })
+  writeFileSync(join(reqDir, '编排记录.md'), [
+    '# 编排记录：col-shift', '', '## 阶段进度',
+    '| 阶段 | 执行 agent | 状态 | 产物 | 返工次数 |',
+    '| --- | --- | --- | --- | --- |',
+    '| 1 产品需求 | 需求 agent 2c1004f8 | 已完成 | PRD.md | 0 |',
+    '| 2 设计 | 设计 agent 5e9b133d | 进行中 | 设计说明.md | 0 |',
+    '| 3 技术方案 | 待起 | 未开始 | — | 0 |', '',
+    '## 下一节',
+  ].join('\n'))
+
+  const t = stageTable(root, 'col-shift')
+  check('解析出 3 行', t.stages.length === 3, JSON.stringify(t.stages))
+  check('阶段 1 状态是已完成', t.stages[0]?.status === '已完成', String(t.stages[0]?.status))
+  check('阶段 2 状态是进行中', t.stages[1]?.status === '进行中', String(t.stages[1]?.status))
+  check('阶段 3 状态是未开始', t.stages[2]?.status === '未开始', String(t.stages[2]?.status))
+  check('只有设计在跑', t.stages.filter((s) => isStageRunning(s.status)).map((s) => s.name).join() === '设计')
+  check('currentStage 认设计', currentStage(root).stage === '设计', String(currentStage(root).stage))
+
+  // 旧格式（4 列，状态在第 2 列）必须继续认得
+  const oldDir = join(root, 'docs', 'requirements', 'old-cols')
+  mkdirSync(oldDir, { recursive: true })
+  writeFileSync(join(oldDir, '编排记录.md'), [
+    '# 编排记录：old-cols', '', '## 阶段进度',
+    '| 阶段 | 状态 | 返工次数 | 校验结论 |',
+    '| --- | --- | --- | --- |',
+    '| 1 产品需求 | 已完成 | 0 | ok |',
+    '| 2 设计 | 进行中 | 0 | — |', '',
+    '## 下一节',
+  ].join('\n'))
+  const old = stageTable(root, 'old-cols')
+  check('旧格式：设计在进行中', old.stages[1]?.status === '进行中', JSON.stringify(old.stages))
 }
 
 rmSync(root, { recursive: true, force: true })

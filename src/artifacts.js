@@ -194,54 +194,11 @@ export function uploadName(projectDir, filePath) {
  * @returns {{stage: string|null, reqId: string|null}}
  */
 export function currentStage(projectDir) {
-  const root = join(projectDir, DOC_ROOT)
-  if (!existsSync(root)) return { stage: null, reqId: null }
-
-  // 找最近改动的编排记录
-  let newest = null
-  try {
-    for (const id of readdirSync(root)) {
-      if (id.startsWith('.')) continue
-      const f = join(root, id, '编排记录.md')
-      if (!existsSync(f)) continue
-      const mtime = statSync(f).mtimeMs
-      if (!newest || mtime > newest.mtime) newest = { id, file: f, mtime }
-    }
-  } catch {
-    return { stage: null, reqId: null }
-  }
-  if (!newest) return { stage: null, reqId: null }
-
-  let lines
-  try {
-    lines = readFileSync(newest.file, 'utf8').split('\n')
-  } catch {
-    return { stage: null, reqId: newest.id }
-  }
-
-  // 定位「## 阶段进度」小节，逐行扫描到下一个二级标题为止。
-  // 用逐行扫描而不是正则切分：中文标题 + 表格里的竖线容易让正则出意外。
-  let inSection = false
-  for (const line of lines) {
-    const t = line.trim()
-    if (/^##\s*阶段进度\s*$/.test(t)) {
-      inSection = true
-      continue
-    }
-    if (inSection && /^##\s/.test(t)) break // 到下一个小节
-    if (!inSection) continue
-    if (!t.startsWith('|')) continue
-
-    // 表格行：| 2 设计 | 进行中 | 0 | — |
-    // 状态在第 3 列，按 isStageRunning 判，别在这行匹配字面「进行中」。
-    const cells = t.split('|').map((c) => c.trim()).filter(Boolean)
-    if (cells.length < 3) continue
-    const name = cells[0].replace(/^\d+\s*/, '').trim()
-    if (!name || name.includes('---') || name === '阶段') continue
-    if (!isStageRunning(cells[2])) continue
-    return { stage: name, reqId: newest.id }
-  }
-  return { stage: null, reqId: newest.id }
+  // 复用 stageTable：两份实现各写各的列索引，正是「状态列插了新列就解析错位」
+  // 那个 bug 的根源。这里只挑第一条在跑的阶段。
+  const { reqId, stages } = stageTable(projectDir)
+  const running = stages.find((st) => isStageRunning(st.status))
+  return { stage: running?.name ?? null, reqId }
 }
 
 /**
@@ -288,6 +245,7 @@ export function stageTable(projectDir, reqId) {
 
   const stages = []
   let inSection = false
+  let statusCol = 1 // 旧格式（| 阶段 | 状态 | 返工次数 |）里状态在第 2 列
   for (const line of lines) {
     const t = line.trim()
     if (/^##\s*阶段进度\s*$/.test(t)) {
@@ -298,11 +256,24 @@ export function stageTable(projectDir, reqId) {
     if (!inSection) continue
     if (!t.startsWith('|')) continue
 
-    const cells = t.split('|').map((c) => c.trim()).filter(Boolean)
+    // 不用 filter(Boolean)：空单元格会被丢掉，后面的列整体左移一位。
+    const cells = t.split('|').map((c) => c.trim())
+    if (cells[0] === '') cells.shift()
+    if (cells[cells.length - 1] === '') cells.pop()
     if (cells.length < 2) continue
+
+    // 状态列的位置交给表头决定。以前写死取第 2 列，requirement-spec 后来插了
+    // 「执行 agent」「产物」两列，状态就被读成了 agent 名字，于是每一行都被
+    // 当成进行中，群里的阶段播报永远停在第一步——真实踩了很久。
+    if (cells[0] === '阶段') {
+      const headAt = cells.indexOf('状态')
+      if (headAt >= 0) statusCol = headAt
+      continue
+    }
+
     const rawName = cells[0]
-    const status = cells[1]
-    if (!rawName || rawName === '阶段' || rawName.includes('---')) continue
+    const status = cells[statusCol]
+    if (!rawName || rawName.includes('---')) continue
     if (!status) continue
 
     // 「4 开发」→ name='开发', num='4'
