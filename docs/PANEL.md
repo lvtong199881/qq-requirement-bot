@@ -64,64 +64,17 @@ panel（一个进程）
 
 ## API
 
-所有接口只监听 `127.0.0.1`。
+完整的参数、响应字段、错误码见 **[API 参考](API.md)**。这里只列轮廓：
 
-**鉴权边界**：面板自身不校验 token，只靠「仅监听回环地址」；`panel.token` 配了的话，
-面板转发写操作到 bridge 时会带上 `x-panel-token`，由 bridge 校验来源。
+| | bridge（每个实例，7878） | panel（一个进程，7879） |
+| --- | --- | --- |
+| 状态 | `/api/summary`（精简）、`/api/status`（完整） | `/api/board`、`/api/board/detail`、`/api/instances` |
+| 配置 | `POST /api/settings/apply`（热更新） | `GET /api/settings`、`POST /api/settings/save` |
+| 操作 | `POST /api/groups/{stop,restart}` | 同名，先找到持有该群的实例再转发 |
+| 日志 | `GET /api/logs?n=` | `GET /api/logs?pid=&n=`（转发） |
 
-### bridge（每个实例，7878）
-
-| 接口 | 说明 |
-| --- | --- |
-| `GET /api/summary` | 精简状态：列表画得出的字段，不含事件流与阶段表 |
-| `GET /api/status` | 完整状态：含阶段表与最近 50 条事件 |
-| `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000 |
-| `GET /api/ping` | 存活探测，返回 pid |
-| `POST /api/settings/apply` | 热更新配置（由面板调用） |
-| `POST /api/groups/stop` | 终止该群当前回合 |
-| `POST /api/groups/restart` | 掐断后用「继续」骨架重跑 |
-
-写操作的参数都在 body 里，不出现在路径上：
-
-```jsonc
-// POST /api/groups/stop
-{ "groupId": "476230759" }
-
-// POST /api/groups/restart
-{ "groupId": "476230759" }
-
-// POST /api/settings/apply（面板改完配置后推过来，只带动过的字段）
-{ "adminUsers": ["10001", "10002"] }
-```
-
-### panel（一个进程，7879）
-
-| 接口 | 说明 |
-| --- | --- |
-| `GET /api/board` | 需求大盘：按群摊平的行 + 告警数 |
-| `GET /api/board/detail?pid=&groupId=` | 大盘某一行的完整详情（群 + 它所在的进程） |
-| `GET /api/instances` | 实例页：按进程维度的列表 |
-| `GET /api/settings` | 读白名单与群消息文案 |
-| `POST /api/settings/save` | 保存并热更新所有实例 |
-| `GET /api/logs?pid=&n=200` | 先找到实例，再转发到它的 `/api/logs` |
-| `POST /api/groups/stop` | 先找到持有该群的实例，再转发过去 |
-| `POST /api/groups/restart` | 同上 |
-
-保存配置只传要改的字段：
-
-```jsonc
-// POST /api/settings/save
-{ "adminUsers": ["10001", "10002"] }
-{ "messageTemplates": { "ack": "收到，开始处理。" } }
-```
-
-### 错误约定
-
-失败统一返回 `{ "ok": false, "error": "人话" }`，状态码区分：
-
-- **400** 参数问题：缺 `groupId`、JSON 不合法、白名单格式错、文案占位符未知
-- **404** 找不到：详情里的 pid 已不在运行、未知路径
-- **500** 服务端异常：读写配置文件失败等
+所有 POST 的参数都在 body 里，不出现在路径上。面板自身不做鉴权，只靠监听
+回环地址；`panel.token` 是面板转发到 bridge 时携带、由 bridge 校验的。
 
 **为什么按视图分开**：
 

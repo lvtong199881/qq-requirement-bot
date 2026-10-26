@@ -37,7 +37,8 @@ bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合�
 | [安装指南](docs/INSTALL.md) | 一键脚本用法、手动安装全流程、NapCat 的 Docker 与 macOS 两种装法 |
 | [配置说明](docs/CONFIG.md) | 全部配置字段、群策略（auto / allowlist / deny）、skillDir 自动探测 |
 | [群里的指令](docs/COMMANDS.md) | 斜杠指令、权限模型、自然语言识别词、群消息类型、ASK 机制 |
-| [管理面板](docs/PANEL.md) | 需求大盘 / 实例 / 设置三页、进程架构、HTTP API、日志 |
+| [管理面板](docs/PANEL.md) | 需求大盘 / 实例 / 设置三页、进程架构、日志 |
+| [API 参考](docs/API.md) | 每个接口的参数、响应字段、错误码 |
 | [排错](docs/TROUBLESHOOTING.md) | 常见现象与排查路径 |
 | [开发与测试](docs/DEV.md) | 全部测试脚本、哪些会消耗 token、mock OneBot |
 
