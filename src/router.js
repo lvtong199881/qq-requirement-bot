@@ -7,6 +7,8 @@
  */
 
 /** 消息意图分类 */
+import { renderMessage } from './messages.js'
+
 export const INTENT = {
   APPROVE: 'approve', // 批准当前阶段
   REJECT: 'reject', // 打回（带修改意见）
@@ -167,6 +169,6 @@ export function routedPrompt({ intent, userText, bind }) {
  * 含糊消息的反问文案。
  * @param {string} waitingLabel
  */
-export function ambiguousReply(waitingLabel) {
-  return `这条我没看懂要表达什么。我这边正在等你：${waitingLabel}\n是回复上面的问题，还是别的意思？直接说清楚就行。`
+export function ambiguousReply(waitingLabel, templates) {
+  return renderMessage('ambiguous', { waitingLabel }, templates)
 }

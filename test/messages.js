@@ -32,6 +32,47 @@ console.log('\n== 四类消息都在 ==')
   check('每条都声明了可用变量', Object.values(MESSAGE_TEMPLATES).every((t) => Array.isArray(t.vars)))
 }
 
+console.log('\n== 指令与操作反馈 ==')
+{
+  check('未知指令', renderMessage('unknownCmd', { cmd: 'nope' }).includes('/nope'))
+  check('无权限', renderMessage('denied', { cmd: 'stop' }).includes('/stop'))
+  check('停止完成', renderMessage('stopDone', {}) === '已停止当前任务。')
+  check('停止无任务', renderMessage('stopNone', {}) === '当前没有在跑的任务。')
+  check('打断完成', renderMessage('interruptDone', {}) === '已打断当前回合。')
+  check('打断无回合', renderMessage('interruptNone', {}) === '当前没有在跑的回合。')
+  check('取消释放', renderMessage('releaseCancel', {}) === '已取消释放。')
+  check('取消打回', renderMessage('rejectCancel', {}) === '已取消打回，阶段保持原样。')
+  check('清空绑定', renderMessage('cleared', {}).includes('下一条消息发新需求'))
+  check('dry-run', renderMessage('dryRun', {}).includes('[dry-run]'))
+
+  const rel = renderMessage('releaseAsk', { target: '「demo」', stage: '开发' })
+  check('释放确认带需求名', rel.includes('「demo」'))
+  check('释放确认带阶段', rel.includes('「开发」'))
+  check('释放确认说明三件事', rel.includes('会做三件事'))
+
+  const help = renderMessage('help', {
+    list: '/help  看说明',
+    statusLine: '\n\n当前状态：开发中',
+    permissionNote: '只有群主能用。',
+  })
+  check('帮助含指令列表', help.includes('/help  看说明'))
+  check('帮助含状态行', help.includes('当前状态：开发中'))
+  check('帮助含权限说明', help.includes('只有群主能用。'))
+}
+
+console.log('\n== 系统通知 ==')
+{
+  check('会话重置', renderMessage('sessionReset', {}).includes('重新开始这一轮'))
+  check('重启通知', renderMessage('restartNotice', {}).includes('bridge 正在重启'))
+}
+
+console.log('\n== 没看懂用户说话 ==')
+{
+  const r = renderMessage('ambiguous', { waitingLabel: '等你确认配色' })
+  check('带上等待事项', r.includes('等你确认配色'))
+  check('问用户是不是答别的', r.includes('还是别的意思'))
+}
+
 console.log('\n== 默认渲染 ==')
 {
   const ack = renderMessage('ack', { stage: '开发', duration: '1小时2分钟' })

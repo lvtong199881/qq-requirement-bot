@@ -304,7 +304,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     if (result.sessionLocked && !retried) {
       log(`[${groupId}] session 写锁被占用，清空 sessionId 后用新会话重试`)
       persist({ sessionId: null, status: STATES.IDLE })
-      await sendPlain(groupId, '上一个进程没释放会话，已重置并重新开始这一轮。', { replyTo })
+      await sendPlain(groupId, renderMessage('sessionReset', {}, config.messageTemplates), { replyTo })
       setTimeout(() => {
         handleTurn(groupId, userText, {
           isContinuation: false,
@@ -416,7 +416,11 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     for (const msg of planned.messages) {
       if (msg.endsWith('阶段已完成。')) {
         const parts = [msg]
-        if (uploadedNames.length) parts.push(`产物：${uploadedNames.join('、')}`)
+        if (uploadedNames.length) {
+          parts.push(
+            renderMessage('artifactsLine', { artifacts: uploadedNames.join('、') }, config.messageTemplates),
+          )
+        }
         // 有最终答复时不再重复 waitingLabel——答复里已经把选项写清楚了
         if (!finalAnswer && pendingNote) parts.push(pendingNote)
         lines.push(parts.join('\n'))
@@ -649,12 +653,12 @@ bot.on('message', async (frame) => {
       config.adminUsers.includes(initiator.userId)
 
     if (cmd.unknown || !cmd.def) {
-      await sendPlain(groupId, `没有 /${cmd.name} 这条指令。发 /help 看可用的。`, { replyTo })
+      await sendPlain(groupId, renderMessage('unknownCmd', { cmd: cmd.name }, config.messageTemplates), { replyTo })
       return
     }
 
     if (cmd.def.scope === 'admin' && !isAdmin) {
-      await sendPlain(groupId, deniedText(cmd.name), { replyTo })
+      await sendPlain(groupId, deniedText(cmd.name, config.messageTemplates), { replyTo })
       return
     }
 
@@ -666,13 +670,13 @@ bot.on('message', async (frame) => {
         : st.waitingLabel
           ? `当前状态：${st.waitingLabel}`
           : '当前状态：没有进行中的任务。'
-      await sendPlain(groupId, helpText({ isAdmin, statusLine }), { replyTo })
+      await sendPlain(groupId, helpText({ isAdmin, statusLine, templates: config.messageTemplates }), { replyTo })
       return
     }
 
     if (cmd.name === 'stop') {
       const killed = machine.interrupt(groupId)
-      await sendPlain(groupId, killed ? '已停止当前任务。' : '当前没有在跑的任务。', { replyTo })
+      await sendPlain(groupId, renderMessage(killed ? 'stopDone' : 'stopNone', {}, config.messageTemplates), { replyTo })
       return
     }
 
@@ -684,14 +688,18 @@ bot.on('message', async (frame) => {
     if (cmd.name === 'release') {
       // 二次确认：先记下意图，等用户回「确认」
       if (st.pendingRelease) {
-        await sendPlain(groupId, '已经在等你确认了，回「确认」执行，回别的取消。', { replyTo })
+        await sendPlain(groupId, renderMessage('releaseAlready', {}, config.messageTemplates), { replyTo })
         return
       }
       const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
       const running = stages.find((x) => x.status.includes('进行中'))
       st.pendingRelease = { at: Date.now(), by: initiator.userId }
       store.save(groupId, { ...st, pendingRelease: st.pendingRelease })
-      await sendPlain(groupId, releaseConfirmText({ reqId: st.reqId, stage: running?.name }), { replyTo })
+      await sendPlain(
+          groupId,
+          releaseConfirmText({ reqId: st.reqId, stage: running?.name, templates: config.messageTemplates }),
+          { replyTo },
+        )
       return
     }
   }
@@ -702,7 +710,7 @@ bot.on('message', async (frame) => {
     st.pendingRelease = null
     store.save(groupId, { ...st, pendingRelease: null })
     if (!yes) {
-      await sendPlain(groupId, '已取消释放。', { replyTo })
+      await sendPlain(groupId, renderMessage('releaseCancel', {}, config.messageTemplates), { replyTo })
       return
     }
     const killed = machine.interrupt(groupId)
@@ -726,7 +734,7 @@ bot.on('message', async (frame) => {
     st.pendingReject = null
     store.save(groupId, { ...st, pendingReject: null })
     if (cancel) {
-      await sendPlain(groupId, '已取消打回，阶段保持原样。', { replyTo })
+      await sendPlain(groupId, renderMessage('rejectCancel', {}, config.messageTemplates), { replyTo })
       return
     }
     // 把这条当成修改意见，走 REJECT 流程
@@ -769,7 +777,7 @@ bot.on('message', async (frame) => {
   // 停：不打断 agent，直接杀回合
   if (intent === INTENT.STOP) {
     const killed = machine.interrupt(groupId)
-    await sendPlain(groupId, killed ? '已打断当前回合。' : '当前没有在跑的回合。', { replyTo })
+    await sendPlain(groupId, renderMessage(killed ? 'interruptDone' : 'interruptNone', {}, config.messageTemplates), { replyTo })
     return
   }
 
@@ -819,7 +827,7 @@ bot.on('message', async (frame) => {
   if (intent === INTENT.NEW_REQ) {
     if (!intentDetail) {
       store.clear(groupId)
-      await sendPlain(groupId, '已清空。下一条消息发新需求，我来绑定。', { replyTo })
+      await sendPlain(groupId, renderMessage('cleared', {}, config.messageTemplates), { replyTo })
       return
     }
     // 带描述：清掉旧绑定，把描述作为新需求受理（回合结束后绑定新 reqId）
@@ -881,7 +889,7 @@ bot.on('message', async (frame) => {
 
   // ── 含糊消息：bridge 反问，不交给 agent 猜 ──
   if (intent === INTENT.CONTENT && isAmbiguous(text, st)) {
-    await sendPlain(groupId, ambiguousReply(st.waitingLabel), { replyTo })
+    await sendPlain(groupId, ambiguousReply(st.waitingLabel, config.messageTemplates), { replyTo })
     return
   }
 
@@ -907,7 +915,7 @@ bot.on('message', async (frame) => {
 
   if (isDryRun) {
     log(`[dry-run] 意图=${intent} 绑定=${effectiveReqId ?? '无'}\nprompt：\n${anchor}\n${promptBody}`)
-    await sendPlain(groupId, `[dry-run] 收到，不实际执行。`, { replyTo })
+    await sendPlain(groupId, renderMessage('dryRun', {}, config.messageTemplates), { replyTo })
     return
   }
 
@@ -1130,7 +1138,9 @@ const shutdown = () => {
     for (const groupId of machine.active.keys()) {
       if (machine.isRunning(groupId)) {
         // 尽力而为：连接可能已断
-        bot.sendGroupMsg(groupId, 'bridge 正在重启，当前回合的结果可能不会送达。重启后发「继续」可以接着跑。').catch(() => {})
+        bot
+          .sendGroupMsg(groupId, renderMessage('restartNotice', {}, config.messageTemplates))
+          .catch(() => {})
       }
     }
   } catch {

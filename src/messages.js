@@ -21,6 +21,10 @@ export const MESSAGE_VARS = {
   action: '用户动作的简述（收到批准 / 收到修改意见 …）',
   cmd: '指令名，如 stop',
   waitingLabel: '当前在等什么',
+  isAdmin: '是否为管理员（用来标注哪些指令需要权限）',
+  statusLine: '当前状态一句话，可能为空',
+  permissionNote: '权限说明那句',
+  list: '指令列表（bridge 自动生成）',
 }
 
 export const MESSAGE_TEMPLATES = {
@@ -139,6 +143,108 @@ export const MESSAGE_TEMPLATES = {
     label: '需求全部完成',
     vars: [],
     template: '这个需求跑完了。要新需求直接 @我 说。',
+  },
+  ambiguous: {
+    group: '交互提示',
+    label: '没看懂用户在说什么',
+    desc: '用户发的话太短又没有明确指令，且有等待事项时',
+    vars: ['waitingLabel'],
+    template: '这条我没看懂要表达什么。我这边正在等你：{{waitingLabel}}\n是回复上面的问题，还是别的意思？直接说清楚就行。',
+  },
+
+  // ── 指令与操作反馈 ──
+  unknownCmd: {
+    group: '指令与操作',
+    label: '未知指令',
+    vars: ['cmd'],
+    template: '没有 /{{cmd}} 这条指令。发 /help 看可用的。',
+  },
+  denied: {
+    group: '指令与操作',
+    label: '无权限使用指令',
+    vars: ['cmd'],
+    template: '/{{cmd}} 需要群主或群管理员权限。',
+  },
+  help: {
+    group: '指令与操作',
+    label: '帮助（/help）',
+    desc: '指令列表由 bridge 自动生成，这里只配开头和结尾的固定话术',
+    vars: ['list', 'statusLine', 'permissionNote'],
+    template: '可用指令：\n\n{{list}}\n\n也可以直接说人话：「继续」「停」「打回 主按钮要蓝色的」「新需求 …」{{statusLine}}\n\n{{permissionNote}}',
+  },
+  stopDone: {
+    group: '指令与操作',
+    label: '已停止任务',
+    vars: [],
+    template: '已停止当前任务。',
+  },
+  stopNone: {
+    group: '指令与操作',
+    label: '停止 · 当前没任务',
+    vars: [],
+    template: '当前没有在跑的任务。',
+  },
+  interruptDone: {
+    group: '指令与操作',
+    label: '已打断回合',
+    vars: [],
+    template: '已打断当前回合。',
+  },
+  interruptNone: {
+    group: '指令与操作',
+    label: '打断 · 当前没回合',
+    vars: [],
+    template: '当前没有在跑的回合。',
+  },
+  releaseAsk: {
+    group: '指令与操作',
+    label: '释放确认（二次确认）',
+    vars: ['target', 'stage'],
+    template: '确认要释放{{target}}的会话与进程吗？\n\n会做三件事：\n· 打断当前正在跑的回合（如果有）\n· 清空这个群的会话上下文\n· 当前阶段「{{stage}}」的进度只保留在编排记录里\n\n之后需要重新发需求或「继续」才能接上。\n回复「确认」执行，回别的就取消。',
+  },
+  releaseAlready: {
+    group: '指令与操作',
+    label: '释放 · 已在等确认',
+    vars: [],
+    template: '已经在等你确认了，回「确认」执行，回别的取消。',
+  },
+  releaseCancel: {
+    group: '指令与操作',
+    label: '释放已取消',
+    vars: [],
+    template: '已取消释放。',
+  },
+  rejectCancel: {
+    group: '指令与操作',
+    label: '打回已取消',
+    vars: [],
+    template: '已取消打回，阶段保持原样。',
+  },
+  cleared: {
+    group: '指令与操作',
+    label: '绑定已清空',
+    vars: [],
+    template: '已清空。下一条消息发新需求，我来绑定。',
+  },
+  dryRun: {
+    group: '指令与操作',
+    label: 'dry-run 回执',
+    vars: [],
+    template: '[dry-run] 收到，不实际执行。',
+  },
+
+  // ── 系统通知 ──
+  sessionReset: {
+    group: '系统通知',
+    label: '会话被占用后重置',
+    vars: [],
+    template: '上一个进程没释放会话，已重置并重新开始这一轮。',
+  },
+  restartNotice: {
+    group: '系统通知',
+    label: 'bridge 重启通知',
+    vars: [],
+    template: 'bridge 正在重启，当前回合的结果可能不会送达。重启后发「继续」可以接着跑。',
   },
 }
 
