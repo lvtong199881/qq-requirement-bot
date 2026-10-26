@@ -154,6 +154,8 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 // 用户明确要求：agent 的文字一律不进群，群里只出现状态播报。
 //   1. 用户发消息后的回执：当前XX阶段中，已进行 X小时X分钟X秒
 //   2. 阶段播报：XX阶段已开始 / XX阶段已完成（附产物）
+//      例外：回合以「等用户拍板」结束时，agent 的最终答复段会一并发出——
+//      那段是结论与选项，不发给群里就只剩一句「等你确认」，用户不知道确认什么。
 //   3. 心跳：当前XX阶段中，已进行 X小时X分钟X秒
 //   4. 异常：XX阶段异常，请联系bot管理员，异常原因如下：…
 
@@ -440,7 +442,12 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const reqIdToBind2 = st.reqId || stageInfo2.reqId
     const planned = planStageAnnounce({ ...st, reqId: reqIdToBind2 })
 
-    // 阶段完成时把产物名和待确认点并进同一条，避免又多出几条零碎消息
+    // ── 要用户拍板时，agent 的最终答复本身就是「要确认什么」，必须发出去 ──
+    // 过程中那 90 段工作日志照旧不发；但回合末尾这段是给用户看的结论和选项，
+    // 少了它群里就只剩一句「等你确认」——真实踩过。
+    const finalAnswer =
+      gate.state === 'waiting' || gate.state === 'done' ? (gate.cleaned || '').trim() : ''
+
     const pendingNote = gate.state === 'waiting' && gate.label ? `等你确认：${gate.label}` : ''
 
     const lines = []
@@ -448,14 +455,26 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
       if (msg.endsWith('阶段已完成。')) {
         const parts = [msg]
         if (uploadedNames.length) parts.push(`产物：${uploadedNames.join('、')}`)
-        if (pendingNote) parts.push(pendingNote)
+        // 有最终答复时不再重复 waitingLabel——答复里已经把选项写清楚了
+        if (!finalAnswer && pendingNote) parts.push(pendingNote)
         lines.push(parts.join('\n'))
       } else {
         lines.push(msg)
       }
     }
-    // 没有任何阶段变化但有等待事项时，也要让用户知道要决策什么
-    if (!lines.length && pendingNote) lines.push(pendingNote)
+
+    // agent 的答复：太长就截断，完整内容本来就在文档里
+    if (finalAnswer) {
+      const MAX = 1800
+      lines.push(
+        finalAnswer.length > MAX
+          ? `${finalAnswer.slice(0, MAX)}\n……（还有 ${finalAnswer.length - MAX} 字，完整内容见需求文档）`
+          : finalAnswer,
+      )
+    } else if (!lines.length && pendingNote) {
+      // agent 没给正文时才用 waitingLabel 兜底
+      lines.push(pendingNote)
+    }
     if (!lines.length && gate.state === 'done') lines.push('这个需求跑完了。要新需求直接 @我 说。')
 
     const nextStatus =
