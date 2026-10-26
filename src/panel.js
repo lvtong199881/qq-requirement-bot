@@ -13,7 +13,6 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from './instances.js'
 import { DEFAULT_PROMPT_TEMPLATE, validatePromptTemplate, PROMPT_VARS } from './prompt.js'
-import { ROUTES, ROUTE_VARS, validateAllRoutes } from './routes.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const STATIC = join(HERE, '..', 'static')
@@ -132,17 +131,6 @@ function readSettings(repoRoot) {
         defaultTemplate: DEFAULT_PROMPT_TEMPLATE,
         vars: PROMPT_VARS,
       },
-      // 消息路由：每类的默认模板、当前值、可用变量
-      routes: Object.entries(ROUTES).map(([key, def]) => ({
-        key,
-        label: def.label,
-        desc: def.desc,
-        vars: def.vars,
-        defaultTemplate: def.template,
-        template: raw.promptRoutes?.[key]?.trim() ? raw.promptRoutes[key] : def.template,
-        custom: !!(raw.promptRoutes?.[key] && raw.promptRoutes[key].trim()),
-      })),
-      routeVars: ROUTE_VARS,
     }
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
@@ -162,15 +150,6 @@ function writeSettings(repoRoot, patch) {
     return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
   }
   if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
-  if (patch.promptRoutes !== undefined) {
-    // 传空对象 = 全部回到默认；某条传空串 = 该条回默认
-    const clean = {}
-    for (const [k, v] of Object.entries(patch.promptRoutes || {})) {
-      if (typeof v === 'string' && v.trim() && v !== ROUTES[k]?.template) clean[k] = v
-    }
-    if (Object.keys(clean).length) raw.promptRoutes = clean
-    else delete raw.promptRoutes
-  }
   if (patch.promptTemplate !== undefined) {
     // 传空串或 null = 回到内置默认
     if (patch.promptTemplate === null || String(patch.promptTemplate).trim() === '') {
@@ -255,15 +234,8 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         if (body.superAdmin !== undefined) {
           return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
         }
-        if (
-          body.adminUsers === undefined &&
-          body.promptTemplate === undefined &&
-          body.promptRoutes === undefined
-        ) {
-          return json(res, 400, {
-            ok: false,
-            error: '没有要保存的字段（adminUsers / promptTemplate / promptRoutes）',
-          })
+        if (body.adminUsers === undefined && body.promptTemplate === undefined) {
+          return json(res, 400, { ok: false, error: '没有要保存的字段（adminUsers / promptTemplate）' })
         }
 
         const patch = {}
@@ -272,12 +244,6 @@ export function startPanel({ repoRoot, port = 7879, token }) {
           const parsed = parseAdminUsers(body.adminUsers)
           if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
           patch.adminUsers = parsed.list
-        }
-
-        if (body.promptRoutes !== undefined) {
-          const v = validateAllRoutes(body.promptRoutes)
-          if (!v.ok) return json(res, 400, { ok: false, error: v.error })
-          patch.promptRoutes = body.promptRoutes
         }
 
         if (body.promptTemplate !== undefined) {

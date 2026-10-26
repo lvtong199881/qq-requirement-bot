@@ -178,15 +178,6 @@ export function loadConfig(configPath) {
     promptTemplate: typeof raw.promptTemplate === 'string' && raw.promptTemplate.trim()
       ? raw.promptTemplate
       : null,
-    // 消息路由模板覆盖：{ approve: '...', reject: '...' }，缺的走内置默认
-    promptRoutes:
-      raw.promptRoutes && typeof raw.promptRoutes === 'object' && !Array.isArray(raw.promptRoutes)
-        ? Object.fromEntries(
-            Object.entries(raw.promptRoutes)
-              .filter(([, v]) => typeof v === 'string' && v.trim())
-              .map(([k, v]) => [k, v]),
-          )
-        : {},
     // 超级管理员：不受群角色与白名单限制，任何群都能驱动 bot。
     // 只能改配置文件——面板不提供编辑入口，避免把自己锁出去。
     superAdmin: (Array.isArray(raw.superAdmin) ? raw.superAdmin : raw.superAdmin ? [raw.superAdmin] : []).map(

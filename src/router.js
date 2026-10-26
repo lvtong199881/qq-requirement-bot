@@ -7,8 +7,6 @@
  */
 
 /** 消息意图分类 */
-import { renderRoute } from './routes.js'
-
 export const INTENT = {
   APPROVE: 'approve', // 批准当前阶段
   REJECT: 'reject', // 打回（带修改意见）
@@ -115,38 +113,53 @@ export function anchorBlock({ reqId, projectDir, stage, envHints }) {
  * @param {string} o.userText 原文
  * @param {{reqId: string|null, stage: string|null, waitingLabel: string}} o.bind 绑定信息
  */
-/**
- * 生成送给 agent 的 prompt。
- *
- * 内容来自 routes.js 的模板（可在面板里改），这里只负责把变量算好。
- * @param {{intent: string, userText: string, bind: object, routes?: object}} o
- */
-export function routedPrompt({ intent, userText, bind, routes }) {
-  const target = bind.reqId ? `需求 ${bind.reqId}` : '当前需求'
+export function routedPrompt({ intent, userText, bind }) {
+  const reqId = bind.reqId
   const stage = bind.stage || '当前'
-  const vals = {
-    target,
-    stage,
-    userText,
-    // 打回没写意见时，退回用户原话，避免模板里空一段
-    rejectReason: (bind.rejectReason || '').trim() || userText,
-    waitingLabel: bind.waitingLabel || '',
-  }
 
   switch (intent) {
     case INTENT.APPROVE:
-      return renderRoute('approve', vals, routes)
-    case INTENT.REJECT:
-      return renderRoute('reject', vals, routes)
+      return [
+        `用户批准了${reqId ? `需求 ${reqId}` : '当前需求'}的「${stage}」阶段。`,
+        '执行准出流转：核对编排记录的准出清单，确认无未闭环项后进入下一阶段；',
+        '若有未闭环项，按 skill 规则处理并如实说明。',
+      ].join('\n')
+
+    case INTENT.REJECT: {
+      const opinion = (bind.rejectReason || '').trim()
+      return [
+        `用户打回了${reqId ? `需求 ${reqId}` : '当前需求'}的「${stage}」阶段。`,
+        '修改意见如下：',
+        opinion || userText,
+        '按 skill 规则把这条意见转给对应阶段的 agent 修正，不要自己动手改产物。',
+      ].join('\n')
+    }
+
     case INTENT.CONTINUE:
-      return renderRoute('continue', vals, routes)
+      return [
+        `用户要求继续推进${reqId ? `需求 ${reqId}` : '当前需求'}。`,
+        '先读编排记录，从停下的地方继续；未回填的用户裁决要先回填。',
+      ].join('\n')
+
     case INTENT.NEW_REQ:
-      return renderRoute('new_req', vals, routes)
+      return [
+        '用户要开一个新需求。先清点当前绑定需求的收尾状态（编排记录）并简要告知，',
+        '然后按 skill 流程受理新需求。用户原话：',
+        `「${userText}」`,
+      ].join('\n')
+
     case INTENT.CONTENT:
-    default:
-      // 没有等待事项时原样透传用户消息——不套模板，保持原话
-      if (!bind.waitingLabel) return userText
-      return renderRoute('content', vals, routes)
+    default: {
+      // 有等待事项时，内容优先当成对等待事项的回应
+      if (bind.waitingLabel) {
+        return [
+          `当前${reqId ? `需求 ${reqId}` : ''}在等你处理：${bind.waitingLabel}`,
+          `用户的回复如下，请对照等待事项解析并继续：`,
+          `「${userText}」`,
+        ].join('\n')
+      }
+      return userText
+    }
   }
 }
 
