@@ -7,7 +7,7 @@
  *
  *   node test/fresh-group.js
  */
-import { isFreshGroup, groupStageTable, recoverReqId, ackFor, planStageAnnounce } from '../src/stage.js'
+import { isFreshGroup, groupStageTable, recoverReqId, stageInfoFor, ackFor, planStageAnnounce } from '../src/stage.js'
 import { SessionStore, GroupStateMachine } from '../src/state.js'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -152,6 +152,24 @@ console.log('\n== 旧版本写脏的群状态：读盘时自动丢弃（不用�
   check('不会被 groupTaken 挡住',
     !(st.reqId || recoverReqId(st)))
   rmSync(repo, { recursive: true, force: true })
+}
+
+console.log('\n== 回合收尾：新群不会把别人的编排记录绑到自己身上 ==')
+{
+  // 漏过一次：收尾处直接 currentStage(projectDir) 读「最近改动的编排记录」，
+  // 新群跑完第一回合就绑上了项目的 reqId，还顺手把 finishedStages 填满，
+  // 之后这个群再也发不了新需求。stageInfoFor 是这类取值的唯一入口。
+  const fresh = { reqId: null, turn: 0, sessionId: null, projectDir: root, finishedStages: null }
+  const info = stageInfoFor(fresh)
+  check('新群不返回 reqId', info.reqId === null, String(info.reqId))
+  check('新群不返回阶段', info.stage === null, String(info.stage))
+  check('与 recoverReqId 一致', recoverReqId(fresh) === null)
+
+  // 已绑定的群必须照常读编排记录，不能被新群隔离误伤。
+  // 注意 st.reqId 永远优先（调用方写的都是 st.reqId || stageInfoFor().reqId）。
+  const bound = { reqId: 'demo', turn: 3, sessionId: 's1', projectDir: root, finishedStages: [] }
+  check('已绑定群不被当成新群', !isFreshGroup(bound))
+  check('已绑定群保留自己的 reqId', (bound.reqId || stageInfoFor(bound).reqId) === 'demo')
 }
 
 rmSync(root, { recursive: true, force: true })

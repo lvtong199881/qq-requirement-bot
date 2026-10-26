@@ -68,6 +68,19 @@ export function recoverReqId(st) {
 }
 
 /**
+ * 回合收尾时用的阶段信息（当前阶段 + 该绑定的 reqId）。
+ *
+ * 单独抽出来是因为漏过一次：收尾处直接调 currentStage(st.projectDir)，
+ * 新群刚跑完第一个回合就把项目里「最近改动的编排记录」绑到了自己身上，
+ * 于是群里冒出一句「本需求已全部完成」，之后还再也发不了新需求。
+ * 所有需要「这个群对应哪个需求」的地方都走这里，别再各自调 currentStage。
+ */
+export function stageInfoFor(st) {
+  if (isFreshGroup(st)) return { stage: null, reqId: null }
+  return currentStage(st.projectDir)
+}
+
+/**
  * 用户发消息后的回执文案（消息 1）。
  *
  * @param {object} st 群状态

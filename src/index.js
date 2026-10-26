@@ -18,6 +18,7 @@ import {
   isFreshGroup,
   groupStageTable,
   recoverReqId,
+  stageInfoFor,
   heartbeatMessage,
 } from './stage.js'
 import { renderMessage } from './messages.js'
@@ -233,7 +234,7 @@ async function requestDecisionFix(groupId, sessionId, reason, round, { stageMess
  */
 function buildTurnPayload(st, text, intent, intentDetail) {
   // 新群不去读「最近的编排记录」：那条可能是别人的需求，会把新需求锚到已完成的任务上
-  const recovered = isFreshGroup(st) ? { stage: null, reqId: null } : currentStage(st.projectDir)
+  const recovered = stageInfoFor(st)
   const anchorStage = recovered.stage
   const effectiveReqId = st.reqId || recovered.reqId
 
@@ -505,7 +506,7 @@ async function handleTurn(
 
     // ── 消息 2：阶段播报（回合收尾的最后一步）──
     // 话术由 bridge 生成，不含任何 agent 文字。
-    const stageInfo2 = currentStage(st.projectDir)
+    const stageInfo2 = stageInfoFor(st)
     const reqIdToBind2 = st.reqId || stageInfo2.reqId
     const planned = planStageAnnounce({ ...st, reqId: reqIdToBind2 })
 
@@ -613,7 +614,7 @@ async function handleTurn(
     log(`[${groupId}] 回合结束：${((Date.now() - started) / 1000).toFixed(1)}s，状态=${nextStatus}`)
   } catch (err) {
     log(`[${groupId}] 回合异常：${err.message}`)
-    const stageName = currentStage(st.projectDir).stage ?? '当前'
+    const stageName = stageInfoFor(st).stage ?? '当前'
     await sendPlain(
       groupId,
       renderMessage('abnormal', { stage: stageName, reason: err.message }, config.messageTemplates),
@@ -1261,7 +1262,7 @@ async function restartGroup(groupId) {
   machine.interrupt(groupId)
   await sleep(300)
 
-  const recovered = isFreshGroup(st) ? { stage: null, reqId: null } : currentStage(st.projectDir)
+  const recovered = stageInfoFor(st)
   const stage = recovered.stage
   const effectiveReqId = st.reqId || recovered.reqId
   const bound = { reqId: effectiveReqId, stage, waitingLabel: st.waitingLabel }
