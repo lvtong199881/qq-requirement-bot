@@ -73,24 +73,21 @@ export function planStageAnnounce(st) {
   const messages = []
   const patch = {}
 
-  // 首次观测：把历史已完成阶段全部记为已知，避免把老阶段播报一遍
+  // 哪些阶段是这一回合新完成的
   const known = st.finishedStages
+  let completedNow = []
   if (known === null || known === undefined) {
+    // 首次观测：把历史已完成阶段全部记为已知，不补报
     patch.finishedStages = finishedNow
   } else {
     const knownSet = new Set(known)
-    for (const name of finishedNow) {
-      if (!knownSet.has(name)) {
-        messages.push(`${name}阶段已完成。`)
-        patch.finishedStages = [...finishedNow]
-      }
-    }
+    completedNow = finishedNow.filter((n) => !knownSet.has(n))
+    if (completedNow.length) patch.finishedStages = [...finishedNow]
   }
 
-  // 阶段切换 → 播报「已开始」，并重置阶段计时
-  if (running && running !== st.stage) {
-    messages.push(`${running}阶段已开始。`)
-    patch.stage = running
+  const startedNow = running && running !== st.stage ? running : null
+  if (startedNow) {
+    patch.stage = startedNow
     // 用编排记录的最近写入时间近似阶段起点（阶段切换必然改写它），
     // 比记 Date.now() 更接近真实开始时刻。
     patch.stageStartedAt = guessStageStart(st.projectDir, reqIdForTime)
@@ -102,5 +99,12 @@ export function planStageAnnounce(st) {
     patch.stage = st.stage
   }
 
-  return { messages, running, finishedNow, patch }
+  // 阶段推进合成一句话。分开报会出现「验收阶段进行中」后面紧跟
+  // 「测试阶段已完成」这种看似矛盾的两条（真实踩过）。
+  const done = completedNow.join('、')
+  if (done && startedNow) messages.push(`${done}阶段已完成，${startedNow}阶段已开始。`)
+  else if (done) messages.push(`${done}阶段已完成。`)
+  else if (startedNow) messages.push(`${startedNow}阶段已开始。`)
+
+  return { messages, running, finishedNow, patch, completedNow, startedNow }
 }

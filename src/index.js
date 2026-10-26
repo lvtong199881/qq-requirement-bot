@@ -163,11 +163,16 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 async function sendAck(groupId, st, replyTo, intent) {
   const ack = ackFor(st, intent)
 
-  // 绑定丢了就从编排记录找回并落盘——否则下次会去读「最近改动的那个需求」，
-  // 项目里并存多个需求时可能读错。
-  if (ack.reqIdToBind) {
-    store.save(groupId, { ...st, reqId: ack.reqIdToBind })
-    log(`[${groupId}] 绑定自愈（回执）：reqId=${ack.reqIdToBind}`)
+  // 回执说「当前验收阶段中」的同时，把阶段状态也推进——否则这一回合结束时
+  // planStageAnnounce 会补报一句「测试阶段已完成」，看起来像和回执打架。
+  const planned = planStageAnnounce(st)
+  const patch = { ...planned.patch }
+  if (ack.reqIdToBind) patch.reqId = ack.reqIdToBind
+
+  if (Object.keys(patch).length) {
+    store.save(groupId, { ...st, ...patch })
+    if (ack.reqIdToBind) log(`[${groupId}] 绑定自愈（回执）：reqId=${ack.reqIdToBind}`)
+    Object.assign(st, patch)
   }
 
   await sendPlain(groupId, ack.text, { replyTo })

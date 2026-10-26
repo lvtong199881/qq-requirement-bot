@@ -129,15 +129,21 @@ export function runTurn({
     child.on('close', (code) => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abortHandler)
+      // 有些错误不会产生 turn_end 事件，只会打到 stderr 然后进程退出
+      //（比如 session 写锁被占用）。所以两类来源都要看。
+      const fatal = turnError ?? (code !== 0 ? stderrTail : null)
+      const sessionLocked = /already owned by an active write handle/i.test(fatal ?? '')
+
       resolve({
         sessionId: sid,
         finalText,
         exitCode: code,
         timedOut,
         stderr: stderrTail,
-        turnError,
-        errorSummary: runnerClassify?.(turnError) ?? null,
-        sessionLocked: /already owned by an active write handle/i.test(turnError ?? ''),
+        turnError: fatal,
+        // session 被锁有专门的重试路径，不走通用异常播报
+        errorSummary: sessionLocked ? null : (runnerClassify?.(fatal) ?? null),
+        sessionLocked,
       })
     })
   })

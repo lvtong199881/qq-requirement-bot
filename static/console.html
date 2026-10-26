@@ -628,14 +628,31 @@ createApp({
     }
 
     // ── 格式化 ──
-    /** 徽章拆成两段：阶段名 + 时长（时长可能为空） */
+    /**
+     * 徽章拆两段：阶段名 + 时长。
+     *
+     * 注意用 g.stageStatus（编排记录里的阶段状态）判断阶段进度，
+     * 不能用 g.status（回合状态）——后者 waiting 只是说「回合结束了、
+     * 等用户回话」，不代表阶段完成。混用会显示成「验收已完成」。
+     */
     function badgeOf(g) {
+      const stage = g.stage || ''
+      // 回合正在跑
       if (g.activeTurn) {
-        return { cls: 'b-green', name: (g.stage || '执行') + '中', dur: fmtDur(g.activeTurn.elapsedMs) }
+        return { cls: 'b-green', name: stage ? `${stage}中` : '执行中', dur: fmtDur(g.activeTurn.elapsedMs) }
       }
-      if (g.waitingLabel) return { cls: 'b-yellow', name: (g.stage || '') + '等确认', dur: '' }
-      if (g.status === 'running') return { cls: 'b-blue', name: (g.stage || '执行') + '中', dur: '' }
-      if (g.status === 'waiting') return { cls: 'b-yellow', name: (g.stage || '') + '已完成', dur: '' }
+      // 有明确的等待事项
+      if (g.waitingLabel) {
+        return { cls: 'b-yellow', name: stage ? `${stage}等确认` : '等确认', dur: '' }
+      }
+      // 阶段进行中，但回合间隙（刚结束一轮、还没起下一轮）
+      if (g.stageStatus === '进行中') {
+        return { cls: 'b-blue', name: stage ? `${stage}中` : '执行中', dur: '' }
+      }
+      // 阶段已完成
+      if (g.stageStatus === '已完成') {
+        return { cls: 'b-gray', name: stage ? `${stage}已完成` : '已全部完成', dur: '' }
+      }
       if (!g.reqId) return { cls: 'b-gray', name: '未绑定需求', dur: '' }
       return { cls: 'b-gray', name: '空闲', dur: '' }
     }

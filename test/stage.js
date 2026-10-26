@@ -87,7 +87,12 @@ console.log('\n== planStageAnnounce：阶段切换播「已开始」 ==')
   writeBoard(['| 1 产品需求 | 已完成 | 0 | ok |', '| 2 设计 | 进行中 | 0 | — |'])
   const st = { stage: '产品需求', stageStartedAt: 1, projectDir: root, reqId: 'demo', finishedStages: [] }
   const p = planStageAnnounce(st)
-  check('播报设计阶段已开始', p.messages.includes('设计阶段已开始。'), JSON.stringify(p.messages))
+  // 完成与开始合成一条：「产品需求阶段已完成，设计阶段已开始。」
+  check(
+    '完成与开始合并成一条',
+    p.messages.length === 1 && p.messages[0] === '产品需求阶段已完成，设计阶段已开始。',
+    JSON.stringify(p.messages),
+  )
   check('patch 更新 stage', p.patch.stage === '设计')
   check('patch 更新计时起点', p.patch.stageStartedAt > 0)
 }
@@ -97,8 +102,16 @@ console.log('\n== planStageAnnounce：新完成阶段播「已完成」 ==')
   writeBoard(['| 1 产品需求 | 已完成 | 0 | ok |', '| 2 设计 | 已完成 | 0 | ok |', '| 3 技术方案 | 进行中 | 0 | — |'])
   const st = { stage: '技术方案', stageStartedAt: 1, projectDir: root, reqId: 'demo', finishedStages: ['产品需求'] }
   const p = planStageAnnounce(st)
-  check('播报设计阶段已完成', p.messages.includes('设计阶段已完成。'), JSON.stringify(p.messages))
+  check('只有完成时单报完成', p.messages.length === 1 && p.messages[0] === '设计阶段已完成。', JSON.stringify(p.messages))
   check('不重播产品需求', !p.messages.some((m) => m.includes('产品需求')))
+}
+
+console.log('\n== planStageAnnounce：只切换阶段、无新增完成 ==')
+{
+  writeBoard(['| 1 产品需求 | 已完成 | 0 | ok |', '| 2 设计 | 进行中 | 0 | — |'])
+  const st = { stage: null, stageStartedAt: 0, projectDir: root, reqId: 'demo', finishedStages: ['产品需求'] }
+  const p = planStageAnnounce(st)
+  check('只报已开始', p.messages.length === 1 && p.messages[0] === '设计阶段已开始。', JSON.stringify(p.messages))
 }
 
 console.log('\n== resolveStageStart ==')
