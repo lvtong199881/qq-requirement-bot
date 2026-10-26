@@ -56,27 +56,72 @@ bridge（每个实例）
 panel（一个进程）
 ├── 扫描 .instances/        发现所有实例
 ├── 拉 /api/summary         供大盘（群维度）与实例页（进程维度）各自取用
-└── 127.0.0.1:7879          /console 页面 + 转发操作到对应实例
+└── 127.0.0.1:7879          /console、/api/board、/api/instances、/api/settings，
+                            以及转发到 bridge 的 /api/logs、/api/groups/{stop,restart}
 ```
 
 面板与 bridge 分离：bridge 崩了面板还活着，能告诉你它崩了。
 
 ## API
 
+所有接口只监听 `127.0.0.1`。
+
+**鉴权边界**：面板自身不校验 token，只靠「仅监听回环地址」；`panel.token` 配了的话，
+面板转发写操作到 bridge 时会带上 `x-panel-token`，由 bridge 校验来源。
+
+### bridge（每个实例，7878）
+
 | 接口 | 说明 |
 | --- | --- |
-| `GET /api/summary` | 本实例的精简状态，只含列表要画的字段（bridge） |
-| `GET /api/status` | 本实例完整状态，含阶段表与最近 50 条事件（bridge） |
-| `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000（bridge） |
-| `GET /api/ping` | 存活探测，返回 pid（bridge） |
-| `POST /api/settings/apply` | 面板推配置过来时热更新本实例（bridge） |
-| `POST /api/groups/stop`（body: groupId） | 终止该群当前任务（bridge） |
-| `POST /api/groups/restart`（body: groupId） | 重启该群任务，先掐断再用「继续」骨架重跑（bridge） |
-| `GET /api/board` | 需求大盘：按群维度摊平的行 + 告警数（panel） |
-| `GET /api/board/detail?pid=<pid>&groupId=<groupId>` | 大盘某一行的完整详情，点「详细信息」时才拉（panel） |
-| `GET /api/instances` | 实例页：按进程维度的列表（panel） |
-| `GET /api/settings` | 读取白名单与群消息文案（panel） |
-| `POST /api/settings/save` | 保存白名单 / 文案并热更新所有实例（panel） |
+| `GET /api/summary` | 精简状态：列表画得出的字段，不含事件流与阶段表 |
+| `GET /api/status` | 完整状态：含阶段表与最近 50 条事件 |
+| `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000 |
+| `GET /api/ping` | 存活探测，返回 pid |
+| `POST /api/settings/apply` | 热更新配置（由面板调用） |
+| `POST /api/groups/stop` | 终止该群当前回合 |
+| `POST /api/groups/restart` | 掐断后用「继续」骨架重跑 |
+
+写操作的参数都在 body 里，不出现在路径上：
+
+```jsonc
+// POST /api/groups/stop
+{ "groupId": "476230759" }
+
+// POST /api/groups/restart
+{ "groupId": "476230759" }
+
+// POST /api/settings/apply（面板改完配置后推过来，只带动过的字段）
+{ "adminUsers": ["10001", "10002"] }
+```
+
+### panel（一个进程，7879）
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/board` | 需求大盘：按群摊平的行 + 告警数 |
+| `GET /api/board/detail?pid=&groupId=` | 大盘某一行的完整详情（群 + 它所在的进程） |
+| `GET /api/instances` | 实例页：按进程维度的列表 |
+| `GET /api/settings` | 读白名单与群消息文案 |
+| `POST /api/settings/save` | 保存并热更新所有实例 |
+| `GET /api/logs?pid=&n=200` | 先找到实例，再转发到它的 `/api/logs` |
+| `POST /api/groups/stop` | 先找到持有该群的实例，再转发过去 |
+| `POST /api/groups/restart` | 同上 |
+
+保存配置只传要改的字段：
+
+```jsonc
+// POST /api/settings/save
+{ "adminUsers": ["10001", "10002"] }
+{ "messageTemplates": { "ack": "收到，开始处理。" } }
+```
+
+### 错误约定
+
+失败统一返回 `{ "ok": false, "error": "人话" }`，状态码区分：
+
+- **400** 参数问题：缺 `groupId`、JSON 不合法、白名单格式错、文案占位符未知
+- **404** 找不到：详情里的 pid 已不在运行、未知路径
+- **500** 服务端异常：读写配置文件失败等
 
 **为什么按视图分开**：
 
@@ -88,8 +133,6 @@ panel（一个进程）
 
 实机参考：两个群时 `/api/board` 约 660 字节，`/api/instances` 约 1.1 KB，
 `/api/board/detail` 约 1.3 KB——之前大盘一个接口就把这些全带上。
-
-写操作需要 `panel.token` 非空时携带 `x-panel-token`；留空则只依赖「仅监听 127.0.0.1」。
 
 ## 日志
 
