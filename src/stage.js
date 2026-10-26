@@ -24,6 +24,19 @@ export function resolveStageStart(st, runningName) {
 }
 
 /**
+ * 这个需求算不算「已经全部做完了」。
+ *
+ * 新流程里由「需求收尾」阶段负责终检，它完成才算需求完成；
+ * 老需求没有这个阶段时，退化为「所有阶段都已完成」。
+ */
+export function isRequirementDone(stages) {
+  if (!stages.length) return false
+  const wrapup = stages.find((x) => x.name.includes('需求收尾'))
+  if (wrapup) return wrapup.status.includes('已完成')
+  return stages.every((x) => x.status.includes('已完成'))
+}
+
+/**
  * 用户发消息后的回执文案（消息 1）。
  *
  * @param {object} st 群状态
@@ -61,13 +74,26 @@ export function ackFor(st, intent, templates) {
     return { text: renderMessage('ackIdle', vars, templates), reqIdToBind, idle: stages.length === 0 }
   }
 
+  // 有等待事项时，优先告诉用户「在等什么」。
+  // 否则用户说「继续」会收到「验收阶段已完成，正在继续」——可他需要知道的是
+  // 自己还欠一个决定（比如要不要推远端），这句话把真正的问题盖掉了。
+  if (st.waitingLabel) {
+    return { text: renderMessage('ackPendingLabel', vars, templates), reqIdToBind, idle: false }
+  }
+
+  // 需求确实收尾了、也没有等待事项：只有「继续」这种情况是真的没活干，
+  // 换成「全部完成」的提示。其他意图（尤其新需求）照常走。
+  const allDone = isRequirementDone(stages)
+  if (allDone && intent === 'continue') {
+    return { text: renderMessage('allDone', vars, templates), reqIdToBind, idle: false, allDone: true }
+  }
+
   const key = { approve: 'ackApprove', reject: 'ackReject', continue: 'ackContinue', new_req: 'ackNewReq' }[intent]
-  // 没有明确意图但有等待事项：把等待内容带出来，别只说「等你确认」
-  const fallback = st.waitingLabel ? 'ackPendingLabel' : 'ackPending'
   return {
-    text: renderMessage(key ?? fallback, vars, templates),
+    text: renderMessage(key ?? 'ackPending', vars, templates),
     reqIdToBind,
     idle: false,
+    allDone: false,
   }
 }
 
@@ -124,5 +150,9 @@ export function planStageAnnounce(st, templates) {
     messages.push(renderMessage('stageStart', { stage: startedNow }, templates))
   }
 
-  return { messages, running, finishedNow, patch, completedNow, startedNow }
+  // 需求收尾阶段刚完成 → 需求真的结束了，补一句交付结论
+  const justWrappedUp = completedNow.some((n) => n.includes('需求收尾'))
+  const requirementDone = justWrappedUp && !running
+
+  return { messages, running, finishedNow, patch, completedNow, startedNow, done: requirementDone }
 }

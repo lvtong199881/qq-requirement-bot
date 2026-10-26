@@ -474,7 +474,8 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
       // agent 没给正文时才用 waitingLabel 兜底
       lines.push(pendingNote)
     }
-    if (!lines.length && gate.state === 'done') {
+    // 需求收尾阶段刚完成，或 agent 自己标了 [[DONE]]
+    if ((planned.done || gate.state === 'done') && !finalAnswer) {
       lines.push(renderMessage('done', {}, config.messageTemplates))
     }
 

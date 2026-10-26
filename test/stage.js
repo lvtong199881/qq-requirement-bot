@@ -3,7 +3,7 @@
  * 这些函数以前埋在 index.js 里无法import，出过「函数被删只有真跑才报错」的事故。
  *   node test/stage.js
  */
-import { resolveStageStart, ackFor, planStageAnnounce } from '../src/stage.js'
+import { resolveStageStart, ackFor, planStageAnnounce, isRequirementDone } from '../src/stage.js'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -58,10 +58,35 @@ console.log('\n== ackFor：没有进行中阶段，按意图区分 ==')
 
   check('通过', ackFor(st, 'approve').text.includes('收到批准'), ackFor(st, 'approve').text)
   check('打回', ackFor(st, 'reject').text.includes('收到修改意见'), ackFor(st, 'reject').text)
-  check('继续', ackFor(st, 'continue').text.includes('正在继续'), ackFor(st, 'continue').text)
+  // 该需求只有一个阶段且已完成 → 视为需求完成，「继续」回全部完成提示
+  check('继续·已全部完成', ackFor(st, 'continue').text.includes('所有阶段都已完成'), ackFor(st, 'continue').text)
   check('新需求', ackFor(st, 'new_req').text === '收到，开始新需求。', ackFor(st, 'new_req').text)
   check('其他意图回退到等确认', ackFor(st, 'content').text.includes('等你确认'), ackFor(st, 'content').text)
   check('都带已完成阶段名', ackFor(st, 'approve').text.includes('测试阶段已完成'))
+}
+
+console.log('\n== ackFor：还有后续阶段时「继续」正常回执 ==')
+{
+  writeBoard(['| 6 测试 | 已完成 | 0 | ok |', '| 7 验收 | 未开始 | 0 | — |'])
+  const st = { stage: '测试', stageStartedAt: 0, projectDir: root, reqId: 'demo' }
+  const ack = ackFor(st, 'continue')
+  check('没说全部完成', !ack.text.includes('所有阶段都已完成'), ack.text)
+  check('回「正在继续」', ack.text.includes('正在继续'), ack.text)
+}
+
+console.log('\n== isRequirementDone：新流程看「需求收尾」==')
+{
+  const cases = [
+    ['收尾已完成', [{ name: '验收', status: '已完成' }, { name: '需求收尾', status: '已完成' }], true],
+    ['收尾进行中', [{ name: '验收', status: '已完成' }, { name: '需求收尾', status: '进行中' }], false],
+    ['卡在提交', [{ name: '代码提交与合并', status: '阻塞' }, { name: '需求收尾', status: '未开始' }], false],
+    ['老需求全完成', [{ name: '验收', status: '已完成' }], true],
+    ['老需求有进行中', [{ name: '验收', status: '进行中' }], false],
+    ['空表', [], false],
+  ]
+  for (const [name, stages, want] of cases) {
+    check(name, isRequirementDone(stages) === want, String(isRequirementDone(stages)))
+  }
 }
 
 console.log('\n== ackFor：idle 标记（空消息是否补引导）==')

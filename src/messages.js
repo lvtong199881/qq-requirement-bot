@@ -151,6 +151,13 @@ export const MESSAGE_TEMPLATES = {
     vars: [],
     template: '这个需求跑完了。要新需求直接 @我 说。',
   },
+  allDone: {
+    group: '交互提示',
+    label: '所有阶段都已完成',
+    desc: '用户说「继续」但已经没有可推进的阶段时',
+    vars: [],
+    template: '这个需求的所有阶段都已完成，没有可以继续推进的了。\n要开新需求直接说需求内容；想复查某一步，指明是哪一步。',
+  },
   ambiguous: {
     group: '交互提示',
     label: '没看懂用户在说什么',
