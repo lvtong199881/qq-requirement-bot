@@ -36,6 +36,13 @@ export const MESSAGE_TEMPLATES = {
     vars: ['stage', 'duration'],
     template: '当前{{stage}}阶段中，已进行 {{duration}}。',
   },
+  ackWaiting: {
+    group: '回执（消息 1）',
+    label: '有进行中阶段 · 且有待确认事项',
+    desc: '阶段在跑、同时有需要用户拍板的事，两件事一起说清',
+    vars: ['stage', 'duration', 'waitingLabel'],
+    template: '当前{{stage}}阶段中，已进行 {{duration}}。\n等你确认：\n{{waitingLabel}}',
+  },
   ackApprove: {
     group: '回执（消息 1）',
     label: '没有进行中阶段 · 用户批准',

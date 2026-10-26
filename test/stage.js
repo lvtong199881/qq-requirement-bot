@@ -42,6 +42,22 @@ console.log('\n== ackFor：有进行中阶段 ==')
   check('已绑定时不建议改 reqId', ack.reqIdToBind === null)
 }
 
+console.log('\n== ackFor：有进行中阶段 + 有待确认事项 ==')
+{
+  writeBoard(['| 6 测试 | 已完成 | 0 | ok |', '| 7 验收 | 进行中 | 0 | — |'])
+  const st2 = {
+    stage: '验收',
+    stageStartedAt: Date.now() - 5 * 60 * 1000,
+    projectDir: root,
+    reqId: 'demo',
+    waitingLabel: '确认按这两条提交吗',
+  }
+  const ack = ackFor(st2, 'continue')
+  check('报当前阶段和时长', ack.text.includes('当前验收阶段中'), ack.text)
+  check('同时带出等待事项', ack.text.includes('确认按这两条提交吗'), ack.text)
+  check('等待内容另起一行', ack.text.includes('等你确认：\n'), JSON.stringify(ack.text))
+}
+
 console.log('\n== ackFor：阶段刚切换（state 还是旧阶段）==')
 {
   // state 说「测试」，编排记录说「验收」

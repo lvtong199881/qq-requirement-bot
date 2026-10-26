@@ -54,8 +54,10 @@ export function ackFor(st, intent, templates) {
   if (running) {
     const start = resolveStageStart({ ...st, reqId: st.reqId ?? table.reqId }, running.name)
     const duration = start ? formatDuration(Date.now() - start) : ''
+    const vars = { stage: running.name, duration, waitingLabel: st.waitingLabel || '' }
+    // 阶段在跑、同时有等你拍板的事：两件事一起说，别只报时长
     return {
-      text: renderMessage('ack', { stage: running.name, duration }, templates),
+      text: renderMessage(st.waitingLabel ? 'ackWaiting' : 'ack', vars, templates),
       reqIdToBind,
       idle: false,
     }
