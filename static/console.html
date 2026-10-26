@@ -426,12 +426,29 @@
 
 <script src="/vue.js"></script>
 <script>
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue
+const { createApp, ref, computed, onMounted, onUnmounted, watch } = Vue
 
 createApp({
   setup() {
     const view = ref('board')
-    const collapsed = ref(false) // 侧栏收起态
+
+    // 侧栏收起态：记住上次选择（隐私模式下 localStorage 可能抛错，静默降级）
+    const COLLAPSED_KEY = 'qqbot.panel.sidebarCollapsed'
+    const readCollapsed = () => {
+      try {
+        return localStorage.getItem(COLLAPSED_KEY) === '1'
+      } catch {
+        return false
+      }
+    }
+    const collapsed = ref(readCollapsed())
+    watch(collapsed, (v) => {
+      try {
+        localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0')
+      } catch {
+        /* localStorage 不可用时只是不记忆，不影响功能 */
+      }
+    })
     const instances = ref([])
     const loading = ref(false)
     const menu = ref(null)
