@@ -6,7 +6,7 @@
  *   node test/decision-retry.js
  */
 import { readFileSync } from 'node:fs'
-import { parseDecision } from '../src/decision.js'
+import { parseDecisionJson, DECISION_JSON_EXAMPLE } from '../src/decision.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {
@@ -43,26 +43,20 @@ console.log('\n== 纠正 prompt 内容 ==')
 
   // 从源码里把纠正 prompt 的文本行抽出来，验证它给了正确模板
   const block = src.slice(src.indexOf('function decisionFixPrompt'), src.indexOf('/**\n * 静默让 agent 重写'))
-  check('给出 [[ASK]] 标记示例', block.includes("'  [[ASK]]'"))
-  check('示例用「1. 」编号', block.includes("'  1. <事项标题>'"))
-  check('示例用「A. 」选项', block.includes("'     A. <选项>'"))
-  check('要求缩进 3 空格', block.includes('缩进 3 个空格'))
-  check('禁止开场白小结', block.includes('不写开场白'))
-  check('说明最多 4 个选项', block.includes('最多 4 个'))
+  check('要求 JSON 数组', block.includes('必须是一个 JSON 数组'))
+  check('贴出示例常量', block.includes('DECISION_JSON_EXAMPLE'))
+  check('说明 q 字段', block.includes('q：问题标题'))
+  check('说明 a 字段', block.includes('a：选项数组'))
+  check('说明 t 字段', block.includes('t：选项文字'))
+  check('说明 r 字段', block.includes('r：是否推荐'))
+  check('禁止代码块包裹', block.includes('不要用 markdown 代码块包'))
   check('要求只重发标记段', block.includes('不要重复已经说过的正文'))
 }
 
-console.log('\n== 纠正 prompt 里给的模板本身能通过校验 ==')
+console.log('\n== 纠正 prompt 贴的示例本身能通过校验 ==')
 {
-  // 把示例里的占位符替换成真内容，喂给 parseDecision 应能通过
-  const sample = `1. 事项标题
-   A. 选项
-   B. 选项
-2. 事项标题
-   A. 选项
-   B. 选项`
-  const r = parseDecision(sample)
-  check('模板形状可解析', r.ok, r.reason)
+  const r = parseDecisionJson(DECISION_JSON_EXAMPLE)
+  check('示例可解析', r.ok, r.reason)
   check('解析出 2 项', r.ok && r.items.length === 2)
 }
 

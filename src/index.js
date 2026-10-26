@@ -14,7 +14,7 @@ import { sanitize, RateLimiter, sleep, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
 import { resolveStageStart, ackFor, planStageAnnounce } from './stage.js'
 import { renderMessage } from './messages.js'
-import { parseDecision, formatDecision } from './decision.js'
+import { parseDecisionJson, formatDecision, DECISION_JSON_EXAMPLE } from './decision.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
@@ -170,23 +170,21 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
  */
 function decisionFixPrompt(reason, round) {
   return [
-    `你上一条输出的 [[ASK]] 格式不符合要求，已被拦下（第 ${round} 次重写）：${reason}`,
+    `你上一条输出的 [[ASK]] 内容不符合约定，已被拦下（第 ${round} 次重写）：${reason}`,
     '',
-    '必须是这个结构，除事项行和选项行之外一行都不许有：',
-    '  [[WAITING]]<一句话说明在等什么>',
-    '  [[ASK]]',
-    '  1. <事项标题>',
-    '     A. <选项>',
-    '     B. <选项>',
-    '  2. <事项标题>',
-    '     A. <选项>',
-    '     B. <选项>',
+    '[[ASK]] 后面必须是一个 JSON 数组，结构如下：',
+    DECISION_JSON_EXAMPLE,
     '',
-    '要求：',
-    '- 事项用「1.」「2.」，选项用「A.」「B.」「C.」「D.」，选项缩进 3 个空格。',
-    '- 每个事项下面至少 1 个选项，最多 4 个。',
-    '- 不写开场白、不写小结、不写小标题、不写 markdown 列表。',
-    '- 推荐项写进选项文本里，如「（推荐）」。',
+    '字段：',
+    '- q：问题标题（必填，非空字符串）',
+    '- a：选项数组（必填，1～4 个）',
+    '- t：选项文字（必填，非空字符串）',
+    '- r：是否推荐（true / false，可选）',
+    '',
+    '规则：',
+    '- 问题 1～5 个，每个 1～4 个选项；选项字母由 bridge 自动编排，不用写。',
+    '- 只输出 JSON 本身，前后不要写解释文字，不要用 markdown 代码块包。',
+    '- 用户看到的是渲染后的整齐列表，选项文字要能独立看懂。',
     '',
     '现在请重新输出：只输出 [[WAITING]] 和 [[ASK]] 两段，不要重复已经说过的正文。',
   ].join('\n')
@@ -530,7 +528,7 @@ async function handleTurn(
       if (ask) {
         // 决策内容必须是「1. 标题 / A. 选项」结构，不合规就不转发原文——
         // 无脑贴 agent 的散文，用户根本不知道要选什么。
-        const parsed = parseDecision(ask)
+        const parsed = parseDecisionJson(ask)
         if (parsed.ok) {
           finalAnswer = formatDecision(parsed.items)
           if (st.decisionRetry) persist({ decisionRetry: 0 }) // 成功就清零
