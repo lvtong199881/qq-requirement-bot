@@ -17,15 +17,39 @@
 
   /* 左侧菜单 + 右侧内容 */
   .app{display:flex;height:100vh}
-  .sidebar{width:186px;flex:0 0 186px;background:var(--side);border-right:1px solid var(--line);
-    display:flex;flex-direction:column;padding:16px 10px;color-scheme:dark;}
-  .brand{font-size:15px;font-weight:600;padding:6px 10px 18px;letter-spacing:.01em}
+  .sidebar{
+    width:186px;flex:0 0 186px;background:var(--side);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;padding:16px 10px;color-scheme:dark;
+    transition:width .18s ease,flex-basis .18s ease,padding .18s ease;overflow:hidden;
+  }
+  .sidebar.collapsed{width:58px;flex:0 0 58px;padding:16px 8px}
+
+  /* icon 与标题同字号：1em */
+  .ico{width:1em;height:1em;flex:0 0 auto;display:block}
+  .label{white-space:nowrap;overflow:hidden}
+
+  .brand{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:600;
+    padding:6px 10px 18px;letter-spacing:.01em;color:var(--text)}
+  .sidebar.collapsed .brand{justify-content:center;padding:6px 0 18px}
+
   .nav{display:flex;flex-direction:column;gap:2px}
-  .nav button{display:block;width:100%;text-align:left;background:none;
+  .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:none;
     border:none;color:var(--dim);padding:9px 10px;border-radius:8px;cursor:pointer;font-size:15px;
-    font-family:inherit;transition:.12s;}
+    font-family:inherit;transition:background .12s,color .12s;}
   .nav button:hover{background:#1b1f27;color:var(--text)}
   .nav button.active{background:#222833;color:var(--text);font-weight:600}
+  .sidebar.collapsed .nav button{justify-content:center;padding:10px 0}
+
+  /* 底部收起按钮 */
+  .collapse-btn{
+    margin-top:auto;display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;
+    color:var(--dim2);padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;
+    font-family:inherit;transition:background .12s,color .12s;
+  }
+  .collapse-btn:hover{background:#1b1f27;color:var(--text)}
+  .sidebar.collapsed .collapse-btn{justify-content:center;padding:10px 0}
+  .collapse-btn .ico{transition:transform .18s ease}
+  .sidebar.collapsed .collapse-btn .ico{transform:rotate(180deg)}
 
 
   /* 内容区亮色主题：只覆盖变量，侧栏仍用 :root 的深色 */
@@ -154,12 +178,52 @@
 <body>
 <div id="app" class="app">
   <!-- 左侧菜单 -->
-  <aside class="sidebar">
-    <div class="brand">需求Bot控制台</div>
+  <aside class="sidebar" :class="{ collapsed }">
+    <div class="brand">
+      <!-- 终端 -->
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="4" width="20" height="16" rx="2"/>
+        <path d="m6.5 9.5 3 2.5-3 2.5"/>
+        <path d="M13 14.5h4.5"/>
+      </svg>
+      <span class="label" v-show="!collapsed">需求Bot控制台</span>
+    </div>
+
     <nav class="nav">
-      <button :class="{ active: view === 'board' }" @click="switchView('board')">需求大盘</button>
-      <button :class="{ active: view === 'settings' }" @click="switchView('settings')">设置</button>
+      <button :class="{ active: view === 'board' }" @click="switchView('board')">
+        <!-- 网格：需求大盘 -->
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/>
+          <rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/>
+          <rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/>
+          <rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/>
+        </svg>
+        <span class="label" v-show="!collapsed">需求大盘</span>
+      </button>
+
+      <button :class="{ active: view === 'settings' }" @click="switchView('settings')">
+        <!-- 滑杆：设置 -->
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 21v-6M4 11V3"/>
+          <path d="M12 21v-9M12 8V3"/>
+          <path d="M20 21v-4M20 13V3"/>
+          <path d="M1.5 15h5M9.5 8h5M17.5 17h5"/>
+        </svg>
+        <span class="label" v-show="!collapsed">设置</span>
+      </button>
     </nav>
+
+    <button class="collapse-btn" @click="collapsed = !collapsed" :title="collapsed ? '展开菜单' : '收起菜单'">
+      <!-- 左箭头，收起时旋转 180° -->
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="m15 18-6-6 6-6"/>
+      </svg>
+      <span class="label" v-show="!collapsed">收起</span>
+    </button>
   </aside>
 
   <!-- 右侧内容 -->
@@ -367,6 +431,7 @@ const { createApp, ref, computed, onMounted, onUnmounted } = Vue
 createApp({
   setup() {
     const view = ref('board')
+    const collapsed = ref(false) // 侧栏收起态
     const instances = ref([])
     const loading = ref(false)
     const menu = ref(null)
@@ -567,7 +632,7 @@ createApp({
     })
 
     return {
-      view, instances, loading, menu, modal, toast, confirmModal,
+      view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
       switchView, loadSettings, saveSettings,
