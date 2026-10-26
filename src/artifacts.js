@@ -229,3 +229,39 @@ export function stageTable(projectDir, reqId) {
 
   return { reqId, stages }
 }
+
+/**
+ * 用编排记录的写入时间近似某阶段的开始时间。
+ *
+ * 阶段切换必然改写编排记录，所以它的 mtime 是比「记当前时间」更接近真实起点
+ * 的近似值。超过 24 小时的记录不可信（那是很久以前的），退回当前时间。
+ */
+export function guessStageStart(projectDir, reqId) {
+  try {
+    const root = join(projectDir, DOC_ROOT)
+
+    // 没指定需求时，必须和 stageTable 用同一套「最近改动」规则，
+    // 否则两边可能指向不同需求——readdirSync 的顺序跟新旧无关。
+    if (!reqId) {
+      let newest = null
+      for (const id of readdirSync(root)) {
+        if (id.startsWith('.')) continue
+        const f = join(root, id, '编排记录.md')
+        if (!existsSync(f)) continue
+        const mtime = statSync(f).mtimeMs
+        if (!newest || mtime > newest.mtime) newest = { mtime }
+      }
+      if (!newest) return Date.now()
+      return Date.now() - newest.mtime > 24 * 3600 * 1000 ? Date.now() : newest.mtime
+    }
+
+    const f = join(root, reqId, '编排记录.md')
+    if (existsSync(f)) {
+      const mtime = statSync(f).mtimeMs
+      return Date.now() - mtime > 24 * 3600 * 1000 ? Date.now() : mtime
+    }
+  } catch {
+    /* 落空就用当前时间 */
+  }
+  return Date.now()
+}

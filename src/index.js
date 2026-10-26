@@ -15,7 +15,15 @@ import { Runtime } from './runtime.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
-import { snapshot, diffSnapshot, uploadName, touchedReqIds, currentStage, stageTable } from './artifacts.js'
+import {
+  snapshot,
+  diffSnapshot,
+  uploadName,
+  touchedReqIds,
+  currentStage,
+  stageTable,
+  guessStageStart,
+} from './artifacts.js'
 import {
   parseCommand,
   helpText,
@@ -168,7 +176,9 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
  * @returns {{messages: string[], running: string|null, finishedNow: string[], patch: object}}
  */
 function planStageAnnounce(st) {
-  const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+  const table = stageTable(st.projectDir, st.reqId ?? undefined)
+  const { stages } = table
+  const reqIdForTime = st.reqId ?? table.reqId
   const running = stages.find((x) => x.status.includes('进行中'))?.name ?? null
   const finishedNow = stages.filter((x) => x.status.includes('已完成')).map((x) => x.name)
 
@@ -195,10 +205,10 @@ function planStageAnnounce(st) {
     patch.stage = running
     // 首次观测到某个阶段在跑时，用编排记录的最近写入时间近似它的开始时间
     // （阶段切换必然改写编排记录）。比记 Date.now() 更接近真实起点。
-    patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
+    patch.stageStartedAt = guessStageStart(st.projectDir, reqIdForTime)
   } else if (running && !st.stageStartedAt) {
     // 老数据里 stage 已是当前阶段但缺时间戳：补一个，避免播报里缺少时长
-    patch.stageStartedAt = guessStageStart(st.projectDir, st.reqId, running)
+    patch.stageStartedAt = guessStageStart(st.projectDir, reqIdForTime)
   } else if (!running && st.stage) {
     // 阶段都完成了但还没进入下一阶段：保留最后一次阶段名，避免回执说「没有阶段」
     patch.stage = st.stage
@@ -207,33 +217,23 @@ function planStageAnnounce(st) {
   return { messages, running, finishedNow, patch }
 }
 
-/** 用编排记录的写入时间近似某阶段的开始时间；拿不到就用当前时间 */
-function guessStageStart(projectDir, reqId) {
-  try {
-    const root = pathJoin(projectDir, 'docs', 'requirements')
-    const dirs = reqId ? [reqId] : readdirSync(root)
-    for (const id of dirs) {
-      const f = pathJoin(root, id, '编排记录.md')
-      if (!existsSync(f)) continue
-      const mtime = statSync(f).mtimeMs
-      // 超过 24 小时说明是很久以前的记录，不能当阶段起点
-      if (Date.now() - mtime > 24 * 3600 * 1000) return Date.now()
-      return mtime
-    }
-  } catch {
-    /* 落空就返回当前时间 */
-  }
-  return Date.now()
-}
-
 /** 消息 1：用户发消息后的回执 */
 async function sendAck(groupId, st, replyTo, intent) {
-  const { stages } = stageTable(st.projectDir, st.reqId ?? undefined)
+  const table = stageTable(st.projectDir, st.reqId ?? undefined)
+  const { stages } = table
   const running = stages.find((x) => x.status.includes('进行中'))
+
+  // 绑定丢了就从编排记录找回来并落盘——否则下次会去读「最近改动的那个需求」，
+  // 项目里并存多个需求时可能读错。
+  if (!st.reqId && table.reqId) {
+    st.reqId = table.reqId
+    store.save(groupId, { ...st, reqId: table.reqId })
+    log(`[${groupId}] 绑定自愈（回执）：reqId=${table.reqId}`)
+  }
 
   // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
   if (running) {
-    await sendPlain(groupId, runningText(running.name, st.stageStartedAt), { replyTo })
+    await sendPlain(groupId, runningText(running.name, resolveStageStart(st, running.name)), { replyTo })
     return
   }
 
@@ -280,7 +280,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const running = stages.find((x) => x.status.includes('进行中'))
     if (!running) return
     lastActivityAt = Date.now()
-    sendPlain(groupId, runningText(running.name, st.stageStartedAt)).catch(() => {})
+    sendPlain(groupId, runningText(running.name, resolveStageStart(st, running.name))).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {
