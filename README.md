@@ -15,11 +15,7 @@
 
 ## 它怎么工作
 
-```
-QQ 群 ──▶ NapCat（OneBot 11）──▶ bridge ──▶ dsh --profile qqbot --json
-                                    ▲                    │
-                                    └── NDJSON 事件流 ◀───┘
-```
+![整体结构](docs/images/architecture.svg)
 
 bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合、转发进度、回传产物**。需求流程本身完全交给 requirement-spec，一行都不改。
 
@@ -30,35 +26,9 @@ bridge 是唯一的自研代码，只做四件事：**收 @ 消息、起回合�
 - **单群串行**。同一群同一时刻只跑一个回合，避免两个回合抢写同一份技术方案；运行中插话会排队。
 - **零依赖**。Node 22+ 自带 `WebSocket` 和 `fetch`，`npm install` 都不用跑。
 
-## 前置条件
-
-| 依赖 | 说明 |
-| --- | --- |
-| Node ≥ 22 | 需要内置 WebSocket |
-| `dsh` 在 PATH | `dsh --version` 能跑 |
-| DEEPSEEK_API_KEY | 检查顺序：环境变量 → `~/.dsh/.credentials.yaml` |
-| NapCat | 一个 QQ 号，开启**正向 WebSocket**，记下地址和 token |
-| requirement-spec skill | 装在 `~/.agents/skills/requirement-spec` 即可自动发现 |
-
 ## 安装
 
-```bash
-cd ~/Documents/ChatGPT/qq-requirement-bot
-
-# 1. 建 qqbot profile（从 headless 派生，仓库里已有模板）
-cp -R profiles/qqbot ~/.dsh/profiles/qqbot
-
-# 2. 配置
-cp bot.config.example.json bot.config.json
-$EDITOR bot.config.json        # 只需要改 projectDir；群号不用填
-
-# 3. 自检
-node src/doctor.js             # 配置 / 密钥 / skill / dsh / OneBot 连通性
-node src/doctor.js --turn      # 额外真跑一个回合（消耗 token）
-
-# 4. 启动
-node src/index.js
-```
+见 **[安装指南](docs/INSTALL.md)**：前置条件、NapCat 与 skill 准备、profile 安装、配置、自检、启动，全在那份文档里。
 
 ## 配置说明
 
@@ -207,6 +177,8 @@ QQ 群名、发起人、当前阶段状态徽章，每行末尾 `⋯` 菜单提�
 **实例**——每个 bridge 进程一张卡：PID、QQ 昵称与账号、模型、端口、启动时间、
 运行时长、内存（RSS / heap）、OneBot 连接状态、profile、群策略、心跳间隔、
 回合超时、服务群数、项目目录与工作目录。卡片左上角状态点变红表示该实例不可达。
+
+![实例](docs/images/console-instances.png)
 
 **设置**——三块：
 

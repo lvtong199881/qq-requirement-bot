@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="960" viewBox="0 0 1280 960" font-family="-apple-system, 'PingFang SC', 'Helvetica Neue', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6e7681"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="960" fill="#0d1117"/>
+
+  <!-- 标题 -->
+  <text x="60" y="52" fill="#e6edf3" font-size="23" font-weight="700">qq-requirement-bot 整体结构</text>
+  <text x="60" y="80" fill="#8b949e" font-size="13">群里一句话 → bridge 编排 → dsh 跑完整需求流程 → 阶段进度与产物自动回群</text>
+
+  <!-- QQ 群 -->
+  <rect x="340" y="110" width="420" height="88" rx="10" fill="#161b22" stroke="#30363d"/>
+  <text x="360" y="140" fill="#e6edf3" font-size="15" font-weight="600">QQ 群</text>
+  <text x="360" y="162" fill="#c9d1d9" font-size="12.5">群主 / 群管理员 @产品同学 说一句需求</text>
+  <text x="360" y="182" fill="#8b949e" font-size="12.5">其他成员 @ 会被静默忽略</text>
+
+  <!-- NapCat -->
+  <rect x="340" y="238" width="420" height="88" rx="10" fill="#161b22" stroke="#30363d"/>
+  <text x="360" y="268" fill="#e6edf3" font-size="15" font-weight="600">NapCat（OneBot 11 协议端）</text>
+  <text x="360" y="290" fill="#c9d1d9" font-size="12.5">正向 WebSocket · ws://127.0.0.1:3001</text>
+  <text x="360" y="310" fill="#8b949e" font-size="12.5">非官方协议端，用小号并控制发送频率</text>
+
+  <!-- bridge 大框 -->
+  <rect x="120" y="366" width="900" height="270" rx="12" fill="#0f1620" stroke="#3d444d" stroke-width="1.5"/>
+  <text x="140" y="396" fill="#58a6ff" font-size="15" font-weight="600">bridge —— 本仓库唯一的自研代码</text>
+  <text x="140" y="416" fill="#8b949e" font-size="12">Node ≥ 22 · 零依赖 · 一个群一个 DSH 会话 · 单群串行</text>
+
+  <!-- 四个模块 -->
+  <g>
+    <rect x="136" y="442" width="200" height="170" rx="8" fill="#1c2128" stroke="#30363d"/>
+    <text x="152" y="470" fill="#e6edf3" font-size="14" font-weight="600">权限闸门</text>
+    <text x="152" y="496" fill="#8b949e" font-size="12">只服务群主、群管、</text>
+    <text x="152" y="516" fill="#8b949e" font-size="12">adminUsers 白名单</text>
+    <text x="152" y="536" fill="#8b949e" font-size="12">角色按群缓存 5 分钟</text>
+    <text x="152" y="566" fill="#6e7681" font-size="11.5">canOperate()</text>
+  </g>
+  <g>
+    <rect x="348" y="442" width="200" height="170" rx="8" fill="#1c2128" stroke="#30363d"/>
+    <text x="364" y="470" fill="#e6edf3" font-size="14" font-weight="600">意图路由</text>
+    <text x="364" y="496" fill="#8b949e" font-size="12">通过 / 打回 / 继续</text>
+    <text x="364" y="516" fill="#8b949e" font-size="12">停 / 新需求 / 本群</text>
+    <text x="364" y="536" fill="#8b949e" font-size="12">正则判定，不经 LLM</text>
+    <text x="364" y="566" fill="#6e7681" font-size="11.5">router.js</text>
+  </g>
+  <g>
+    <rect x="560" y="442" width="200" height="170" rx="8" fill="#1c2128" stroke="#30363d"/>
+    <text x="576" y="470" fill="#e6edf3" font-size="14" font-weight="600">回合编排</text>
+    <text x="576" y="496" fill="#8b949e" font-size="12">每回合起一个子进程</text>
+    <text x="576" y="516" fill="#8b949e" font-size="12">读 NDJSON 事件流</text>
+    <text x="576" y="536" fill="#8b949e" font-size="12">检测 WAITING / ASK</text>
+    <text x="576" y="566" fill="#6e7681" font-size="11.5">index.js · protocol.js</text>
+  </g>
+  <g>
+    <rect x="772" y="442" width="200" height="170" rx="8" fill="#1c2128" stroke="#30363d"/>
+    <text x="788" y="470" fill="#e6edf3" font-size="14" font-weight="600">发送与产物</text>
+    <text x="788" y="496" fill="#8b949e" font-size="12">超长拆条、限流防风控</text>
+    <text x="788" y="516" fill="#8b949e" font-size="12">静默心跳、异常播报</text>
+    <text x="788" y="536" fill="#8b949e" font-size="12">产物作为群文件上传</text>
+    <text x="788" y="566" fill="#6e7681" font-size="11.5">messages.js · artifacts.js</text>
+  </g>
+
+  <!-- dsh -->
+  <rect x="340" y="676" width="420" height="88" rx="10" fill="#161b22" stroke="#a371f7"/>
+  <text x="360" y="706" fill="#a371f7" font-size="15" font-weight="600">dsh --profile qqbot --json</text>
+  <text x="360" y="728" fill="#c9d1d9" font-size="12.5">headless agent，一回合一个进程，续跑带同一 session-id</text>
+  <text x="360" y="748" fill="#8b949e" font-size="12.5">流程本身交给 requirement-spec skill，一行都不改</text>
+
+  <!-- 项目目录 -->
+  <rect x="340" y="804" width="420" height="88" rx="10" fill="#161b22" stroke="#3fb950"/>
+  <text x="360" y="834" fill="#3fb950" font-size="15" font-weight="600">项目目录 docs/requirements/&lt;需求标识&gt;/</text>
+  <text x="360" y="856" fill="#c9d1d9" font-size="12.5">编排记录.md · PRD.md · 技术方案.md · 测试报告 …</text>
+  <text x="360" y="876" fill="#8b949e" font-size="12.5">续跑的唯一依据：下一回合先读编排记录</text>
+
+  <!-- 管理面板 -->
+  <rect x="1040" y="366" width="220" height="270" rx="12" fill="#0f1620" stroke="#3fb950" stroke-dasharray="5 4"/>
+  <text x="1060" y="396" fill="#3fb950" font-size="15" font-weight="600">管理面板</text>
+  <text x="1060" y="418" fill="#8b949e" font-size="12">常驻进程，独立于 bridge</text>
+  <text x="1060" y="450" fill="#c9d1d9" font-size="12.5">127.0.0.1:7879/console</text>
+  <text x="1060" y="478" fill="#8b949e" font-size="12">需求大盘 / 实例 / 设置</text>
+  <text x="1060" y="506" fill="#8b949e" font-size="12">扫 .instances/ 发现实例</text>
+  <text x="1060" y="534" fill="#8b949e" font-size="12">聚合状态、下指令</text>
+  <text x="1060" y="570" fill="#6e7681" font-size="11.5">bridge 挂了面板还活着</text>
+  <text x="1060" y="590" fill="#6e7681" font-size="11.5">能告诉你它挂了</text>
+
+  <!-- 连线：主流程 -->
+  <line x1="550" y1="198" x2="550" y2="232" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="550" y1="326" x2="550" y2="360" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="550" y1="636" x2="550" y2="670" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="550" y1="764" x2="550" y2="798" stroke="#6e7681" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 连线：面板 ↔ bridge -->
+  <line x1="1040" y1="500" x2="1026" y2="500" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+
+  <!-- 连线：结果回流到群（绕左侧） -->
+  <path d="M 120 480 L 62 480 L 62 154 L 334 154" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <text x="80" y="330" fill="#58a6ff" font-size="12" text-anchor="middle" transform="rotate(-90 80 330)">回执 · 阶段播报 · 产物文件</text>
+
+  <!-- 图例 -->
+  <text x="60" y="930" fill="#6e7681" font-size="11.5">实线箭头 = 一次交互的流向；蓝色回流 = 结果回群；绿色虚线 = 管理面板与 bridge 的独立通信</text>
+</svg>
