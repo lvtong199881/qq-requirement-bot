@@ -442,11 +442,13 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const reqIdToBind2 = st.reqId || stageInfo2.reqId
     const planned = planStageAnnounce({ ...st, reqId: reqIdToBind2 })
 
-    // ── 要用户拍板时，agent 的最终答复本身就是「要确认什么」，必须发出去 ──
-    // 过程中那 90 段工作日志照旧不发；但回合末尾这段是给用户看的结论和选项，
-    // 少了它群里就只剩一句「等你确认」——真实踩过。
-    const finalAnswer =
-      gate.state === 'waiting' || gate.state === 'done' ? (gate.cleaned || '').trim() : ''
+    // ── 要用户拍板时发什么 ──
+    // 首选 [[ASK]] 段：agent 按要求把「具体要判断什么」写在标记后面，bridge 负责拼接。
+    // 没写 ASK 时退回整段答复（兜底，不至于又只剩一句「等你确认」）。
+    let finalAnswer = ''
+    if (gate.state === 'waiting' || gate.state === 'done') {
+      finalAnswer = (gate.ask || '').trim() || (gate.cleaned || '').trim()
+    }
 
     const pendingNote = gate.state === 'waiting' && gate.label ? `等你确认：${gate.label}` : ''
 

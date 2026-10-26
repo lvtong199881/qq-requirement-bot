@@ -6,6 +6,12 @@
  */
 
 const WAITING_RE = /\[\[\s*WAITING\s*\]\]/i
+/**
+ * [[ASK]]<需要用户确认的具体内容>
+ * 到下一个 [[ 标记或文本结尾为止，可以多行。
+ * 这是 WAITING 的补充：WAITING 说「在等什么」，ASK 说「具体要判断什么」。
+ */
+const ASK_RE = /\[\[\s*ASK\s*\]\]([\s\S]*?)(?=\[\[|$)/i
 const DONE_RE = /\[\[\s*DONE\s*\]\]/i
 
 /** 单行标记，允许 [] 内换不同写法：[[WAITING]] 阶段3 技术方案 */
@@ -17,9 +23,17 @@ const MARKER_LINE_RE = /^[\s>*_`-]*\[\[\s*(WAITING|DONE)\s*\]\][\s:：\-—]*([^
  * @returns {{state: 'waiting'|'done'|'running', label: string, cleaned: string}}
  */
 export function parseGate(text) {
-  const raw = text ?? ''
+  let raw = text ?? ''
   let state = 'running'
   let label = ''
+  let ask = ''
+
+  // 先把 ASK 段摘出来——它可能包含多行，不参与标记行扫描
+  const askMatch = raw.match(ASK_RE)
+  if (askMatch) {
+    ask = stripDecorations(askMatch[1]).trim()
+    raw = raw.replace(askMatch[0], '').trim()
+  }
 
   let m
   const lines = []
@@ -42,7 +56,15 @@ export function parseGate(text) {
   // 兼容 **[[DONE]]** 这类包裹：去掉标记行残留的 markdown 符号
   label = label.replace(/^[*_`\s]+/, '').replace(/[*_`\s]+$/, '')
 
-  return { state, label, cleaned }
+  return { state, label, ask, cleaned }
+}
+
+/** 去掉标记残留的 markdown 包裹符号 */
+function stripDecorations(text) {
+  return (text ?? '')
+    .replace(/^[*_`\s]+/, '')
+    .replace(/[*_`\s]+$/, '')
+    .replace(/^[-—]{2,}\s*/gm, '')
 }
 
 /** 给 agent 的任务前缀：定义它在群里如何提问和停下 */
@@ -68,8 +90,20 @@ export function gateInstructions({ botName, approval }) {
     '  （「当前XX阶段中，已进行X分钟」「XX阶段已开始 / 已完成」）。',
     '- 但**回合结束时你那一段答复会原样发到群里**——那是给用户看的结论。',
     '  所以那一段要像发给人看的消息：说结论、说发现了什么、需要他决定什么。',
-    '- 需要拍板时，务必把每个选项和它的代价写全（A/B/C 分别是什么、你推荐哪个），',
-    '  不要只写「等你确认这两项」——群里看不到你前面想过什么，只看到这一段。',
+    '',
+    '【需要用户拍板时：用 [[ASK]] 写清要判断什么】',
+    '- [[WAITING]] 那行只写一句「在等什么」，它会作为状态提示。',
+    '- 具体要让用户判断的内容，另起一行用 [[ASK]] 标记，后面跟正文（可多行）：',
+    '    [[WAITING]]等你定这两项',
+    '    [[ASK]]',
+    '    1）系统大字体没生效（中）',
+    '    - A（推荐）记为已知偏差，本需求不改',
+    '    - B 本需求内就支持',
+    '    2）启动图淡出约 1 帧重叠（低）',
+    '    - C（推荐）接受',
+    '    - D 延后弹窗展示',
+    '- [[ASK]] 的内容会原样出现在群里，所以每个选项和代价都要写全，标出推荐哪个。',
+    '- 不要只写「等你确认这两项」——群里看不到你前面想过什么，只看到 ASK 这段。',
     '- 不要写「我起了几个 agent」「我正在读什么文件」这类过程描述，没人看。',
     '',
     '【先回话，再干活】',
