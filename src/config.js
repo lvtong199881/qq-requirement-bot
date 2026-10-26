@@ -174,6 +174,17 @@ export function loadConfig(configPath) {
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
+    // 群消息文案覆盖：{ ack: '...', heartbeat: '...' }，缺的走内置默认
+    messageTemplates:
+      raw.messageTemplates &&
+      typeof raw.messageTemplates === 'object' &&
+      !Array.isArray(raw.messageTemplates)
+        ? Object.fromEntries(
+            Object.entries(raw.messageTemplates)
+              .filter(([, v]) => typeof v === 'string' && v.trim())
+              .map(([k, v]) => [k, v]),
+          )
+        : {},
     // 超级管理员：不受群角色与白名单限制，任何群都能驱动 bot。
     // 只能改配置文件——面板不提供编辑入口，避免把自己锁出去。
     superAdmin: (Array.isArray(raw.superAdmin) ? raw.superAdmin : raw.superAdmin ? [raw.superAdmin] : []).map(

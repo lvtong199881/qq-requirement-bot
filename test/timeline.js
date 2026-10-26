@@ -1,4 +1,5 @@
-import { formatDuration, runningText } from '../src/format.js'
+import { formatDuration } from '../src/format.js'
+import { renderMessage } from '../src/messages.js'
 
 /** 心跳/回执的话术边界：曾经把「阶段刚开始」播成「已进行 0 分钟」 */
 
@@ -21,11 +22,27 @@ eq('跨级省略（1h30s）', formatDuration(3630 * 1000), '1小时30秒')
 eq('不足 1 秒', formatDuration(400), '不到1秒')
 eq('null → null', formatDuration(null), null)
 
-console.log('\n== runningText ==')
-eq('开始时间未知时省略时长', runningText('开发', 0), '当前开发阶段进行中。')
-eq('刚起步显示秒', runningText('开发', Date.now() - 30_000), '当前开发阶段中，已进行 30秒。')
-eq('分秒组合', runningText('开发', Date.now() - 90_000), '当前开发阶段中，已进行 1分钟30秒。')
-eq('时分秒组合', runningText('开发', Date.now() - 3671_000), '当前开发阶段中，已进行 1小时1分钟11秒。')
+console.log('\n== 回执文案（模板渲染）==')
+eq(
+  '刚起步显示秒',
+  renderMessage('ack', { stage: '开发', duration: formatDuration(30_000) }),
+  '当前开发阶段中，已进行 30秒。',
+)
+eq(
+  '分秒组合',
+  renderMessage('ack', { stage: '开发', duration: formatDuration(90_000) }),
+  '当前开发阶段中，已进行 1分钟30秒。',
+)
+eq(
+  '时分秒组合',
+  renderMessage('ack', { stage: '开发', duration: formatDuration(3671_000) }),
+  '当前开发阶段中，已进行 1小时1分钟11秒。',
+)
+eq(
+  '心跳用另一套模板',
+  renderMessage('heartbeat', { stage: '开发', duration: formatDuration(3_600_000) }),
+  '当前开发阶段中，已进行 1小时。',
+)
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

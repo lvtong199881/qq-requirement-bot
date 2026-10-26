@@ -7,7 +7,8 @@
  *   · 这里的函数可以直接单测，不需要起 bridge
  */
 import { stageTable, guessStageStart } from './artifacts.js'
-import { runningText } from './format.js'
+import { formatDuration } from './format.js'
+import { renderMessage } from './messages.js'
 
 /**
  * 当前进行中阶段的起始时间。
@@ -30,7 +31,7 @@ export function resolveStageStart(st, runningName) {
  * @returns {{text: string, reqIdToBind: string|null, idle: boolean}}
  *   文本 + 建议写回的 reqId + 是否是「什么都没开始」的空状态
  */
-export function ackFor(st, intent) {
+export function ackFor(st, intent, templates) {
   const table = stageTable(st.projectDir, st.reqId ?? undefined)
   const { stages } = table
   const reqIdToBind = st.reqId ? null : (table.reqId ?? null)
@@ -38,8 +39,10 @@ export function ackFor(st, intent) {
 
   // 进行中：不论用户说了什么，都只回一句状态（这是他要知道的全部）
   if (running) {
+    const start = resolveStageStart({ ...st, reqId: st.reqId ?? table.reqId }, running.name)
+    const duration = start ? formatDuration(Date.now() - start) : ''
     return {
-      text: runningText(running.name, resolveStageStart({ ...st, reqId: st.reqId ?? table.reqId }, running.name)),
+      text: renderMessage('ack', { stage: running.name, duration }, templates),
       reqIdToBind,
       idle: false,
     }
@@ -47,16 +50,19 @@ export function ackFor(st, intent) {
 
   // 没有进行中阶段：按意图回执，避免同一句话重复出现
   const lastDone = [...stages].reverse().find((x) => x.status.includes('已完成'))
-  const tag = lastDone ? `${lastDone.name}阶段已完成，` : ''
-  const byIntent = {
-    approve: `${tag}收到批准，正在启动下一阶段。`,
-    reject: `${tag}收到修改意见，正在转给对应阶段处理。`,
-    continue: `${tag}正在继续。`,
-    new_req: '收到，开始新需求。',
+  const vars = { stageDone: lastDone?.name ?? '', target: st.reqId ? `需求 ${st.reqId}` : '当前需求' }
+
+  if (!lastDone) {
+    // 完全没有阶段的空群
+    return { text: renderMessage('ackIdle', vars, templates), reqIdToBind, idle: stages.length === 0 }
   }
-  const text = byIntent[intent] ?? (lastDone ? `${tag}等你确认。` : '当前没有进行中的阶段。')
-  // idle = 这个群连一个阶段都还没有，可以补一句怎么用
-  return { text, reqIdToBind, idle: stages.length === 0 }
+
+  const key = { approve: 'ackApprove', reject: 'ackReject', continue: 'ackContinue', new_req: 'ackNewReq' }[intent]
+  return {
+    text: renderMessage(key ?? 'ackPending', vars, templates),
+    reqIdToBind,
+    idle: false,
+  }
 }
 
 /**
@@ -65,7 +71,7 @@ export function ackFor(st, intent) {
  * 阶段真值全部来自编排记录的「阶段进度」表，不看 agent 说了什么。
  * @returns {{messages: string[], running: string|null, finishedNow: string[], patch: object}}
  */
-export function planStageAnnounce(st) {
+export function planStageAnnounce(st, templates) {
   const table = stageTable(st.projectDir, st.reqId ?? undefined)
   const { stages } = table
   const reqIdForTime = st.reqId ?? table.reqId
@@ -104,9 +110,13 @@ export function planStageAnnounce(st) {
   // 阶段推进合成一句话。分开报会出现「验收阶段进行中」后面紧跟
   // 「测试阶段已完成」这种看似矛盾的两条（真实踩过）。
   const done = completedNow.join('、')
-  if (done && startedNow) messages.push(`${done}阶段已完成，${startedNow}阶段已开始。`)
-  else if (done) messages.push(`${done}阶段已完成。`)
-  else if (startedNow) messages.push(`${startedNow}阶段已开始。`)
+  if (done && startedNow) {
+    messages.push(renderMessage('stageAdvance', { stageDone: done, stageStarted: startedNow }, templates))
+  } else if (done) {
+    messages.push(renderMessage('stageDone', { stage: done }, templates))
+  } else if (startedNow) {
+    messages.push(renderMessage('stageStart', { stage: startedNow }, templates))
+  }
 
   return { messages, running, finishedNow, patch, completedNow, startedNow }
 }

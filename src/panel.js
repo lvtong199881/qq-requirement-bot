@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from './instances.js'
+import { MESSAGE_TEMPLATES, MESSAGE_VARS, validateAllMessages } from './messages.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const STATIC = join(HERE, '..', 'static')
@@ -123,6 +124,18 @@ function readSettings(repoRoot) {
       adminUsers: raw.adminUsers ?? [],
       // 超级管理员只读展示，面板不提供编辑（避免把自己锁出去）
       superAdmin: raw.superAdmin ?? [],
+      // 群消息文案：每条带默认值、当前值、是否自定义
+      messages: Object.entries(MESSAGE_TEMPLATES).map(([key, def]) => ({
+        key,
+        group: def.group,
+        label: def.label,
+        desc: def.desc ?? '',
+        vars: def.vars,
+        defaultTemplate: def.template,
+        template: raw.messageTemplates?.[key]?.trim() ? raw.messageTemplates[key] : def.template,
+        custom: !!(raw.messageTemplates?.[key] && raw.messageTemplates[key].trim()),
+      })),
+      messageVars: MESSAGE_VARS,
     }
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
@@ -142,6 +155,15 @@ function writeSettings(repoRoot, patch) {
     return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
   }
   if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
+  if (patch.messageTemplates !== undefined) {
+    // 空 = 全部回默认；某条等于默认值也不写入，保持配置干净
+    const clean = {}
+    for (const [k, v] of Object.entries(patch.messageTemplates || {})) {
+      if (typeof v === 'string' && v.trim() && v !== MESSAGE_TEMPLATES[k]?.template) clean[k] = v
+    }
+    if (Object.keys(clean).length) raw.messageTemplates = clean
+    else delete raw.messageTemplates
+  }
   try {
     writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
     return { ok: true }
@@ -218,23 +240,33 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         if (body.superAdmin !== undefined) {
           return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
         }
-        // 不带 adminUsers 就不动它，别把白名单误清空
-        if (body.adminUsers === undefined) {
-          return json(res, 400, { ok: false, error: '缺少 adminUsers 字段' })
+        if (body.adminUsers === undefined && body.messageTemplates === undefined) {
+          return json(res, 400, {
+            ok: false,
+            error: '没有要保存的字段（adminUsers / messageTemplates）',
+          })
         }
 
-        const parsed = parseAdminUsers(body.adminUsers)
-        if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
+        const patch = {}
 
-        const written = writeSettings(repoRoot, { adminUsers: parsed.list })
+        if (body.adminUsers !== undefined) {
+          const parsed = parseAdminUsers(body.adminUsers)
+          if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
+          patch.adminUsers = parsed.list
+        }
+
+        if (body.messageTemplates !== undefined) {
+          const v = validateAllMessages(body.messageTemplates)
+          if (!v.ok) return json(res, 400, { ok: false, error: v.error })
+          patch.messageTemplates = body.messageTemplates
+        }
+
+        const written = writeSettings(repoRoot, patch)
         if (!written.ok) return json(res, 500, written)
 
-        const pushed = await pushSettings(registry.list(), { adminUsers: parsed.list }, token)
-        return json(res, 200, {
-          ok: true,
-          adminUsers: parsed.list,
-          hotReloaded: pushed,
-        })
+        const pushed = await pushSettings(registry.list(), patch, token)
+        const fresh = readSettings(repoRoot)
+        return json(res, 200, { ok: true, ...fresh, hotReloaded: pushed })
       }
 
       // 操作：终止 / 重启

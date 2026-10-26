@@ -181,6 +181,29 @@
   .msg{font-size:12px}
   .msg.err{color:#cf222e}
   .msg.ok{color:var(--green)}
+  /* 群消息文案 */
+  .msg-group{margin-bottom:18px}
+  .msg-group > .gt{font-size:11.5px;font-weight:600;color:var(--dim2);letter-spacing:.04em;
+    margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .msg-row{display:grid;grid-template-columns:150px 1fr;gap:12px;align-items:start;
+    padding:9px 0;border-bottom:1px solid var(--hairline)}
+  .msg-row:last-child{border-bottom:none}
+  .msg-row .ml{font-size:12px;color:var(--text);line-height:1.5;padding-top:6px}
+  .msg-row .ml .custom-dot{display:inline-block;width:5px;height:5px;border-radius:50%;
+    background:#0969da;margin-right:5px;vertical-align:middle}
+  .msg-row .mr{min-width:0}
+  .msg-row textarea{font:12px/1.6 ui-monospace,Menlo,monospace;width:100%;background:var(--surface);
+    border:1px solid var(--line);border-radius:7px;padding:7px 9px;color:var(--text);
+    resize:vertical;min-height:48px;white-space:pre;overflow:auto}
+  .msg-row textarea:focus{outline:none;border-color:#9cc0e8}
+  .msg-row textarea.invalid{border-color:#e5928f}
+  .msg-row .mfoot{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:5px}
+  .msg-row .mfoot .vb{background:var(--surface3);border:none;border-radius:5px;padding:1px 6px;
+    font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:var(--dim);cursor:pointer}
+  .msg-row .mfoot .vb:hover{background:#e3e8ee;color:var(--text)}
+  .msg-row .mfoot .rb{margin-left:auto;background:none;border:none;color:var(--dim2);font-size:10.5px;
+    cursor:pointer;padding:1px 4px;font-family:inherit}
+  .msg-row .mfoot .rb:hover{color:var(--text);text-decoration:underline}
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
@@ -372,6 +395,46 @@
         </div>
 
         <div class="card">
+          <h2>群消息文案</h2>
+          <p class="desc">
+            bot 在群里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
+            留空保存 = 该条恢复默认；带 <span style="color:#0969da">●</span> 的表示已自定义。
+          </p>
+
+          <div class="msg-group" v-for="g in messageGroups" :key="g.name">
+            <div class="gt">{{ g.name }}</div>
+            <div class="msg-row" v-for="m in g.items" :key="m.key">
+              <div class="ml">
+                <span v-if="m.custom" class="custom-dot"></span>{{ m.label }}
+              </div>
+              <div class="mr">
+                <textarea :class="{ invalid: !!messageErrors[m.key] }"
+                          :data-msg="m.key" v-model="m.template" spellcheck="false"
+                          @input="messageErrors[m.key] = ''; messagesOk = ''"></textarea>
+                <div class="mfoot">
+                  <button class="vb" v-for="v in m.vars" :key="v"
+                          @click="insertMessageVar(m, v)">{{ '{' + '{' + v + '}' + '}' }}</button>
+                  <span v-if="!m.vars.length" style="font-size:10.5px;color:var(--dim2)">无变量</span>
+                  <button class="rb" @click="resetMessage(m)">恢复默认</button>
+                </div>
+                <div v-if="messageErrors[m.key]" class="msg err" style="margin-top:4px;font-size:11px">
+                  {{ messageErrors[m.key] }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:14px">
+            <button class="menu-btn btn-primary" @click="saveMessages()" :disabled="messagesSaving">
+              {{ messagesSaving ? '保存中…' : '保存文案' }}
+            </button>
+            <button class="menu-btn" @click="resetAllMessages()" :disabled="messagesSaving">全部恢复默认</button>
+            <span v-if="messagesOk" class="msg ok">{{ messagesOk }}</span>
+            <span v-if="messageErrors._" class="msg err">{{ messageErrors._ }}</span>
+          </div>
+        </div>
+
+        <div class="card">
           <h2>超级管理员</h2>
           <p class="desc">
             不受群角色与上面的白名单限制，任何群都能驱动 bot。<br>
@@ -515,6 +578,20 @@ createApp({
     const adminInput = ref('')
     const savedAdminUsers = ref([])
     const superAdminUsers = ref([])
+    const messages = ref([])
+    const messageErrors = ref({})
+    const messagesOk = ref('')
+    const messagesSaving = ref(false)
+
+    /** 按分组归拢，UI 上分块显示 */
+    const messageGroups = computed(() => {
+      const map = new Map()
+      for (const m of messages.value) {
+        if (!map.has(m.group)) map.set(m.group, { name: m.group, items: [] })
+        map.get(m.group).items.push(m)
+      }
+      return [...map.values()]
+    })
     const settingsError = ref('')
     const settingsOk = ref('')
     const settingsSaving = ref(false)
@@ -593,6 +670,8 @@ createApp({
         savedAdminUsers.value = d.adminUsers || []
         superAdminUsers.value = d.superAdmin || []
         adminInput.value = (d.adminUsers || []).join(', ')
+        messages.value = (d.messages || []).map((m) => ({ ...m }))
+        messageErrors.value = {}
       } catch (e) {
         settingsError.value = '读取失败：' + e.message
       }
@@ -624,6 +703,68 @@ createApp({
         settingsError.value = '保存失败：' + e.message
       } finally {
         settingsSaving.value = false
+      }
+    }
+
+    function insertMessageVar(msg, name) {
+      const token = `{{${name}}}`
+      const el = document.querySelector(`textarea[data-msg="${msg.key}"]`)
+      if (!el) {
+        msg.template += token
+        return
+      }
+      const start = el.selectionStart ?? msg.template.length
+      const end = el.selectionEnd ?? start
+      msg.template = msg.template.slice(0, start) + token + msg.template.slice(end)
+      requestAnimationFrame(() => {
+        el.focus()
+        el.selectionStart = el.selectionEnd = start + token.length
+      })
+    }
+
+    function resetMessage(msg) {
+      msg.template = msg.defaultTemplate
+      messageErrors.value[msg.key] = ''
+      messagesOk.value = ''
+    }
+
+    function resetAllMessages() {
+      for (const m of messages.value) m.template = m.defaultTemplate
+      messageErrors.value = {}
+      messagesOk.value = '已全部填入默认文案，点保存生效'
+    }
+
+    async function saveMessages() {
+      messageErrors.value = {}
+      messagesOk.value = ''
+      messagesSaving.value = true
+      try {
+        // 只提交和默认不同的；等于默认的视为「回默认」
+        const payload = {}
+        for (const m of messages.value) {
+          const t = (m.template || '').trim()
+          if (t && t !== m.defaultTemplate) payload[m.key] = m.template
+        }
+        const r = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ messageTemplates: payload }),
+        })
+        const d = await r.json()
+        if (!d.ok) {
+          messageErrors.value = { _: d.error || '保存失败' }
+          return
+        }
+        messages.value = (d.messages || []).map((m) => ({ ...m }))
+        const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
+        const n = messages.value.filter((m) => m.custom).length
+        messagesOk.value = n
+          ? `已保存 ${n} 条自定义${reloaded ? `，${reloaded} 个实例已生效` : ''}`
+          : `已全部回到默认${reloaded ? `，${reloaded} 个实例已生效` : ''}`
+      } catch (e) {
+        messageErrors.value = { _: '保存失败：' + e.message }
+      } finally {
+        messagesSaving.value = false
       }
     }
 
@@ -741,6 +882,8 @@ createApp({
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
+      messages, messageGroups, messageErrors, messagesOk, messagesSaving,
+      insertMessageVar, resetMessage, resetAllMessages, saveMessages,
       switchView, loadSettings, saveSettings,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
     }

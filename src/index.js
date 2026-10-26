@@ -10,9 +10,10 @@ import { loadConfig, resolveModelEnv } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
 import { parseGate, gateInstructions } from './protocol.js'
-import { sanitize, RateLimiter, sleep, runningText, formatDuration } from './format.js'
+import { sanitize, RateLimiter, sleep, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
 import { resolveStageStart, ackFor, planStageAnnounce } from './stage.js'
+import { renderMessage } from './messages.js'
 import { InstanceRegistry, isAlive } from './instances.js'
 import { createBridgeServer } from './server.js'
 import { join as pathJoin } from 'node:path'
@@ -161,11 +162,11 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
 
 /** 消息 1 的发送壳：文案来自 stage.js 的 ackFor（纯函数，可单测） */
 async function sendAck(groupId, st, replyTo, intent) {
-  const ack = ackFor(st, intent)
+  const ack = ackFor(st, intent, config.messageTemplates)
 
   // 回执说「当前验收阶段中」的同时，把阶段状态也推进——否则这一回合结束时
   // planStageAnnounce 会补报一句「测试阶段已完成」，看起来像和回执打架。
-  const planned = planStageAnnounce(st)
+  const planned = planStageAnnounce(st, config.messageTemplates)
   const patch = { ...planned.patch }
   if (ack.reqIdToBind) patch.reqId = ack.reqIdToBind
 
@@ -229,7 +230,15 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     const running = stages.find((x) => x.status.includes('进行中'))
     if (!running) return
     lastActivityAt = Date.now()
-    sendPlain(groupId, runningText(running.name, resolveStageStart(st, running.name))).catch(() => {})
+    const start = resolveStageStart(st, running.name)
+    sendPlain(
+      groupId,
+      renderMessage(
+        'heartbeat',
+        { stage: running.name, duration: start ? formatDuration(Date.now() - start) : '' },
+        config.messageTemplates,
+      ),
+    ).catch(() => {})
   }, 60_000)
 
   const persist = (patch) => {
@@ -310,13 +319,15 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     }
 
     // 消息 4：异常播报（固定格式，方便用户/管理员一眼定位）
-    const stageName = (planStageAnnounce({ ...st, reqId: st.reqId }).running) ?? st.stage ?? '当前'
+    const stageName = (planStageAnnounce({ ...st, reqId: st.reqId }, config.messageTemplates).running) ?? st.stage ?? '当前'
     const abnormal = (reason) => {
       const plain = String(reason ?? '（无详细信息）')
       log(`[${groupId}] 异常播报：${plain.replace(/\n/g, ' / ').slice(0, 200)}`)
-      return sendPlain(groupId, `${stageName}阶段异常，请联系 bot 管理员，异常原因如下：\n${plain}`, {
-        replyTo,
-      })
+      return sendPlain(
+        groupId,
+        renderMessage('abnormal', { stage: stageName, reason: plain }, config.messageTemplates),
+        { replyTo },
+      )
     }
 
     if (result.errorSummary) {
@@ -421,12 +432,14 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
         finalAnswer.length > MAX
           ? `${finalAnswer.slice(0, MAX)}\n……（还有 ${finalAnswer.length - MAX} 字，完整内容见需求文档）`
           : finalAnswer
-      lines.push(`需要决策：\n${body}`)
+      lines.push(renderMessage('decision', { content: body }, config.messageTemplates))
     } else if (!lines.length && pendingNote) {
       // agent 没给正文时才用 waitingLabel 兜底
       lines.push(pendingNote)
     }
-    if (!lines.length && gate.state === 'done') lines.push('这个需求跑完了。要新需求直接 @我 说。')
+    if (!lines.length && gate.state === 'done') {
+      lines.push(renderMessage('done', {}, config.messageTemplates))
+    }
 
     const nextStatus =
       gate.state === 'waiting' ? STATES.WAITING : gate.state === 'done' ? STATES.IDLE : STATES.WAITING
@@ -823,7 +836,7 @@ bot.on('message', async (frame) => {
     const ack = await sendAck(groupId, st, replyTo, INTENT.CONTENT)
     // 只有连一个阶段都没有的全新群才补引导
     if (ack.idle) {
-      await sendPlain(groupId, '直接把需求说给我就行，比如「首页加个欢迎弹窗，手动批准」。', { replyTo })
+      await sendPlain(groupId, renderMessage('idleHint', {}, config.messageTemplates), { replyTo })
     }
     return
   }
@@ -839,9 +852,7 @@ bot.on('message', async (frame) => {
     store.save(groupId, { ...st, reqId: st.reqId, pendingReject: st.pendingReject })
     await sendPlain(
       groupId,
-      targetStage
-        ? `收到，打回${targetStage}阶段，请提供修改意见。\n（回「取消」可以撤销打回）`
-        : '收到，打回当前阶段，请提供修改意见。',
+      renderMessage('rejectAsk', { stage: targetStage ?? '当前' }, config.messageTemplates),
       { replyTo },
     )
     return
@@ -1062,6 +1073,13 @@ function startApi() {
     restartGroup,
     // 面板保存设置后热更新，不用重启 bridge
     applySettings: (patch) => {
+      if (patch?.messageTemplates !== undefined) {
+        config.messageTemplates = Object.fromEntries(
+          Object.entries(patch.messageTemplates).filter(([, v]) => typeof v === 'string' && v.trim()),
+        )
+        const n = Object.keys(config.messageTemplates).length
+        runtime.info(n ? `[面板] 群消息文案已更新（${n} 条自定义）` : '[面板] 群消息文案已全部回到默认')
+      }
       if (Array.isArray(patch?.adminUsers)) {
         config.adminUsers = patch.adminUsers.map((x) => String(x))
         runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)

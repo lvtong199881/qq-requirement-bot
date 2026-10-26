@@ -122,9 +122,3 @@ export function formatDuration(ms) {
   if (s) out += `${s}秒`
   return out
 }
-
-/** 「当前XX阶段中，已进行 1小时2分钟30秒」——开始时间未知时省略时长 */
-export function runningText(stageName, fromTs) {
-  if (!fromTs) return `当前${stageName}阶段进行中。`
-  return `当前${stageName}阶段中，已进行 ${formatDuration(Date.now() - fromTs)}。`
-}
