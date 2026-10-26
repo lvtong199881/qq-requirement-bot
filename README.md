@@ -86,7 +86,7 @@ node src/index.js
 
   "heartbeat": {
     "enabled": true,                               // 静默心跳开关
-    "idleMinutes": 10                              // 静默多久报一次「正在XX阶段，已等待X分钟」
+    "idleMinutes": 5                                // 静默多久报一次「正在XX阶段，已等待X分钟」
   },
 
   "upload": { "enabled": true, "maxFiles": 8, "maxFileMB": 20 },
@@ -196,19 +196,28 @@ agent 的工作过程不进群。**唯一例外**：回合以「等用户拍板�
 ./start-panel.sh 8899         # 换端口
 ```
 
-左侧菜单 + 右侧内容区。菜单两项：
+![需求大盘](docs/images/console-board.png)
 
-**需求大盘**（默认）——每 3 秒轮询，列表展示 PID、需求名、QQ 群名、发起人、
-当前阶段状态徽章，每行末尾 `⋯` 菜单提供 **终止 / 重启 / 详细信息**。
+左侧菜单三项：**需求大盘** / **实例** / **设置**。
+
+**需求大盘**（默认）——每 3 秒轮询，把各实例的群展平成一张表：PID、需求名、
+QQ 群名、发起人、当前阶段状态徽章，每行末尾 `⋯` 菜单提供 **终止 / 重启 / 详细信息**。
 切到别的菜单会**自动停掉轮询**，切回来自动恢复。
 
-**设置** —— 两项：
+**实例**——每个 bridge 进程一张卡：PID、QQ 昵称与账号、模型、端口、启动时间、
+运行时长、内存（RSS / heap）、OneBot 连接状态、profile、群策略、心跳间隔、
+回合超时、服务群数、项目目录与工作目录。卡片左上角状态点变红表示该实例不可达。
+
+**设置**——三块：
+
+![设置](docs/images/console-settings.png)
 
 - **指令白名单**（可编辑）：填 QQ 号，中英文逗号均可分隔，保存时统一解析、校验、
   去重后写回 `bot.config.json`，并通知所有实例热更新（不用重启）。空值/多个逗号/
   换行都容忍；非法值（非数字、位数不对）会明确报错并拒绝保存。
-- **群消息文案**（可编辑）：bot 在群里说的话，共 17 条，按「回执 / 阶段播报 /
-  心跳 / 异常 / 交互提示」分组。每条独立编辑、独立恢复默认，只列自己可用的变量：
+- **群消息文案**（可编辑）：bot 在群里说的话，共 **40 条**，按「回执（消息 1）/
+  阶段播报（消息 2）/ 其他 / 交互提示 / 指令与操作 / 系统通知」六组归类。
+  每条独立编辑、独立恢复默认，只列自己可用的变量：
   `{{stage}}` `{{duration}}` `{{stageDone}}` `{{stageStarted}}` `{{reason}}`
   `{{content}}` `{{artifacts}}` `{{target}}` 等。校验拦：空模板、未知占位符、
   超过 2000 字符。留空保存 = 该条回默认。
@@ -225,7 +234,8 @@ agent 的工作过程不进群。**唯一例外**：回合以「等用户拍板�
 ```
 bridge（每个实例）
 ├── .instances/<pid>.json   启动时注册，退出时删除——面板靠它发现实例
-└── 127.0.0.1:7878          /api/status、/api/logs、/api/groups/:id/{stop,restart}
+└── 127.0.0.1:7878          /api/status、/api/logs、/api/ping、/api/settings、
+                            /api/groups/:id/{stop,restart}
 
 panel（一个进程）
 ├── 扫描 .instances/        发现所有实例
@@ -240,10 +250,14 @@ panel（一个进程）
 | 接口 | 说明 |
 | --- | --- |
 | `GET /api/status` | 本实例完整状态（bridge） |
-| `GET /api/logs?n=200` | 最近日志（bridge） |
-| `POST /api/groups/:id/stop` | 终止该群当前任务 |
-| `POST /api/groups/:id/restart` | 重启该群任务（先掐断，再用「继续」骨架重跑） |
+| `GET /api/logs?n=100` | 最近日志，`n` 默认 100、上限 1000（bridge） |
+| `GET /api/ping` | 存活探测，返回 pid（bridge） |
+| `POST /api/settings` | 面板推配置过来时热更新本实例（bridge） |
+| `POST /api/groups/:id/stop` | 终止该群当前任务（bridge） |
+| `POST /api/groups/:id/restart` | 重启该群任务，先掐断再用「继续」骨架重跑（bridge） |
 | `GET /api/instances` | 聚合所有实例（panel） |
+| `GET /api/settings` | 读取白名单与群消息文案（panel） |
+| `PUT /api/settings` | 保存白名单 / 文案并热更新所有实例（panel） |
 
 写操作需要 `panel.token` 非空时携带 `x-panel-token`；留空则只依赖「仅监听 127.0.0.1」。
 
@@ -276,7 +290,7 @@ node test/full.js             # 全链路：注入群消息 → 跑 dsh → 收�
 | 启动了但群里没反应 | `bot.qq` 和 `frame.self_id` 是否一致；消息是否真的 @ 了 bot |
 | `连不上 ws://…` | NapCat 是否开了正向 WS；端口是否对；token 是否要填 |
 | `MISSING_CREDENTIAL` | `export DEEPSEEK_API_KEY=...`，或在 DSH Web GUI 的 Models 页保存 |
-| 回合跑完群里只有一句「这一轮结束了」 | agent 没输出 `[[WAITING]]`/`[[DONE]]`，看 `--verbose` 日志 |
+| 回合跑完群里只有一句「这个需求跑完了」 | agent 没输出 `[[WAITING]]`/`[[DONE]]`，看 `--verbose` 日志 |
 | 回复被截断 | 调大 `limits.chunkChars`，或调 `maxChunksPerTurn` |
 | 群文件没收到 | NapCat 的 `upload_group_file` 需要 bot 是群管理或群主 |
 
