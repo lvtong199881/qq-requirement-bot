@@ -202,19 +202,38 @@ export function startPanel({ repoRoot, port = 7879, token }) {
       if (path === '/' || path === '/console') return serveStatic(res, 'console.html')
       if (path === '/vue.js') return serveStatic(res, 'vue.global.prod.js')
 
-      // 聚合所有实例 —— 只拉精简快照，需求大盘每 3 秒轮询一次
-      if (path === '/api/instances') {
+      // 需求大盘：按「群」维度摊平，前端拿到就能直接画表格
+      if (path === '/api/board') {
         const list = registry.list({ cleanup: true })
         const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
-        return json(res, 200, { instances: statuses, at: Date.now() })
+        const rows = []
+        let alerts = 0
+        for (const s of statuses) {
+          if (s.unreachable || (s.onebot && s.onebot.connected === false)) alerts += 1
+          for (const g of s.groups ?? []) {
+            rows.push({
+              pid: s.instance?.pid ?? null,
+              unreachable: s.unreachable === true,
+              error: s.error ?? null,
+              ...g,
+            })
+          }
+        }
+        return json(res, 200, { rows, alerts, at: Date.now() })
       }
 
-      // 单个实例的完整状态 —— 点「详细信息」时才拉
-      const detailMatch = path.match(/^\/api\/instances\/(\d+)$/)
-      if (detailMatch && req.method === 'GET') {
-        const inst = registry.list().find((x) => String(x.pid) === detailMatch[1])
-        if (!inst) return json(res, 404, { ok: false, error: '这个实例已经不在运行了' })
-        return json(res, 200, await fetchStatus(inst, '/api/status'))
+      // 实例页：按「进程」维度。
+      // 带 ?pid= 时返回该实例的完整状态，给「详细信息」弹窗用。
+      if (path === '/api/instances') {
+        const list = registry.list({ cleanup: true })
+        const pid = url.searchParams.get('pid')
+        if (pid) {
+          const inst = list.find((x) => String(x.pid) === String(pid))
+          if (!inst) return json(res, 404, { ok: false, error: '这个实例已经不在运行了' })
+          return json(res, 200, await fetchStatus(inst, '/api/status'))
+        }
+        const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
+        return json(res, 200, { instances: statuses, at: Date.now() })
       }
 
       // 某实例的日志

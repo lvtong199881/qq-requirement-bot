@@ -295,34 +295,34 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in groupRows" :key="row.key">
+            <tr v-for="row in groupRows" :key="row.pid + ':' + row.groupId">
               <td>
-                <span class="pid-cell" :title="row.inst.unreachable ? '实例不可达' : ''">
-                  <span class="dot" :style="{background: row.inst.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
-                  {{ row.inst.instance?.pid ?? '?' }}
+                <span class="pid-cell" :title="row.unreachable ? '实例不可达' : ''">
+                  <span class="dot" :style="{background: row.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
+                  {{ row.pid ?? '?' }}
                 </span>
               </td>
               <td>
-                <div class="req clamp2" :title="row.g.reqId || '（未绑定需求）'">{{ row.g.reqId || '（未绑定需求）' }}</div>
+                <div class="req clamp2" :title="row.reqId || '（未绑定需求）'">{{ row.reqId || '（未绑定需求）' }}</div>
               </td>
               <td>
-                <div class="clamp2" :title="row.g.groupName || '未知群'">{{ row.g.groupName || '未知群' }}</div>
+                <div class="clamp2" :title="row.groupName || '未知群'">{{ row.groupName || '未知群' }}</div>
               </td>
               <td class="who">
-                <div class="clamp2" :title="row.g.initiator?.nickname || '—'">{{ row.g.initiator?.nickname || '—' }}</div>
+                <div class="clamp2" :title="row.initiator?.nickname || '—'">{{ row.initiator?.nickname || '—' }}</div>
               </td>
               <td>
-                <span class="badge" :class="badgeOf(row.g).cls">
+                <span class="badge" :class="badgeOf(row).cls">
                   <span class="dot"></span>
-                  <span class="bname">{{ badgeOf(row.g).name }}</span>
-                  <template v-if="badgeOf(row.g).dur">
+                  <span class="bname">{{ badgeOf(row).name }}</span>
+                  <template v-if="badgeOf(row).dur">
                     <span class="bsep">·</span>
-                    <span class="bdur">{{ badgeOf(row.g).dur }}</span>
+                    <span class="bdur">{{ badgeOf(row).dur }}</span>
                   </template>
                 </span>
               </td>
               <td style="text-align:right">
-                <button class="menu-btn" @click.stop="openMenu($event, row.inst, row.g)">⋯</button>
+                <button class="menu-btn" @click.stop="openMenu($event, row)">⋯</button>
               </td>
             </tr>
           </tbody>
@@ -472,10 +472,10 @@
                : '当前回合会先被中断，然后用「继续」重新起一轮。' }}
           </p>
           <dl class="kv" style="margin:0">
-            <dt>需求</dt><dd>{{ confirmModal.group.reqId || '（未绑定）' }}</dd>
-            <dt>QQ 群</dt><dd>{{ confirmModal.group.groupName || confirmModal.group.groupId }}</dd>
-            <template v-if="confirmModal.group.activeTurn">
-              <dt>当前回合</dt><dd>已运行 {{ fmtDur(confirmModal.group.activeTurn.elapsedMs) }}</dd>
+            <dt>需求</dt><dd>{{ confirmModal.row.reqId || '（未绑定）' }}</dd>
+            <dt>QQ 群</dt><dd>{{ confirmModal.row.groupName || confirmModal.row.groupId }}</dd>
+            <template v-if="confirmModal.row.activeTurn">
+              <dt>当前回合</dt><dd>已运行 {{ fmtDur(confirmModal.row.activeTurn.elapsedMs) }}</dd>
             </template>
           </dl>
           <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px">
@@ -568,6 +568,7 @@ createApp({
       }
     })
     const instances = ref([])
+    const board = ref({ rows: [], alerts: 0 })
     const loading = ref(false)
     const menu = ref(null)
     const modal = ref(null)
@@ -601,37 +602,39 @@ createApp({
     const instanceCount = computed(() => instances.value.length)
     const groupCount = computed(() =>
       instances.value.reduce((n, i) => n + (i.groups?.length || 0), 0))
-    const alertCount = computed(() =>
-      instances.value.filter((i) => i.unreachable || (i.onebot && !i.onebot.connected)).length)
 
-    /** 需求大盘：把各实例的群展平成一张表，每行带上所属实例 */
-    const groupRows = computed(() =>
-      instances.value.flatMap((inst) =>
-        (inst.groups || []).map((g) => ({
-          key: `${inst.instance?.pid ?? '?'}:${g.groupId}`,
-          inst,
-          g,
-        })),
-      ),
-    )
+    /** 需求大盘的行：/api/board 已经按群维度摊平，前端不再自己展平 */
+    const groupRows = computed(() => board.value.rows || [])
+    const alertCount = computed(() => board.value.alerts || 0)
 
-    // ── 轮询：只在需求大盘页运行 ──
-    async function load() {
+    // ── 两套数据：大盘按群、实例页按进程，各拉各的接口 ──
+    async function loadBoard() {
       loading.value = true
       try {
-        const r = await fetch('/api/instances')
-        const d = await r.json()
-        instances.value = d.instances || []
+        const r = await fetch('/api/board')
+        board.value = await r.json()
       } catch {
         /* 面板自身异常时不打扰用户 */
       } finally {
         loading.value = false
       }
     }
+
+    async function loadInstances() {
+      try {
+        const r = await fetch('/api/instances')
+        const d = await r.json()
+        instances.value = d.instances || []
+      } catch {
+        /* 同上 */
+      }
+    }
+
+    // ── 轮询：只在需求大盘页运行 ──
     function startPoll() {
       if (pollTimer) return
-      load()
-      pollTimer = setInterval(load, 3000)
+      loadBoard()
+      pollTimer = setInterval(loadBoard, 3000)
     }
     function stopPoll() {
       if (!pollTimer) return
@@ -647,13 +650,13 @@ createApp({
       } else {
         stopPoll()        // 切走：停轮询，避免后台空跑
         if (v === 'settings') loadSettings()
-        if (v === 'instances') load() // 实例页要最新内存/时长，拉一次即可
+        if (v === 'instances') loadInstances() // 实例页要最新内存/时长，拉一次即可
       }
     }
 
     /** 实例页要显示「当前内存/运行时长」，进页面时拉一次最新数据 */
     function refreshInstancesOnce() {
-      load()
+      loadInstances()
     }
 
     // ── 设置 ──
@@ -832,55 +835,55 @@ createApp({
     }
 
     // ── 行内菜单与操作 ──
-    function openMenu(ev, inst, g) {
+    function openMenu(ev, row) {
       const r = ev.target.getBoundingClientRect()
-      menu.value = { x: Math.min(r.left - 90, window.innerWidth - 160), y: r.bottom + 6, inst, g }
+      menu.value = { x: Math.min(r.left - 90, window.innerWidth - 160), y: r.bottom + 6, row }
     }
     function askConfirm(kind) {
-      const { inst, g } = menu.value
+      const { row } = menu.value
       menu.value = null
-      confirmModal.value = { kind, inst, group: g }
+      confirmModal.value = { kind, row }
     }
     async function doConfirm() {
-      const { kind, g } = confirmModal.value
+      const { kind, row } = confirmModal.value
       confirmModal.value = null
-      await act(kind, g)
+      await act(kind, row)
     }
-    async function act(kind, g) {
+    async function act(kind, row) {
       try {
-        const r = await fetch('/api/groups/' + g.groupId + '/' + kind, { method: 'POST' })
+        const r = await fetch('/api/groups/' + row.groupId + '/' + kind, { method: 'POST' })
         const d = await r.json()
         toast.value = {
           text: d.ok ? (kind === 'stop' ? '已终止' : '已重启') : '失败：' + (d.error || d.message),
           err: !d.ok,
         }
         setTimeout(() => (toast.value = null), 2600)
-        if (view.value === 'board') await load()
+        if (view.value === 'board') await loadBoard()
       } catch (e) {
         toast.value = { text: '请求失败：' + e.message, err: true }
         setTimeout(() => (toast.value = null), 3200)
       }
     }
     async function detail() {
-      const { inst, g } = menu.value
+      const { row } = menu.value
       menu.value = null
-      modal.value = { inst, group: g, logs: [] }
-      const pid = inst.instance?.pid
+      const pid = row.pid
+      // 先用行数据垫着，完整状态拉回来再替换（列表接口不带阶段表和事件流）
+      modal.value = { inst: {}, group: row, logs: [] }
       try {
-        // 详情单独拉完整状态：列表接口只带列表画得出的字段（没有阶段表和事件流）
         const [detailRes, logsRes] = await Promise.all([
-          fetch('/api/instances/' + pid).then((r) => r.json()),
-          fetch('/api/logs?pid=' + pid + '&n=200')
+          fetch('/api/instances?pid=' + encodeURIComponent(pid)).then((r) => r.json()),
+          fetch('/api/logs?pid=' + encodeURIComponent(pid) + '&n=200')
             .then((r) => r.json())
             .catch(() => ({ logs: [] })),
         ])
         const full = detailRes?.instance && Array.isArray(detailRes.groups) ? detailRes : null
         const group = full
-          ? full.groups.find((x) => String(x.groupId) === String(g.groupId)) ?? g
-          : g
-        modal.value = { inst: full ?? inst, group, logs: logsRes.logs || [] }
+          ? full.groups.find((x) => String(x.groupId) === String(row.groupId)) ?? row
+          : row
+        modal.value = { inst: full ?? {}, group, logs: logsRes.logs || [] }
       } catch {
-        /* 拿不到完整状态就用手上的列表数据兜底，日志留空 */
+        /* 拿不到完整状态就只用行数据兜底，日志留空 */
       }
     }
 
