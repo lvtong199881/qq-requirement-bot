@@ -244,13 +244,7 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
     // 消息内容由路由层给出的确定性骨架承载（第 2 层）。
     const parts = []
     if (!isContinuation) {
-      parts.push(
-        gateInstructions({
-          botName: config.bot.name,
-          approval: st.approval,
-          template: config.promptTemplate,
-        }),
-      )
+      parts.push(gateInstructions({ botName: config.bot.name, approval: st.approval }))
     }
     if (anchor) parts.push(anchor)
     if (promptBody) parts.push(promptBody)
@@ -1071,14 +1065,6 @@ function startApi() {
       if (Array.isArray(patch?.adminUsers)) {
         config.adminUsers = patch.adminUsers.map((x) => String(x))
         runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)
-      }
-      if (patch?.promptTemplate !== undefined) {
-        config.promptTemplate = patch.promptTemplate || null
-        runtime.info(
-          config.promptTemplate
-            ? `[面板] prompt 模板已更新（${config.promptTemplate.length} 字符）`
-            : '[面板] prompt 模板已重置为内置默认',
-        )
       }
       return { ok: true }
     },

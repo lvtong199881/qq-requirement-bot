@@ -12,7 +12,6 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from './instances.js'
-import { DEFAULT_PROMPT_TEMPLATE, validatePromptTemplate, PROMPT_VARS } from './prompt.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const STATIC = join(HERE, '..', 'static')
@@ -124,13 +123,6 @@ function readSettings(repoRoot) {
       adminUsers: raw.adminUsers ?? [],
       // 超级管理员只读展示，面板不提供编辑（避免把自己锁出去）
       superAdmin: raw.superAdmin ?? [],
-      // prompt：custom 是否自定义、template 给编辑框用（无自定义就回填默认）
-      prompt: {
-        custom: typeof raw.promptTemplate === 'string' && raw.promptTemplate.trim().length > 0,
-        template: raw.promptTemplate?.trim() ? raw.promptTemplate : DEFAULT_PROMPT_TEMPLATE,
-        defaultTemplate: DEFAULT_PROMPT_TEMPLATE,
-        vars: PROMPT_VARS,
-      },
     }
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
@@ -150,14 +142,6 @@ function writeSettings(repoRoot, patch) {
     return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
   }
   if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
-  if (patch.promptTemplate !== undefined) {
-    // 传空串或 null = 回到内置默认
-    if (patch.promptTemplate === null || String(patch.promptTemplate).trim() === '') {
-      delete raw.promptTemplate
-    } else {
-      raw.promptTemplate = patch.promptTemplate
-    }
-  }
   try {
     writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
     return { ok: true }
@@ -234,33 +218,23 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         if (body.superAdmin !== undefined) {
           return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
         }
-        if (body.adminUsers === undefined && body.promptTemplate === undefined) {
-          return json(res, 400, { ok: false, error: '没有要保存的字段（adminUsers / promptTemplate）' })
+        // 不带 adminUsers 就不动它，别把白名单误清空
+        if (body.adminUsers === undefined) {
+          return json(res, 400, { ok: false, error: '缺少 adminUsers 字段' })
         }
 
-        const patch = {}
+        const parsed = parseAdminUsers(body.adminUsers)
+        if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
 
-        if (body.adminUsers !== undefined) {
-          const parsed = parseAdminUsers(body.adminUsers)
-          if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
-          patch.adminUsers = parsed.list
-        }
-
-        if (body.promptTemplate !== undefined) {
-          const isEmpty = body.promptTemplate === null || String(body.promptTemplate).trim() === ''
-          if (!isEmpty) {
-            const v = validatePromptTemplate(body.promptTemplate)
-            if (!v.ok) return json(res, 400, { ok: false, error: v.error })
-          }
-          patch.promptTemplate = isEmpty ? null : body.promptTemplate
-        }
-
-        const written = writeSettings(repoRoot, patch)
+        const written = writeSettings(repoRoot, { adminUsers: parsed.list })
         if (!written.ok) return json(res, 500, written)
 
-        const pushed = await pushSettings(registry.list(), patch, token)
-        const fresh = readSettings(repoRoot)
-        return json(res, 200, { ok: true, ...fresh, hotReloaded: pushed })
+        const pushed = await pushSettings(registry.list(), { adminUsers: parsed.list }, token)
+        return json(res, 200, {
+          ok: true,
+          adminUsers: parsed.list,
+          hotReloaded: pushed,
+        })
       }
 
       // 操作：终止 / 重启
