@@ -64,13 +64,34 @@ console.log('\n== 过程文字不受影响 ==')
 
 console.log('\n== bridge 拼接 ==')
 {
-  const g = parseGate('阶段完成。\n[[WAITING]]等你定这两项\n[[ASK]]\n- A\n- B')
-  const finalAnswer = g.ask.trim() || g.cleaned.trim()
-  check('优先用 ask', finalAnswer === '- A\n- B', JSON.stringify(finalAnswer))
+  /** 复刻 index.js 的拼接规则：[prefix] + 内容（单行短内容接同一行） */
+  const compose = (gate) => {
+    const body = (gate.ask || '').trim() || (gate.cleaned || '').trim()
+    if (!body) return ''
+    const inline = !body.includes('\n') && body.length <= 40
+    return inline ? `需要决策：${body}` : `需要决策：\n${body}`
+  }
 
-  const g2 = parseGate('阶段完成，请确认。\n[[WAITING]]等你确认')
-  const fa2 = g2.ask.trim() || g2.cleaned.trim()
-  check('无 ask 时回退整段答复', fa2.includes('阶段完成，请确认'))
+  const g = parseGate('阶段完成。\n[[WAITING]]等你定这两项\n[[ASK]]\n- A\n- B')
+  check('优先用 ask', g.ask.trim() === '- A\n- B')
+  const out = compose(g)
+  check('多行内容带「需要决策」前缀', out.startsWith('需要决策：\n'), out)
+  check('前缀后跟 ASK 原文', out.includes('- A\n- B'))
+
+  const g2 = parseGate('[[WAITING]]等你确认\n[[ASK]]要不要改蓝色？')
+  const out2 = compose(g2)
+  check('单行短问句接在同一行', out2 === '需要决策：要不要改蓝色？', out2)
+
+  const g3 = parseGate('阶段完成，请确认。\n[[WAITING]]等你确认')
+  const out3 = compose(g3)
+  check('无 ask 时回退整段答复', out3.includes('阶段完成，请确认'))
+  check('回退时也带前缀', out3.startsWith('需要决策：'), out3)
+
+  // 长单行走换行排版
+  const longLine = '这个改动会影响所有页面的字体缩放，是否需要在本需求里一并处理？另外还要确认样式回归的范围和回归清单。'
+  const g4 = parseGate(`[[WAITING]]等你确认\n[[ASK]]${longLine}`)
+  const out4 = compose(g4)
+  check('超过 40 字的单行走换行', out4.startsWith('需要决策：\n'), out4.slice(0, 20))
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)

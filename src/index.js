@@ -465,14 +465,16 @@ async function handleTurn(groupId, userText, { isContinuation, replyTo, anchor, 
       }
     }
 
-    // agent 的答复：太长就截断，完整内容本来就在文档里
+    // 要用户拍板的内容，前面明确写「需要决策：」，让人一眼知道这段是等他决定的
     if (finalAnswer) {
       const MAX = 1800
-      lines.push(
+      const body =
         finalAnswer.length > MAX
           ? `${finalAnswer.slice(0, MAX)}\n……（还有 ${finalAnswer.length - MAX} 字，完整内容见需求文档）`
-          : finalAnswer,
-      )
+          : finalAnswer
+      // 单行短问句接在同一行，多行/长内容另起一段，读起来更顺
+      const inline = !body.includes('\n') && body.length <= 40
+      lines.push(inline ? `需要决策：${body}` : `需要决策：\n${body}`)
     } else if (!lines.length && pendingNote) {
       // agent 没给正文时才用 waitingLabel 兜底
       lines.push(pendingNote)
