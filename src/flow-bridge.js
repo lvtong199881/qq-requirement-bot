@@ -19,17 +19,24 @@ import { initialState, resumeFromUser, currentCheckpoint, needsAgent } from './f
 import { runFlow } from './flow-runner.js'
 import { writeBoard } from './board.js'
 
-/** 需求标识：优先用文本里的英文词，中文需求退回时间戳 */
-export function makeReqId(text) {
-  const words = String(text ?? '').match(/[a-zA-Z][a-zA-Z0-9]{2,}/g)
-  if (words?.length) {
-    return words
-      .slice(0, 3)
-      .join('-')
-      .toLowerCase()
-      .slice(0, 40)
-  }
-  return `req-${Date.now().toString(36)}`
+/**
+ * 需求唯一标识：随机 8 位。
+ *
+ * 以前用需求文本里提的英文词当 id，问题是两个群提相似需求就会撞车，
+ * 后一个写进前一个的目录把产物覆盖掉。唯一性必须和文本内容无关。
+ * 给人看的名字另外存 flow.name，只出现在群消息和编排记录里。
+ */
+export function makeReqId() {
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz023456789' // 去掉 l/o/1 这种易混字符
+  let id = ''
+  for (let i = 0; i < 8; i++) id += alphabet[Math.floor(Math.random() * alphabet.length)]
+  return id
+}
+
+/** 给人看的名字：需求原文截一段，不参与任何路径和分支命名 */
+export function makeReqName(text) {
+  const t = String(text ?? '').trim().replace(/\s+/g, ' ')
+  return t.slice(0, 30) || '未命名需求'
 }
 
 /** 把回执里的 decisions 渲染成给人看的列表（替代旧的 [[ASK]] JSON 渲染） */
@@ -128,7 +135,7 @@ export function createFlowBridge(deps) {
 
     // 已跑完：一个群一个需求，做完仍占着这个群（和 v1 的口径一致）
     if (flow.status === 'done') {
-      await sendPlain(groupId, renderMessage('v2Done', { reqId: flow.reqId }, templates), { replyTo })
+      await sendPlain(groupId, renderMessage('v2Done', { name: flow.name ?? flow.reqId }, templates), { replyTo })
       return
     }
 
@@ -160,9 +167,12 @@ export function createFlowBridge(deps) {
   }
 
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
-    const reqId = makeReqId(text)
+    // 从文本提取的 id 可能撞车（两个群提相似需求，比如都提到同一个模块名）。
+    // 撞了就加后缀——否则新需求会写进别人的目录，把已有产物覆盖掉。
+    const reqId = uniqueReqId(st.projectDir, makeReqId())
     const flow = {
       ...initialState({ reqId, projectDir: st.projectDir }),
+      name: makeReqName(text),
       requestText: text,
       vars: {},
       roleSessions: {},
@@ -173,7 +183,11 @@ export function createFlowBridge(deps) {
     if (initiator) st.initiator = initiator
     store.save(groupId, st)
 
-    await sendPlain(groupId, renderMessage('v2Kickoff', { reqId }, templates), { replyTo })
+    await sendPlain(
+      groupId,
+      renderMessage('v2Kickoff', { name: flow.name ?? flow.reqId }, templates),
+      { replyTo },
+    )
     await runFromState({ groupId, st, replyTo })
   }
 
@@ -264,6 +278,9 @@ export function createFlowBridge(deps) {
         reqDir: join(st.projectDir, 'docs/requirements', flow.reqId) + '/',
         userRequest: flow.requestText ?? '',
         userAnswer: flow.vars?.userAnswer ?? '',
+        // 用户回答单独成段，并且尽量和问题编号对齐——直接塞进「输入文件清单」里，
+        // agent 会把它当成一个文件名或占位符去猜（实测：它数了字母个数，怀疑是乱码）。
+        answerBlock: buildAnswerBlock(st.projectDir, flow.reqId, flow.vars?.userAnswer, config),
         projectTree: listTop(st.projectDir),
         changedFiles: '',
         diff: '',
@@ -419,7 +436,7 @@ export function createFlowBridge(deps) {
         await sendPlain(groupId, `收尾检查发现缺产物：${missing.join('、')}`, { replyTo }).catch(() => {})
         return
       }
-      await sendPlain(groupId, renderMessage('v2Done', { reqId: flow.reqId }, templates), { replyTo }).catch(() => {})
+      await sendPlain(groupId, renderMessage('v2Done', { name: flow.name ?? flow.reqId }, templates), { replyTo }).catch(() => {})
     }
   }
 
@@ -494,6 +511,80 @@ export function createFlowBridge(deps) {
   }
 
   return { handleMessage }
+}
+
+/**
+ * 把「用户对上一轮提问的回答」组织成一段有语义的文本。
+ *
+ * 尝试按位展开成 Q-1 → B 这种形式（读《待提问清单》拿到问题列表），
+ * 对不上就原样引用并说明——让 agent 知道这是一串选项字母还是自然语言。
+ */
+export function buildAnswerBlock(projectDir, reqId, rawAnswer) {
+  const answer = String(rawAnswer ?? '').trim()
+  if (!answer) return ''
+
+  const questions = parseQuestionList(join(projectDir, 'docs/requirements', reqId, '待提问清单.md'))
+  const letters = answer.replace(/[^A-Za-z]/g, '').toUpperCase()
+
+  const lines = ['【用户对上一轮提问的回答】', `用户原话：「${answer}」`, '']
+
+  // 看起来像「一串选项字母」就按位展开；自然语言回答原样保留，不瞎猜。
+  // 阈值跟着问题数走：问题少的时候两个字母也该展开，问题多时才需要 >= 3 才不像误触
+  const looksLikeLetters =
+    /^[A-Za-z]+$/.test(answer.replace(/[\s、,，.]/g, '')) &&
+    letters.length >= Math.min(3, questions.length)
+  if (questions.length && looksLikeLetters) {
+    lines.push('按《待提问清单》的顺序对应如下：')
+    for (let i = 0; i < questions.length; i++) {
+      const pick = letters[i]
+      lines.push(
+        `- ${questions[i].id} ${questions[i].title} → ${pick ? `用户选 ${pick}` : '用户未回答，按推荐值转成采用假设'}`,
+      )
+    }
+    lines.push('', '用户明确选了的，以用户的选择为准，不要改回推荐答案。')
+  } else if (questions.length) {
+    lines.push('这是自然语言回答，请对照《待提问清单》逐条理解；理解不了的写进回执 decisions，不要自己拍板。')
+  }
+
+  return lines.join('\n')
+}
+
+/** 从《待提问清单》里读出 Q 编号和问题标题 */
+export function parseQuestionList(file) {
+  let text
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  const out = []
+  for (const line of text.split('\n')) {
+    const cells = line.split('|').map((c) => c.trim())
+    if (cells.length < 3) continue
+    const id = cells[1]
+    if (!/^Q[-－]?\d+$/i.test(id)) continue
+    out.push({ id, title: cells[2] })
+  }
+  return out
+}
+
+/**
+ * 需求标识去重：目标目录里已经有文件就用 <id>-2、<id>-3……
+ * 只看「有文件」不看「目录存在」——bridge 建 flow 时会先 mkdir，空目录不算占用。
+ */
+export function uniqueReqId(projectDir, base) {
+  const root = join(projectDir, 'docs/requirements')
+  const taken = (id) => {
+    try {
+      return readdirSync(join(root, id)).length > 0
+    } catch {
+      return false
+    }
+  }
+  if (!taken(base)) return base
+  let n = 2
+  while (taken(`${base}-${n}`)) n++
+  return `${base}-${n}`
 }
 
 /** 收尾终检：checkpoint 声明的产物是否都在盘上 */

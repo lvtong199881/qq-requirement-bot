@@ -27,7 +27,8 @@ export const MESSAGE_VARS = {
   list: '指令列表（bridge 自动生成）',
   count: '条数',
   text: '用户原话',
-  reqId: '需求标识，如 welcome-dialog（纯值）',
+  name: '需求名称，给人看的一句话，如「优化欢迎弹窗」',
+  reqId: '需求标识（随机 id，纯值）',
   reqIdPad: '需求标识，前后各带一个空格，适合嵌在句子中间',
 }
 
@@ -37,8 +38,8 @@ export const MESSAGE_TEMPLATES = {
     group: 'v2 流程',
     label: '受理需求',
     desc: '收到需求、开始跑第一个阶段',
-    vars: ['reqId'],
-    template: '收到，开始处理。需求标识：{{reqId}}',
+    vars: ['name'],
+    template: '收到，开始处理：{{name}}',
   },
   v2StageStart: {
     group: 'v2 流程',
@@ -74,8 +75,8 @@ export const MESSAGE_TEMPLATES = {
   v2Done: {
     group: 'v2 流程',
     label: '需求完成',
-    vars: ['reqId'],
-    template: '需求 {{reqId}} 全部完成。',
+    vars: ['name'],
+    template: '「{{name}}」全部完成。',
   },
   v2Queued: {
     group: 'v2 流程',

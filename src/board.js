@@ -54,6 +54,7 @@ export function renderBoard(flow, opts = {}) {
     '## 需求信息',
     '',
     `- 需求标识：${flow.reqId}`,
+    `- 需求名称：${flow.name ?? '（无）'}`,
     `- 需求描述：${flow.requestText ?? '（无）'}`,
     `- 当前状态：${statusText(flow.status)}`,
     `- 当前阶段：${flow.current ? labelOf(flow.current) : '已结束'}`,

@@ -9,7 +9,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createFlowBridge, makeReqId, formatDecisions } from '../src/flow-bridge.js'
+import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow.js'
 import { receiptFile } from '../src/orchestrator.js'
 
@@ -106,10 +106,57 @@ function newState(groupId = 'g1') {
   return { groupId, projectDir, reqId: null, flow: null, initiator: null }
 }
 
-console.log('\n== makeReqId ==')
+console.log('\n== makeReqId / makeReqName ==')
 {
-  check('英文词转短横线', makeReqId('add welcome modal to home') === 'add-welcome-modal', makeReqId('add welcome modal to home'))
-  check('中文需求退回时间戳', /^req-[0-9a-z]+$/.test(makeReqId('首页加个欢迎弹窗')), makeReqId('首页加个欢迎弹窗'))
+  const id = makeReqId()
+  check('需求标识是 8 位随机', /^[a-z0-9]{8}$/.test(id), id)
+  check('两次不重复', makeReqId() !== id)
+  check('name 取原文截断', makeReqName('welcome modal 首页加个欢迎弹窗').includes('welcome'))
+  check('name 不超过 30 字', makeReqName('很长'.repeat(50)).length <= 30)
+}
+
+console.log('\n== 用户回答按问题展开 ==')
+{
+  const root = mkdtempSync(join(tmpdir(), 'ans-'))
+  const dir = join(root, 'docs/requirements/demo')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, '待提问清单.md'),
+    ['| 编号 | 问题 | 会改变什么 | 推荐答案 |', '| --- | --- | --- | --- |',
+     '| Q-1 | 弹窗时机 | 范围 | 首次启动 |', '| Q-2 | 是否记住关闭 | 验收 | 记住 |'].join('\n'),
+  )
+  const block = buildAnswerBlock(root, 'demo', 'BA')
+  check('写明是用户回答', block.includes('用户对上一轮提问的回答'))
+  check('保留原话', block.includes('「BA」'))
+  check('Q-1 对应第一个字母', block.includes('Q-1 弹窗时机 → 用户选 B'), block)
+  check('Q-2 对应第二个字母', block.includes('Q-2 是否记住关闭 → 用户选 A'), block)
+  check('说明以用户选择为准', block.includes('不要改回推荐答案'))
+
+  // 字母不够时，缺的标成未回答
+  const short = buildAnswerBlock(root, 'demo', 'B')
+  check('字母不足时不硬凑（短于 3 个走原样引用）', !short.includes('用户选 B') || short.includes('自然语言'))
+
+  // 自然语言回答不瞎展开
+  const natural = buildAnswerBlock(root, 'demo', '按推荐，但第二个要改成记住')
+  check('自然语言走原样引用', natural.includes('用户原话') && natural.includes('自然语言'))
+
+  // 没有回答就不生成段
+  check('空回答返回空串', buildAnswerBlock(root, 'demo', '') === '')
+  rmSync(root, { recursive: true, force: true })
+}
+
+console.log('\n== 需求标识去重 ==')
+{
+  const root = mkdtempSync(join(tmpdir(), 'uniq-'))
+  const reqs = join(root, 'docs/requirements')
+  mkdirSync(join(reqs, 'demo'), { recursive: true })
+  check('空目录不占位（bridge 建 flow 时会先 mkdir）', uniqueReqId(root, 'demo') === 'demo')
+  writeFileSync(join(reqs, 'demo', 'PRD.md'), 'x')
+  check('有产物后加后缀', uniqueReqId(root, 'demo') === 'demo-2', uniqueReqId(root, 'demo'))
+  mkdirSync(join(reqs, 'demo-2'), { recursive: true })
+  writeFileSync(join(reqs, 'demo-2', 'x.md'), 'x')
+  check('连续占用继续递增', uniqueReqId(root, 'demo') === 'demo-3', uniqueReqId(root, 'demo'))
+  rmSync(root, { recursive: true, force: true })
 }
 
 console.log('\n== formatDecisions ==')
@@ -128,7 +175,8 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
   await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: '产品' } })
 
   const flow = saved.get('g1').flow
-  check('生成了需求标识', flow.reqId === 'welcome-modal', flow.reqId)
+  check('生成了随机需求标识', /^[a-z0-9]{8}$/.test(flow.reqId), flow.reqId)
+  check('name 是原文截断', String(flow.name).includes('welcome'), flow.name)
   check('停在需求澄清等用户', flow.status === 'waiting_user', flow.status)
   check('只跑了一个 agent 回合', agentCalls.length === 1, String(agentCalls.length))
   check('回合是 req-questions', agentCalls[0].id === 'req-questions')
@@ -136,7 +184,7 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
   check('播报受理', sent.some((t) => t.includes('开始处理')))
   check('播报阶段完成', sent.some((t) => t.includes('需求澄清阶段已完成')))
   check('播报在等用户', sent.some((t) => t.includes('等你回复')))
-  check('需求绑进群状态', saved.get('g1').reqId === 'welcome-modal')
+  check('需求绑进群状态', saved.get('g1').reqId === flow.reqId, `${saved.get('g1').reqId} vs ${flow.reqId}`)
 }
 
 console.log('\n== 用户回答：需求定稿并复用会话 ==')
