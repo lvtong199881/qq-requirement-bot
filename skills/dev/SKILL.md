@@ -40,17 +40,29 @@ bridge 会在任务包里说明本回合是哪种。
 
 ### 回合 D：合并执行
 
-验收通过后 bridge 会派合并回合，任务包里有 `<mergeInfo>`（feature 分支名、主分支名）。这时做的是把 feature 合回主分支：
+验收通过后 bridge 会派合并回合。任务包里的【产物位置】把两个目录都给你了：
 
-1. 确认在 feature 分支上、工作区干净、改动都已提交。
-2. 切到主分支：`git checkout <主分支>`，有 remote 就 `git pull`。
-3. `git merge --no-ff feature/<需求标识>`。
+- **代码工作区**（`workDir`）= 一个**专用的合并工作区**，已经不是需求自己的开发目录了
+- **文档目录**（`reqDir`）= 需求文档所在
+
+按顺序做：
+
+1. `cd <workDir>` 并确认它是干净的合并起点：`git reset --hard origin/<主分支>`、`git clean -fd`。
+2. **先把文档归档进仓库**：
+   ```bash
+   rsync -a --delete <reqDir>/ docs/requirements/<需求标识>/
+   git add docs/requirements/<需求标识>
+   git commit -m "docs(<需求标识>): 需求文档归档"
+   ```
+   顺序很重要：文档先提交，代码后合并。这样即使代码合并出冲突要重试，文档已经安全落库。
+3. **再合代码**：`git merge --no-ff feature/<需求标识>`。
 4. 有冲突：逐个看两边为什么改（`git log -p`），保留双方意图；实在互斥就选与本需求验收标准一致的。解决后 `git add` + `git commit`。
-5. **合并后必须跑编译和单元测试**——主分支上不能留下编译不过的代码。这是这个回合存在的意义。
-6. `git push`（有 remote 时）。
-7. 回执写清：合并结果、冲突怎么处理的、编译与测试结论、push 结果。
+5. `git push origin <主分支>`（有 remote 时）。
+6. 回执写清：合并提交 sha、文档归档提交 sha、冲突怎么处理的、push 结果。
 
-**编译或测试不过**：`git reset --hard ORIG_HEAD` 把主分支恢复到合并前，回执报 `blocked` 并说明原因。不要在编译不过的合并上硬交。
+**这个回合不跑编译。** 编译验证在开发阶段已经做过，合并只是搬运已验证的提交——跑一次编译要几分钟，而合并是全局串行的，会挡住其他需求。
+
+**push 失败**：`git reset --hard origin/<主分支>` 回到合并前，回执报 `blocked` 并说明原因。不要在推不上去的状态上硬交。
 
 ### 回合 C：合并冲突处理
 

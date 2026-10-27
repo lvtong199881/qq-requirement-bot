@@ -11,6 +11,7 @@ import { OneBot } from './transport/onebot.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
 import { getCheckpoint, CHECKPOINTS } from './flow/flow.js'
+import { readReceipt } from './flow/orchestrator.js'
 import { RateLimiter, sleep } from './ui/format.js'
 import { Runtime } from './runtime.js'
 import { renderMessage } from './ui/messages.js'
@@ -93,18 +94,38 @@ async function memberRole(groupId, userId) {
 }
 
 /**
- * 谁能驱动 bot：
- *   1. superAdmin —— 不受任何限制，任何群都可以（只能改配置文件）
- *   2. 群主 / 群管理员 —— 在本群内可以
- *   3. adminUsers 白名单 —— 额外放行（面板可编辑）
+ * 动作级权限。不同动作对角色要求不同：
+ *
+ *   | 动作              | 群主 | 群管理员 | 系统管理员 | 普通成员 |
+ *   | ----------------- | ---- | -------- | ---------- | -------- |
+ *   | 发起需求          |  ✅  |    ❌    |     ✅     |    ❌    |
+ *   | 阶段确认/斜杠指令 |  ✅  |    ✅    |     ✅     |    ❌    |
+ *   | 交付（release）   |  ❌  |    ❌    |     ✅     |    ❌    |
+ *
+ * 注意区分两类「管理员」：
+ *   - 群管理员（admin）：QQ 群里的管理员，只能管本群
+ *   - 系统管理员（adminUsers）：这套系统的白名单，相当于上帝，任何群任何动作
  */
-async function canOperate(groupId, userId) {
+const ACTION_ROLES = {
+  startRequirement: ['owner'],
+  confirm: ['owner', 'admin'],
+  command: ['owner', 'admin'],
+  release: [],
+}
+
+/**
+ * 判断某人能否在本群执行某个动作。
+ * 系统管理员必须在群角色判定之前短路——否则一个不是群管理的系统管理员会被拒绝。
+ */
+async function can(action, groupId, userId) {
   const uid = String(userId ?? '')
+  if (!uid) return { ok: false, role: null, need: ACTION_ROLES[action] ?? [] }
   if (config.superAdmin.includes(uid)) return { ok: true, role: 'superadmin' }
+  if (config.adminUsers.includes(uid)) return { ok: true, role: 'systemAdmin' }
   const role = await memberRole(groupId, uid)
-  if (role === 'owner' || role === 'admin') return { ok: true, role }
-  if (config.adminUsers.includes(uid)) return { ok: true, role: role ?? 'listed' }
-  return { ok: false, role }
+  const need = ACTION_ROLES[action] ?? []
+  if (role && need.includes(role)) return { ok: true, role }
+  return { ok: false, role, need }
 }
 
 /** 运行期发现的群：群号 → {name, memberCount}，用于日志和「本群」查询 */
@@ -295,7 +316,7 @@ bot.on('message', async (frame) => {
   // 静默是有意的：群成员发消息时 bot 不做任何回应，避免刷屏和误触发。
   const speaker = frame.sender ?? {}
   const speakerId = String(speaker.user_id ?? frame.user_id ?? '')
-  const gatePerm = await canOperate(groupId, speakerId)
+  const gatePerm = await can('confirm', groupId, speakerId)
   if (!gatePerm.ok) {
     detail(`忽略 ${speakerId}（角色=${gatePerm.role ?? '未知'}）在群 ${groupId} 的消息`)
     return
@@ -326,7 +347,14 @@ bot.on('message', async (frame) => {
   // v2 自己处理 /stop 和 /release，其余消息按「新需求 / 回答 / 排队」三态处理。
   // 状态机是唯一真相源：v2 自己处理 /stop 和 /release，
   // 其余消息按「新需求 / 回答 / 排队」三态处理。
-  return flowBridge.handleMessage({ groupId, text, replyTo, st, initiator })
+  return flowBridge.handleMessage({
+    groupId,
+    text,
+    replyTo,
+    st,
+    initiator,
+    can: (action, uid) => can(action, groupId, uid),
+  })
 })
 
 // ────────────────────────────── 启动 ──────────────────────────────
@@ -354,6 +382,39 @@ function cleanupOrphanStates() {
   }
 }
 cleanupOrphanStates()
+
+/**
+ * 重启后接上被打断的回合。
+ *
+ * 回合结果靠读回执文件拿（不依赖子进程还活着），所以「进程死了但活干完了」能识别：
+ * 回执在 → 直接继续推进；回执不在 → 告诉用户重跑这一步。
+ * 子进程已 detached，正在跑的那个回合不会因为重启而死。
+ */
+function recoverInterruptedFlows() {
+  for (const groupId of store.allGroupIds()) {
+    const st = store.get(groupId)
+    const flow = st?.flow
+    if (!flow || flow.status !== 'running' || !flow.current) continue
+
+    const cp = getCheckpoint(flow.current)
+    if (!cp) continue
+
+    const reqDir = flow.dataDir ?? join(flow.projectDir, 'docs/requirements', flow.reqId)
+    const receipt = readReceipt(reqDir, cp.id)
+
+    if (receipt.ok) {
+      log(`[${groupId}] 「${cp.label}」的回合已完成（回执在），自动接着往下走`)
+      flowBridge
+        .handleMessage({ groupId, text: '继续', replyTo: null, st, initiator: null, can: null })
+        .catch((err) => log(`[${groupId}] 恢复失败：${err.message}`))
+    } else {
+      log(`[${groupId}] 「${cp.label}」的回合被打断，等用户发继续`)
+      sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+    }
+  }
+}
+// 延后一点：等 OneBot 连接建立后再往群里发言
+setTimeout(recoverInterruptedFlows, 5000)
 
 // ─────────────────── 管理面板的 HTTP API ───────────────────
 

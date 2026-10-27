@@ -98,12 +98,24 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
   // 实测挑中了「最近改动的那个需求」，把新需求的产物写进了旧目录，
   // bridge 按 reqId 校验当然找不到，于是判定「没产出」开始返工。
   const outDir = vars?.reqDir ?? `docs/requirements/${state.reqId}/`
+  const workDir = vars?.workDir ?? ''
   lines.push(
     '【产物位置】',
-    `- 所有产物写到：${outDir}`,
-    `- 本阶段应产出：${(checkpoint.output ?? []).join('、') || '无文件产物，结论写进回执'}`,
+    // 文档和代码分属两个目录。不写清楚的话 agent 会把技术方案写进工作区、
+    // 或者把代码改动留在文档目录，两种错都不会报错，直到合并时才发现一边缺东西。
+    `- 文档（PRD / 设计说明 / 技术方案 / 各类报告）写到：${outDir}`,
+    `- 本阶段文档产物：${(checkpoint.output ?? []).join('、') || '无文件产物，结论写进回执'}`,
     `- 回执 ${receiptFile(checkpoint.id)} 也写在这个目录`,
-    '- 不要写进 docs/requirements/ 下别的需求目录，也不要读到别的需求里参考',
+  )
+  if (workDir) {
+    lines.push(
+      `- 代码（源码、单测、构建配置）改这里：${workDir}`,
+      '- 不要把文档写进代码工作区，也不要把代码写进文档目录——合并时文档从文档目录归档、',
+      '  代码从工作区合并，写错位置两边都会缺',
+    )
+  }
+  lines.push(
+    '- 不要写进别的需求目录，也不要读到别的需求里参考（需要参考历史需求时只读主仓库，不要写）',
     '',
   )
 

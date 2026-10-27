@@ -41,9 +41,20 @@ export function runTurn({
   const child = spawn(dshBin, args, {
     cwd: projectDir,
     env,
+    // detached：bridge 重启/退出时不要连带杀掉正在跑的回合。
+    // 回合的结果靠读回执文件拿，不依赖这个子进程的 stdout 活着——
+    // 所以父进程死了，它继续把活干完反而更好。
+    // stdout/stderr 仍走管道（日志要用），父进程不在时写入会 EPIPE，
+    // 下面的 error 处理会把这类错误吞掉。
+    detached: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   onChild?.(child)
+  // 父进程退出后管道会断，子进程继续写 stdout 时这里会收到 EPIPE。
+  // 那是预期情况（回合还在跑），不要让它变成未捕获异常。
+  child.stdout?.on('error', () => {})
+  child.stderr?.on('error', () => {})
+  child.stdin?.on('error', () => {})
 
   let sid = sessionId ?? null
   let finalText = ''

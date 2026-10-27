@@ -202,10 +202,24 @@ export const GATES = {
  * 新建需求时的初始状态。
  * rounds 记录每个 checkpoint 的返工轮次，落盘保存，跨进程重启不归零。
  */
-export function initialState({ reqId, projectDir }) {
+/**
+ * @param {object} o
+ * @param {string} o.reqId      随机标识，与名称无关
+ * @param {string} [o.name]     给人看的名字（需求原文截断），只用于展示
+ * @param {string} o.projectDir 主仓库路径（裸仓库的宿主目录，用于兼容与 git 操作）
+ * @param {string} [o.dataDir]  需求文档目录（不进 git）；空表示还没分配
+ * @param {string} [o.workDir]  代码工作区（dev 起才有）；空表示还没创建
+ * @param {string} [o.repoDir]  裸仓库路径
+ */
+export function initialState({ reqId, name = '', projectDir, dataDir = null, workDir = null, repoDir = null }) {
   return {
     reqId,
+    name,
     projectDir,
+    // 文档与代码分属两个目录：文档从头到尾写在 dataDir，代码只在 dev~merge 存在于 workDir
+    dataDir,
+    workDir,
+    repoDir,
     current: FIRST_CHECKPOINT,
     rounds: {},
     status: 'running', // running | waiting_user | blocked | done

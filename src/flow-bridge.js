@@ -11,7 +11,7 @@
  * 副作用（发消息、起进程、写盘）都通过 deps 注入，方便单测。
  */
 import { join, basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, rmSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
@@ -19,7 +19,18 @@ import { parseCommand } from './commands.js'
 import { initialState, resumeFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
 import { runFlow } from './flow/flow-runner.js'
 import { writeBoard } from './flow/board.js'
-import { gitRun, detectMainBranch, ensureFeatureBranch } from './infra/git.js'
+import { gitRun, detectMainBranch } from './infra/git.js'
+import { acquireLock, SlotPool } from './infra/lock.js'
+import {
+  ensureBareRepo,
+  createWorktree,
+  removeWorktree,
+  ensureMergeWorktree,
+  findOrphanWorktrees,
+  pruneWorktrees,
+  ensureDataDir,
+  dataDirFor,
+} from './infra/repo.js'
 
 /**
  * 需求唯一标识：随机 8 位。
@@ -58,8 +69,19 @@ export function formatDecisions(decisions) {
  * @param {object} deps
  *   config, store, machine, log, sendPlain, runTurn, bot, modelEnv, repoRoot
  */
+/** 群 → 已持有的合并锁。回合结束（或失败）时释放 */
+const mergeLocks = new Map()
+/** 群 → 已持有的 worktree 槽。合并收尾时释放 */
+const worktreeSlots = new Map()
+
 export function createFlowBridge(deps) {
   const { config, store, machine, log, sendPlain, runTurn, bot, modelEnv, repoRoot, gitDiff } = deps
+
+  // 两层并发闸门，都落在磁盘上（进程崩了占位会按 pid 自动清理）：
+  //   worktree 池 —— 同时处于开发期的需求数，决定磁盘占用
+  //   执行槽     —— 同时跑的回合数，决定内存和 token 消耗
+  const worktreePool = new SlotPool(join(config.repoDir, 'pools', 'worktree'), config.limits?.maxWorktrees ?? 12)
+  const turnPool = new SlotPool(join(config.repoDir, 'pools', 'turn'), config.limits?.maxConcurrentTurns ?? 2)
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
@@ -76,7 +98,7 @@ export function createFlowBridge(deps) {
   /**
    * 入口。调用方已经做完权限校验。
    */
-  async function handleMessage({ groupId, text, replyTo, st, initiator }) {
+  async function handleMessage({ groupId, text, replyTo, st, initiator, can }) {
     // 安全指令：v2 下只保留打断和释放，其余斜杠指令在老流程里
     const cmd = parseCommand(text)
     if (cmd?.name === 'stop') {
@@ -132,6 +154,19 @@ export function createFlowBridge(deps) {
         await sendPlain(groupId, '直接说需求就行，比如：首页加个欢迎弹窗。', { replyTo })
         return
       }
+      // 发起需求只允许群主（和系统管理员）。群管理员能确认但不能开新需求——
+      // 这是团队协作里的职责划分，不是技术限制。
+      if (can) {
+        const perm = await can('startRequirement', initiator?.userId)
+        if (!perm.ok) {
+          await sendPlain(
+            groupId,
+            `发起需求需要群主权限（当前角色：${perm.role ?? '未知'}）。已有需求可以直接回复「通过」「打回」参与。`,
+            { replyTo },
+          )
+          return
+        }
+      }
       return startNewRequirement({ groupId, text, replyTo, st, initiator })
     }
 
@@ -159,7 +194,7 @@ export function createFlowBridge(deps) {
     // 等用户回答/拍板
     if (flow.status === 'waiting_user') {
       // commit 的等待是「要不要提交」，不是对 agent 提问的回答
-      return answerWaiting({ groupId, text, replyTo, st })
+      return answerWaiting({ groupId, text, replyTo, st, initiator })
     }
 
     // 卡住了：用户给一句话就接着试（重置本轮计数，但不重置历史轮次）
@@ -169,12 +204,23 @@ export function createFlowBridge(deps) {
   }
 
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
-    // 从文本提取的 id 可能撞车（两个群提相似需求，比如都提到同一个模块名）。
-    // 撞了就加后缀——否则新需求会写进别人的目录，把已有产物覆盖掉。
-    const reqId = uniqueReqId(st.projectDir, makeReqId())
+    // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
+    const reqId = makeReqId()
+    const data = ensureDataDir(config.dataRoot, reqId)
+    if (!data.ok) {
+      await sendPlain(groupId, `创建需求目录失败：${data.error}`, { replyTo })
+      return
+    }
+
     const flow = {
-      ...initialState({ reqId, projectDir: st.projectDir }),
-      name: makeReqName(text),
+      ...initialState({
+        reqId,
+        name: makeReqName(text),
+        projectDir: st.projectDir,
+        // 文档从第一刻起就写在这里，不进 git —— 100 个需求同时澄清也不会互相踩
+        dataDir: data.dir,
+        repoDir: config.repoDir,
+      }),
       requestText: text,
       vars: {},
       roleSessions: {},
@@ -193,7 +239,7 @@ export function createFlowBridge(deps) {
     await runFromState({ groupId, st, replyTo })
   }
 
-  async function answerWaiting({ groupId, text, replyTo, st }) {
+  async function answerWaiting({ groupId, text, replyTo, st, initiator }) {
     const flow = st.flow
     // 用户这句话既是「对等待事项的回答」，也可能是修改意见；先原样存进 vars，
     // 由该阶段的 agent 自己判断怎么用（bridge 不做语义猜测）。
@@ -203,6 +249,16 @@ export function createFlowBridge(deps) {
     const answered = {
       ...resumeFromUser(flow),
       vars: { ...flow.vars, userAnswer: text, lastDecisions: prevDecisions },
+      // 审计：谁在哪个阶段点的确认。发起人可能不是确认人，
+      // 团队里需要能追「这一步是谁放行的」。
+      confirmer: {
+        // 用「这次说话的人」而不是 st.initiator（那是发起需求的人）——
+        // 团队里发起人和确认人本来就可以不是同一个
+        userId: initiator?.userId ?? null,
+        nickname: initiator?.nickname ?? null,
+        at: Date.now(),
+        stage: flow.current,
+      },
     }
     st.flow = answered
     store.save(groupId, st)
@@ -234,7 +290,7 @@ export function createFlowBridge(deps) {
     if (!release) return
 
     const flow = st.flow
-    const reqDir = join(st.projectDir, 'docs/requirements', flow.reqId)
+    const reqDir = reqDirOf(flow)
     try {
       mkdirSync(reqDir, { recursive: true })
     } catch {
@@ -277,21 +333,21 @@ export function createFlowBridge(deps) {
         st.flow = flow
         store.save(groupId, st)
         // 编排记录跟着状态走一次：面板和人都看这份，不需要谁去解析它
-        writeBoard(join(st.projectDir, 'docs/requirements', flow.reqId), flow)
+        writeBoard(reqDirOf(flow), flow)
       },
       varsFor: (cp, flow) => ({
-        reqDir: join(st.projectDir, 'docs/requirements', flow.reqId) + '/',
+        reqDir: reqDirOf(flow) + '/',
         userRequest: flow.requestText ?? '',
         userAnswer: flow.vars?.userAnswer ?? '',
         // 用户回答单独成段，并且尽量和问题编号对齐——直接塞进「输入文件清单」里，
         // agent 会把它当成一个文件名或占位符去猜（实测：它数了字母个数，怀疑是乱码）。
-        answerBlock: buildAnswerBlock(
-          st.projectDir,
-          flow.reqId,
-          flow.vars?.userAnswer,
-          flow.vars?.lastDecisions,
-        ),
-        projectTree: listTop(st.projectDir),
+        answerBlock: buildAnswerBlock(reqDirOf(flow), flow.vars?.userAnswer, flow.vars?.lastDecisions),
+        // 代码工作区：dev 之后才有；之前的阶段不传，避免 agent 去找一个不存在的目录
+        // merge 阶段在专用工作区里操作；其他阶段用需求自己的工作区
+        workDir: (flow.current === 'merge' ? flow.vars?.mergeWorkDir : flow.workDir) ?? flow.workDir ?? '',
+        dataDir: reqDirOf(flow),
+        // 目录树给对地方：dev 之后看工作区，之前看主仓库
+        projectTree: listTop(flow.workDir ?? st.projectDir),
         changedFiles: '',
         diff: '',
         debugPackage: flow.vars?.debugPackage ?? '',
@@ -307,24 +363,85 @@ export function createFlowBridge(deps) {
         // 放在 bridge 而不是 flow.js：状态机是纯函数，不碰时间。
         st.flow = { ...st.flow, checkpointStartedAt: Date.now() }
         store.save(groupId, st)
-        // 开发阶段前切到 feature/<reqId>：代码改动和提交都落在 feature 上，
-        // 主分支在合并阶段之前保持干净。切不过去就直接报错，不让 agent 在主分支上写代码。
-        if (cp.id === 'dev') {
-          const isGit = gitRun(st.projectDir, ['rev-parse', '--git-dir']).ok
-          if (!isGit) {
-            // 不是 git 仓库：没有分支可切，正常继续（有些项目就是不用 git）
-            log(`[${groupId}] 不是 git 仓库，跳过 feature 分支`)
-          } else {
-          const main = detectMainBranch(st.projectDir)
-          const b = ensureFeatureBranch(st.projectDir, st.flow.reqId)
-          if (!b.ok) throw new Error(`切换 feature 分支失败：${b.error}`)
-          log(`[${groupId}] 分支：${b.branch}${b.created ? `（从 ${b.from ?? main} 新建）` : '（已存在，切过去）'}`)
+        // 开发阶段建一个独立工作区（worktree）。这一步是团队化的核心：
+        // 所有需求共用主工作区时，两个需求的 dev 会互相 checkout 打断对方，
+        // 而且没有任何报错——代码就写到了错误的分支上。worktree 让每个需求独占一个目录。
+        // 合并阶段用一个全局唯一的专用工作区，配合文件锁串行——
+        // 如果在需求自己的工作区里 checkout 主分支，那条工作区就被污染了，
+        // 而如果各自在主仓库合并，两个需求会互相打断。
+        if (cp.id === 'merge') {
+          const mainBranch = st.flow.vars?.mainBranch ?? detectRepoMainBranch(st.projectDir)
+          const mw = ensureMergeWorktree({
+            repoDir: config.repoDir,
+            worktreeRoot: config.worktreeRoot,
+            mainBranch,
+          })
+          if (!mw.ok) throw new Error(`准备合并工作区失败：${mw.error}`)
+
+          // 合并是全局串行操作：两个需求同时验收通过时，不能让它们同时改主分支。
+          // 拿不到锁就等，等到再进——回合本身还没开始，等待是安全的。
+          const lockFile = join(config.repoDir, 'merge.lock')
+          const waitMs = config.limits?.mergeLockWaitMs ?? 30 * 60 * 1000
+          const lock = await acquireLock(lockFile, { waitMs, pollMs: 200 })
+          if (!lock.ok) throw new Error('等待合并锁超时：另一个需求正在合并')
+
           st.flow = {
             ...st.flow,
-            vars: { ...st.flow.vars, featureBranch: b.branch, mainBranch: b.from ?? main },
+            vars: { ...st.flow.vars, mergeWorkDir: mw.path, mergeLockFile: lockFile },
           }
           store.save(groupId, st)
+          // 锁在回合结束后释放（onCheckpointEnd 里），中途崩溃则由锁的僵尸检测兜底
+          mergeLocks.set(groupId, lock)
+          log(`[${groupId}] 合并工作区：${mw.path}（已取得合并锁）`)
+        }
+
+        if (cp.id === 'dev') {
+          // 先抢一个 worktree 名额。池满时等待——磁盘装不下更多并行开发，
+          // 硬塞进去只会把机器拖垮，不如排队并告诉用户前面还有几个。
+          if (!worktreeSlots.has(groupId)) {
+            const slot = await worktreePool.acquire({
+              waitMs: 60 * 60 * 1000,
+              pollMs: 1000,
+              tag: st.flow.reqId,
+            })
+            if (!slot) throw new Error('等待工作区名额超时（一小时）')
+            worktreeSlots.set(groupId, slot)
+            const stats = slot.stats()
+            log(`[${groupId}] 已分配工作区名额 ${stats.used}/${stats.max}`)
           }
+
+          const mainBranch = config.mainBranch || detectRepoMainBranch(st.projectDir)
+          const repo = ensureBareRepo({
+            repoDir: config.repoDir,
+            remoteUrl: config.remoteUrl || remoteUrlOf(st.projectDir),
+            mainBranch,
+          })
+          if (!repo.ok) throw new Error(`初始化裸仓库失败：${repo.error}`)
+
+          const wt = createWorktree({
+            repoDir: config.repoDir,
+            worktreeRoot: config.worktreeRoot,
+            reqId: st.flow.reqId,
+            mainBranch: repo.mainBranch,
+          })
+          if (!wt.ok) throw new Error(`创建工作区失败：${wt.error}`)
+
+          log(
+            `[${groupId}] 工作区：${wt.path}` +
+              (wt.stale ? '（远端不可达，基于本地分支创建，可能落后）' : '') +
+              (wt.reusedBranch ? '（复用已有分支）' : ''),
+          )
+          st.flow = {
+            ...st.flow,
+            workDir: wt.path,
+            vars: {
+              ...st.flow.vars,
+              workDir: wt.path,
+              featureBranch: wt.branch,
+              mainBranch: repo.mainBranch,
+            },
+          }
+          store.save(groupId, st)
         }
         // 阶段开始播一句，用户才知道现在在等什么，而不是盯着「已进行 X 分钟」。
         // bridge 自己的动作（merge/wrapup）不播——它们的消息由 bridgeAction 单独发，
@@ -348,6 +465,7 @@ export function createFlowBridge(deps) {
         if (receipt?.decisions?.length) log(`[${groupId}] 本回合提出 ${receipt.decisions.length} 条待决策`)
         // 开发阶段登记了 debug 包，后面的测试/验收要靠它，存进 vars。
         // agent 忘了写就自己从构建产物里找——比让测试阶段拿着空占位符去猜强。
+
         if (cp.id === 'dev') {
           const fromReceipt = receipt?.deliverables?.debugPackage
           const found = fromReceipt || findLatestHap(st.projectDir)
@@ -363,11 +481,28 @@ export function createFlowBridge(deps) {
           await sendPlain(groupId, '回复「通过」后会把 feature 分支合并进主分支（合并会自动跑编译和单元测试）。', { replyTo }).catch(() => {})
         }
         await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir, replyTo })
+
+        // 合并回合结束就放锁，别占着让下一个需求干等
+        const held = mergeLocks.get(groupId)
+        if (cp.id === 'merge' && held) {
+          held.release()
+          mergeLocks.delete(groupId)
+          log(`[${groupId}] 已释放合并锁`)
+        }
       },
       onBridgeCheckpoint: async (cp, flow) => {
         await bridgeAction({ groupId, cp, flow, st, replyTo })
       },
       runAgent: async ({ role, checkpoint, prompt, sessionId }) => {
+        // 每个回合占一个执行槽。这是内存和 token 的真实成本所在：
+        // 一个回合就是一个 dsh 子进程，加上可能触发的构建。
+        const slot = await turnPool.acquire({
+          waitMs: 2 * 60 * 60 * 1000,
+          pollMs: 1000,
+          tag: checkpoint.id,
+        })
+        if (!slot) throw new Error('等待执行名额超时（两小时）')
+        try {
         const startedAt = Date.now()
         const timeoutMin = Math.round(stageTimeoutMs(checkpoint.id, config) / 60000)
         log(
@@ -406,6 +541,10 @@ export function createFlowBridge(deps) {
           log(`[${groupId}] 回合完成（${secs}s）：${checkpoint.id}`)
         }
         return { ok, sessionId: r.sessionId, error: ok ? null : why, secs }
+        } finally {
+          // 不管是正常完成、超时还是抛错，执行槽都要还回去
+          slot.release()
+        }
       },
     }
   }
@@ -465,13 +604,26 @@ export function createFlowBridge(deps) {
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
   async function bridgeAction({ groupId, cp, flow, st, replyTo }) {
     if (cp.id === 'wrapup') {
-      const reqDir = join(st.projectDir, 'docs/requirements', flow.reqId)
+      const reqDir = reqDirOf(flow)
       const missing = checkFinalArtifacts(reqDir)
       if (missing.length) {
         await sendPlain(groupId, `收尾检查发现缺产物：${missing.join('、')}`, { replyTo }).catch(() => {})
         return
       }
       await sendPlain(groupId, renderMessage('v2Done', { name: flow.name ?? flow.reqId }, templates), { replyTo }).catch(() => {})
+
+      // 收尾播报完再回收：文档已随合并提交进仓库，本地副本不再需要。
+      // 放在这里而不是合并结束时——wrapup 还要读产物清单做终检，提前删会误报缺产物。
+      const cleaned = cleanupAfterMerge({ groupId, flow: st.flow, log, config })
+      if (cleaned.notes.length) log(`[${groupId}] 收尾清理：${cleaned.notes.join('；')}`)
+
+      // 需求收尾，把 worktree 名额还回去给排队的需求
+      const held = worktreeSlots.get(groupId)
+      if (held) {
+        held.release()
+        worktreeSlots.delete(groupId)
+        log(`[${groupId}] 已释放工作区名额`)
+      }
     }
   }
 
@@ -547,7 +699,7 @@ export function createFlowBridge(deps) {
     if (!st) return
     const text = queued.join('\n')
     // 不 await：这是下一轮，交给调用栈继续
-    handleMessage({ groupId, text, replyTo: null, st, initiator: null }).catch((e) =>
+    handleMessage({ groupId, text, replyTo: null, st, initiator: null, can: null }).catch((e) =>
       log(`[${groupId}] 排队消息处理失败：${e.message}`),
     )
   }
@@ -561,7 +713,7 @@ export function createFlowBridge(deps) {
  * 尝试按位展开成 Q-1 → B 这种形式（读《待提问清单》拿到问题列表），
  * 对不上就原样引用并说明——让 agent 知道这是一串选项字母还是自然语言。
  */
-export function buildAnswerBlock(projectDir, reqId, rawAnswer, lastDecisions) {
+export function buildAnswerBlock(dataDir, rawAnswer, lastDecisions) {
   const answer = String(rawAnswer ?? '').trim()
   if (!answer) return ''
 
@@ -570,7 +722,7 @@ export function buildAnswerBlock(projectDir, reqId, rawAnswer, lastDecisions) {
   const decisions = Array.isArray(lastDecisions) ? lastDecisions.filter((d) => d?.q) : []
   const questions = decisions.length
     ? decisions.map((d, i) => ({ id: `第 ${i + 1} 条`, title: d.q }))
-    : parseQuestionList(join(projectDir, 'docs/requirements', reqId, '待提问清单.md'))
+    : parseQuestionList(join(dataDir, '待提问清单.md'))
   const letters = answer.replace(/[^A-Za-z]/g, '').toUpperCase()
 
   const lines = ['【用户对上一轮提问的回答】', `用户原话：「${answer}」`, '']
@@ -613,6 +765,66 @@ export function parseQuestionList(file) {
     out.push({ id, title: cells[2] })
   }
   return out
+}
+
+/**
+ * 合并完成后的资源回收。
+ *
+ * 为什么删文档目录：合并时已经 rsync 进仓库并提交，远端有了副本，
+ * 本地这份再留着只是占磁盘（100 个需求的设计图就是几百 MB）。
+ * 万一需要追溯，仓库的 docs/requirements/<reqId>/ 里就是完整的一份。
+ */
+function cleanupAfterMerge({ groupId, flow, log, config }) {
+  const notes = []
+
+  // 1. 需求自己的工作区 + 本地 feature 分支
+  if (flow.workDir) {
+    const r = removeWorktree({
+      repoDir: config.repoDir,
+      path: flow.workDir,
+      branch: flow.vars?.featureBranch ?? `feature/${flow.reqId}`,
+    })
+    notes.push(...r.notes)
+    // removeWorktree 的 notes 只在失败时非空
+    if (r.ok) log(`[${groupId}] 已回收工作区：${flow.workDir}`)
+  }
+
+  // 2. 文档目录（仓库里已有归档副本）
+  if (flow.dataDir) {
+    try {
+      rmSync(flow.dataDir, { recursive: true, force: true })
+      log(`[${groupId}] 已清理文档目录：${flow.dataDir}`)
+    } catch (err) {
+      notes.push(`清理文档目录失败：${err.message}`)
+    }
+  }
+
+  return { notes }
+}
+
+/** 从项目目录读 origin 地址；读不到返回空串（由调用方报错） */
+function remoteUrlOf(projectDir) {
+  const r = gitRun(projectDir, ['remote', 'get-url', 'origin'])
+  return r.ok ? r.out : ''
+}
+
+/** 主分支：项目目录上没有 git 时退回 main */
+function detectRepoMainBranch(projectDir) {
+  try {
+    return detectMainBranch(projectDir) ?? 'main'
+  } catch {
+    return 'main'
+  }
+}
+
+/**
+ * 需求产物目录。
+ * 新需求用 flow.dataDir（仓库外）；改造前的需求没有这个字段，退回仓库内老路径，
+ * 这样历史需求还能继续跑完，不会被一次性切断。
+ */
+export function reqDirOf(flow) {
+  if (flow?.dataDir) return flow.dataDir
+  return join(flow.projectDir, 'docs/requirements', flow.reqId)
 }
 
 /**

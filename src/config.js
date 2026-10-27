@@ -71,6 +71,12 @@ export function resolveSkillDir(configured) {
   )
 }
 
+/** 取正整数，非法值回退默认 */
+function posInt(v, fallback) {
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
+}
+
 export function expandHome(p) {
   if (p === '~') return homedir()
   if (p.startsWith('~/')) return join(homedir(), p.slice(2))
@@ -207,6 +213,23 @@ export function loadConfig(configPath) {
         : [],
     // 面板展示用的模型名：配置优先，否则从 profile 的 agent-default-model 推断
     modelLabel: raw.modelLabel ?? readModelLabel(raw.profile),
+    // ── 仓库与工作区 ──
+    // bot 不持有主工作区：只有裸仓库 + 按需求创建的 worktree。
+    repoDir: expandHome(typeof raw.repoDir === 'string' && raw.repoDir.trim() ? raw.repoDir.trim() : '~/.qq-bot/repo.git'),
+    worktreeRoot: expandHome(
+      typeof raw.worktreeRoot === 'string' && raw.worktreeRoot.trim() ? raw.worktreeRoot.trim() : '~/.qq-bot/worktrees',
+    ),
+    dataRoot: expandHome(
+      typeof raw.dataRoot === 'string' && raw.dataRoot.trim() ? raw.dataRoot.trim() : '~/.qq-bot/data',
+    ),
+    // 裸仓库的远端地址；空则从 projectDir 的 origin 推断
+    remoteUrl: typeof raw.remoteUrl === 'string' ? raw.remoteUrl.trim() : '',
+    // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
+    limits: {
+      maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),
+      maxWorktrees: posInt(raw.limits?.maxWorktrees, 12),
+    },
+
     // 管理面板 / 本地 HTTP API
     panel: {
       enabled: raw.panel?.enabled !== false,

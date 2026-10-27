@@ -9,6 +9,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
@@ -21,6 +22,20 @@ const check = (n, c, e = '') => {
 
 const repoRoot = mkdtempSync(join(tmpdir(), 'flowbridge-'))
 const projectDir = join(repoRoot, 'project')
+
+// 造一个「远端」仓库：团队化改造后 dev 阶段要从 origin 建 worktree，
+// 测试里也得有个能被 fetch 的源，否则所有 dev 之后的用例都会卡在初始化。
+const originRepo = join(repoRoot, 'origin.git')
+mkdirSync(originRepo, { recursive: true })
+{
+  const g = (args) => execFileSync('git', args, { cwd: originRepo, stdio: 'ignore' })
+  g(['init', '-q', '-b', 'main'])
+  g(['config', 'user.email', 't@t'])
+  g(['config', 'user.name', 't'])
+  writeFileSync(join(originRepo, 'README.md'), 'init')
+  g(['add', '-A'])
+  g(['commit', '-q', '-m', 'init'])
+}
 mkdirSync(projectDir, { recursive: true })
 for (const role of ['req', 'design', 'tech-plan', 'dev', 'review', 'test', 'acceptance']) {
   mkdirSync(join(repoRoot, 'skills', role), { recursive: true })
@@ -28,7 +43,7 @@ for (const role of ['req', 'design', 'tech-plan', 'dev', 'review', 'test', 'acce
 }
 
 /** 内存版 store + machine，行为对齐真实实现里 v2 用到的部分 */
-function makeDeps({ replyPlan = {} } = {}) {
+function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
   const saved = new Map()
   const sent = []
   const agentCalls = []
@@ -62,7 +77,16 @@ function makeDeps({ replyPlan = {} } = {}) {
       heartbeat: { enabled: false, idleMinutes: 5 },
       dshBin: 'dsh',
       profile: 'test',
-      limits: { maxMessagesPerMinute: 100 },
+      // 团队化改造后：文档写 dataRoot，代码在 worktree 里
+      repoDir: join(repoRoot, 'repo.git'),
+      worktreeRoot: join(repoRoot, 'worktrees'),
+      dataRoot: join(repoRoot, 'data'),
+      remoteUrl: originRepo,
+      // 和线上一致：人工确认模式。不设这个，流程会一路跑到底，
+      // 测试就没法验证「停在某个阶段等用户」的行为。
+      approval,
+      mainBranch: 'main',
+      limits: { maxMessagesPerMinute: 100, maxConcurrentTurns: 2, maxWorktrees: 12, mergeLockWaitMs: 1500 },
     },
     store,
     machine,
@@ -75,8 +99,10 @@ function makeDeps({ replyPlan = {} } = {}) {
       agentCalls.push({ id, sessionId })
       const plan = replyPlan[id] ?? {}
       if (cp && plan.skip !== true) {
-        const reqId = prompt.split('｜')[1]?.split('\n')[0]?.trim()
-        const reqDir = join(projectDir, 'docs/requirements', reqId)
+        // 产物目录从任务包里读——改造后文档不再落在仓库内，
+        // 这里跟着任务包走，不要自己拼路径（否则产物校验必然找不到）
+        const reqDir = prompt.match(/- 文档（[^\n]*写到：(.+)/)?.[1]?.trim()
+        const reqId = reqDir?.split('/').pop() ?? prompt.split('｜')[1]?.split('\n')[0]?.trim()
         mkdirSync(reqDir, { recursive: true })
         for (const out of cp.output ?? []) {
           if (out.endsWith('/')) {
@@ -125,7 +151,7 @@ console.log('\n== 用户回答按问题展开 ==')
     ['| 编号 | 问题 | 会改变什么 | 推荐答案 |', '| --- | --- | --- | --- |',
      '| Q-1 | 弹窗时机 | 范围 | 首次启动 |', '| Q-2 | 是否记住关闭 | 验收 | 记住 |'].join('\n'),
   )
-  const block = buildAnswerBlock(root, 'demo', 'BA')
+  const block = buildAnswerBlock(join(dir), 'BA')
   check('写明是用户回答', block.includes('用户对上一轮提问的回答'))
   check('保留原话', block.includes('「BA」'))
   check('Q-1 对应第一个字母', block.includes('Q-1 弹窗时机 → 用户选 B'), block)
@@ -133,19 +159,19 @@ console.log('\n== 用户回答按问题展开 ==')
   check('说明以用户选择为准', block.includes('不要改回推荐答案'))
 
   // 字母不够时，缺的标成未回答
-  const short = buildAnswerBlock(root, 'demo', 'B')
+  const short = buildAnswerBlock(join(dir), 'B')
   check('字母不足时不硬凑（短于 3 个走原样引用）', !short.includes('用户选 B') || short.includes('自然语言'))
 
   // 自然语言回答不瞎展开
-  const natural = buildAnswerBlock(root, 'demo', '按推荐，但第二个要改成记住')
+  const natural = buildAnswerBlock(join(dir), '按推荐，但第二个要改成记住')
   check('自然语言走原样引用', natural.includes('用户原话') && natural.includes('自然语言'))
 
   // 没有回答就不生成段
-  check('空回答返回空串', buildAnswerBlock(root, 'demo', '') === '')
+  check('空回答返回空串', buildAnswerBlock(join(dir), '') === '')
 
   // 优先用「上一轮 agent 自己提的问题」，不是旧的《待提问清单》
   const decisions = [{ q: '版本号变更是否保留' }, { q: '单测执行方式是否接受' }]
-  const byDecisions = buildAnswerBlock(root, 'demo', 'AA', decisions)
+  const byDecisions = buildAnswerBlock(join(dir), 'AA', decisions)
   check('写明是上一轮提问', byDecisions.includes('按上一轮提问的顺序'), byDecisions)
   check('第一条对应 A', byDecisions.includes('第 1 条 版本号变更是否保留 → 用户选 A'), byDecisions)
   check('第二条对应 A', byDecisions.includes('第 2 条 单测执行方式是否接受 → 用户选 A'), byDecisions)
@@ -197,7 +223,8 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
 
 console.log('\n== 用户回答：需求定稿并复用会话 ==')
 {
-  const { deps, saved, sent, agentCalls } = makeDeps()
+  // 这个用例验证的是「回答后一路推进到收尾」，人工逐阶段确认会打断它
+  const { deps, saved, sent, agentCalls } = makeDeps({ approval: 'auto' })
   const bridge = createFlowBridge(deps)
   const st = newState()
   await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
@@ -327,6 +354,75 @@ console.log('\n== 空消息：提示怎么说需求 ==')
   check('提示直接说需求', sent.some((t) => t.includes('直接说需求')), sent.join(' / '))
 }
 
+// ────────────────────────────── 权限：发起需求 ──────────────────────────────
+console.log('\n== 权限：只有群主能发起需求 ==')
+{
+  const { deps, saved, sent } = makeDeps()
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+
+  // 群管理员（群里是 admin，但不在系统白名单）
+  await bridge.handleMessage({
+    groupId: 'g1',
+    text: '首页加个欢迎弹窗',
+    replyTo: 1,
+    st,
+    initiator: { userId: 'u-admin', nickname: '管理员' },
+    can: async () => ({ ok: false, role: 'admin', need: ['owner'] }),
+  })
+  check('群管理员被拒', !saved.get('g1'), '不应该建 flow')
+  check('提示需要群主', sent.some((t) => t.includes('需要群主权限')), sent.join(' / '))
+
+  // 群主
+  await bridge.handleMessage({
+    groupId: 'g1',
+    text: '首页加个欢迎弹窗',
+    replyTo: 2,
+    st,
+    initiator: { userId: 'u-owner', nickname: '群主' },
+    can: async () => ({ ok: true, role: 'owner' }),
+  })
+  check('群主可以发起', !!saved.get('g1')?.flow, '应该建 flow')
+}
+
+console.log('\n== 权限：没有 can 时不影响内部调用 ==')
+{
+  const { deps, saved } = makeDeps()
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({ groupId: 'g1', text: '加个弹窗', replyTo: 1, st, initiator: null, can: null })
+  check('无 can 时按旧行为放行', !!saved.get('g1')?.flow)
+}
+
+console.log('\n== 审计：记录发起人与确认人 ==')
+{
+  const { deps, saved } = makeDeps({ approval: 'manual' })
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({
+    groupId: 'g1',
+    text: '加个弹窗',
+    replyTo: 1,
+    st,
+    initiator: { userId: 'u-owner', nickname: '群主' },
+    can: async () => ({ ok: true, role: 'owner' }),
+  })
+  check('发起人落盘到群状态', saved.get('g1').initiator?.userId === 'u-owner', JSON.stringify(saved.get('g1').initiator))
+
+  await bridge.handleMessage({
+    groupId: 'g1',
+    text: '通过',
+    replyTo: 2,
+    st: saved.get('g1'),
+    initiator: { userId: 'u-admin2', nickname: '另一个管理员' },
+    can: async () => ({ ok: true, role: 'admin' }),
+  })
+  const flow = saved.get('g1').flow
+  check('确认人记录到 flow', flow.confirmer?.userId === 'u-admin2', JSON.stringify(flow.confirmer))
+  check('确认人带阶段', flow.confirmer?.stage === 'req-questions', String(flow.confirmer?.stage))
+}
+
 rmSync(repoRoot, { recursive: true, force: true })
+
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

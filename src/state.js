@@ -6,7 +6,7 @@
  * - 续跑必须带同一个 sessionId，否则上下文全丢
  * - 状态落盘到 .state/，bridge 重启后还能接着聊
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const IDLE = 'idle'
@@ -44,7 +44,14 @@ export class SessionStore {
 
   save(groupId, state) {
     this.#ensureDir()
-    writeFileSync(this.#file(groupId), JSON.stringify(state, null, 2), 'utf8')
+    const file = this.#file(groupId)
+    // 先写临时文件再 rename：rename 在同一文件系统上是原子的。
+    // 直接 writeFileSync 如果进程在写一半被杀（或断电），会留下残缺 JSON，
+    // 下次 get() 解析失败就当成「这个群没跑过」——流程状态静默丢失。
+    // 用临时文件最坏情况是保留上一次成功的状态，而不是产生垃圾。
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
+    renameSync(tmp, file)
   }
 
   clear(groupId) {
