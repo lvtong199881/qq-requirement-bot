@@ -265,7 +265,14 @@ bridge 时会带 `x-panel-token`，由 bridge 校验（没配 token 时 bridge �
       "custom": false               // 是否被改过
     }
   ],
-  "messageVars": { "stage": "阶段名，如「开发」" }   // 所有可用变量及说明
+  "messageVars": { "stage": "阶段名，如「开发」" },   // 所有可用变量及说明
+  "stageTimeouts": {            // 分阶段回合超时（分钟）
+    "default": 30,              // 其他阶段
+    "dev": 60,                  // 开发（含返工修正）
+    "test": 60,                 // 测试
+    "acceptance": 60            // 验收
+  },
+  "timeoutOptions": [10, 15, 30, 60]   // 面板下拉只给这几档
 }
 ```
 
@@ -273,12 +280,16 @@ bridge 时会带 `x-panel-token`，由 bridge 校验（没配 token 时 bridge �
 
 ### `POST /api/settings/save`
 
-保存配置 → 落盘 → 通知所有实例热更新。只传要改的字段，两个都不传会 400。
+保存配置 → 落盘 → 通知所有实例热更新。只传要改的字段，一个都不传会 400。
 
 ```jsonc
 { "adminUsers": ["10001", "10002"] }
 { "messageTemplates": { "ack": "收到，开始处理。" } }
+{ "stageTimeouts": { "default": 30, "dev": 60, "test": 60, "acceptance": 60 } }
 ```
+
+`stageTimeouts` 的四个键都必须给，且只能是 `10 / 15 / 30 / 60`——别的值返回 400，
+避免把回合切成碎片。保存后热更新会同时把 `default` 同步到旧的 `turnTimeoutMs`。
 
 响应 = 保存后的设置（同 `GET /api/settings`），外加每个实例的热更新结果：
 

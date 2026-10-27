@@ -7,8 +7,8 @@
 ## 会消耗 token 的两个
 
 ```bash
-node test/e2e.js              # 端到端：mock OneBot + 真 dsh，走一遍「@ → 回合 → 回群」
 node test/full.js             # 全链路：注入群消息 → 跑 dsh → 收回复
+node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 ```
 
 `test/full.js` 的行为是**真把 `src/index.js` 当进程跑起来**，不是单元测试级别的模拟。
@@ -16,11 +16,32 @@ node test/full.js             # 全链路：注入群消息 → 跑 dsh → 收�
 ## 不消耗 token 的集成测试
 
 ```bash
-node test/e2e.js --no-llm     # 只测 OneBot 收发与路由，不起 dsh
 node test/full.js --no-llm    # 起真实 bridge 进程，验证握手与路由
 node test/resilience.js       # NapCat 没起来 / 中途断开时，bridge 必须活着并自愈
 node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参、错误码
 ```
+
+## 代码结构
+
+```
+src/
+  index.js          入口：连 OneBot、权限闸门、面板 API
+  flow-bridge.js    消息入口 + 播报 + feature 分支 + 合并
+  flow/
+    flow.js         阶段定义与状态机（纯函数，不碰 fs）
+    orchestrator.js 任务包组装、回执校验、产物核对
+    flow-runner.js  连续推进循环
+    board.js        编排记录渲染
+  infra/git.js      git 操作（分支、合并、diff）
+  ui/               panel.js / server.js / messages.js / format.js
+  transport/        onebot.js
+  config.js  state.js  runner.js  commands.js  doctor.js
+skills/             按阶段拆的角色卡，每回合只加载一张
+test/               独立测试脚本，没有框架
+```
+
+依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
+和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
 
 ## 纯逻辑单测
 
@@ -46,7 +67,7 @@ node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参�
 | `board.js` | 编排记录渲染：阶段表格、停点、待决策，状态推导 |
 | `git-branch.js` | feature 分支：从主分支拉、已存在则切过去、合并回主分支、冲突不自动解决 |
 
-改流程逻辑时，先改 `src/flow.js` 的 `CHECKPOINTS`，跑 `node test/flow.js`；
+改流程逻辑时，先改 `src/flow/flow.js` 的 `CHECKPOINTS`，跑 `node test/flow.js`；
 它挂了就别往下改，后面的循环都是按这张表走的。
 
 
