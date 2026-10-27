@@ -704,7 +704,17 @@ export function createFlowBridge(deps) {
     )
   }
 
-  return { handleMessage }
+  /** 并发资源快照，面板要显示「几个槽位在用 / 谁在排队」 */
+  function poolStats() {
+    return {
+      worktree: worktreePool.stats(),
+      turns: turnPool.stats(),
+      pendingWorktrees: worktreePool.position(),
+      pendingTurns: turnPool.position(),
+    }
+  }
+
+  return { handleMessage, poolStats }
 }
 
 /**

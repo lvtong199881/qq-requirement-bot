@@ -32,7 +32,10 @@ src/
     orchestrator.js 任务包组装、回执校验、产物核对
     flow-runner.js  连续推进循环
     board.js        编排记录渲染
-  infra/git.js      git 操作（分支、合并、diff）
+  infra/
+    git.js          git 操作（分支、合并、diff）
+    repo.js         裸仓库与 worktree（每个需求一个工作区）
+    lock.js         跨平台文件锁 + 计数信号量
   ui/               panel.js / server.js / messages.js / format.js
   transport/        onebot.js
   config.js  state.js  runner.js  commands.js  doctor.js
@@ -42,6 +45,38 @@ test/               独立测试脚本，没有框架
 
 依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
 和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
+
+## 数据放在哪
+
+团队化改造后，bot **不持有任何主工作区**，只有裸仓库和按需创建的 worktree：
+
+```
+~/.qq-bot/
+  repo.git             裸仓库（~100 MB），只存对象和引用
+  worktrees/<reqId>/   每个需求的代码工作区，dev 阶段才创建
+  worktrees/_merge/    合并专用工作区，全局串行使用
+  data/<reqId>/        需求文档（PRD、方案、报告），不进 git
+```
+
+| 阶段 | 文档写哪 | 代码改哪 |
+| --- | --- | --- |
+| 澄清 / 定稿 / 设计 / 技术方案 | `data/<reqId>/` | 不需要 |
+| dev / review / test / acceptance | `data/<reqId>/` | `worktrees/<reqId>/` |
+| merge | 归档进仓库 | `worktrees/_merge/` |
+
+为什么不共用一个工作目录：两个需求同时在 dev 时，`git checkout` 会把别人的工作目录切走，
+而且没有任何报错——代码就写到了错误的分支上。worktree 让每个需求独占一个目录。
+
+合并成功后工作区、本地分支、文档目录都会回收（文档已经随合并提交进仓库）。
+
+### 迁移旧数据
+
+改造前需求文档在仓库内的 `docs/requirements/`。迁移脚本把进行中的需求搬到 `data/`：
+
+```bash
+node src/migrate.js            # 预演，只打印会做什么
+node src/migrate.js --apply    # 真的执行（幂等，可重复跑）
+```
 
 ## 纯逻辑单测
 

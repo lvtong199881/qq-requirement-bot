@@ -477,6 +477,10 @@ function buildSnapshot({ full = true } = {}) {
         initiator: g.initiator ?? null,
         lastActiveAt: g.lastActiveAt ?? null,
         activeTurn: runtime.turnInfo(g.groupId),
+        // 团队化改造后每个需求有自己的工作区和文档目录，面板要能看到占用了什么
+        workDir: flow.workDir ?? null,
+        dataDir: flow.dataDir ?? null,
+        featureBranch: flow.vars?.featureBranch ?? null,
       }
       if (full) {
         item.stageStartedAt = g.stageStartedAt || null
@@ -538,6 +542,8 @@ function buildSnapshot({ full = true } = {}) {
     },
     groups,
     resources: runtime.resources(),
+    // 并发闸门快照：面板要回答「还能再并行几个需求」「谁在排队」
+    pools: flowBridge.poolStats?.() ?? null,
     at: Date.now(),
   }
   if (full) snap.recentEvents = runtime.recentLogs(50)

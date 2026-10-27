@@ -80,6 +80,23 @@ export function createBridgeServer({
         return json(res, 200, { ok: true, pid: process.pid })
       }
 
+      // 健康检查：给 systemd / 反向代理 / 监控用。
+      // 不只看「进程活着」，还要看 OneBot 连接——连不上就处理不了消息，
+      // 这时候把实例从负载里摘掉比让它继续挂着更有意义。
+      if (method === 'GET' && path === '/healthz') {
+        const snap = summary ? summary() : snapshot()
+        const connected = snap.onebot?.connected === true
+        const busy = snap.pools?.turns ?? null
+        return json(res, connected ? 200 : 503, {
+          ok: connected,
+          pid: process.pid,
+          onebot: connected,
+          groups: (snap.groups ?? []).length,
+          pools: busy,
+          uptimeSec: Math.round((Date.now() - snap.instance.startedAt) / 1000),
+        })
+      }
+
       // ── 写操作 ──
       if (method === 'POST') {
         if (!needToken(req)) return json(res, 403, { ok: false, error: 'token 无效' })
