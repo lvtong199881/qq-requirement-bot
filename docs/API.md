@@ -182,8 +182,8 @@ bridge 时会带 `x-panel-token`，由 bridge 校验（没配 token 时 bridge �
 
 ### `POST /api/groups/restart`
 
-参数同 stop。先中断，等 300ms，再用「继续」骨架重起一轮（带需求锚点，
-从编排记录接着跑，不丢 sessionId）。
+参数同 stop。先中断，等 300ms，再把状态从 running/blocked 拉回可执行，
+然后走一遍正常的消息入口（等价于在群里发一句「继续」），从当前阶段接着跑。
 
 响应：`{ "ok": true, "message": "已重启" }`
 
