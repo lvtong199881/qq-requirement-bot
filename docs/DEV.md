@@ -42,6 +42,24 @@ node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参�
 | `timeline.js` | 心跳 / 回执话术边界：别把「刚开始」播成「已进行 0 分钟」 |
 | `turn-payload.js` | 回合投喂内容的完整性 |
 
+## v2 编排（状态机驱动）
+
+`orchestrator: "v2"` 时启用。流程不再由 agent 自己推进，而是 bridge 持有状态机。
+这四组测试覆盖 v2，全部不消耗 token：
+
+| 脚本 | 覆盖什么 |
+| --- | --- |
+| `flow.js` | 阶段推进、评审闸门、返工计数、两种「等用户」语义 |
+| `orchestrator.js` | 任务包组装、回执结构校验、产物核对（含 gitDiff 模式） |
+| `flow-runner.js` | 连续推进循环：什么时候停、什么时候重试、何时换会话 |
+| `flow-bridge.js` | 消息入口三态：新需求 / 回答 / 排队，以及卡住重试 |
+| `board.js` | 编排记录渲染：阶段表格、停点、待决策，状态推导 |
+| `git-branch.js` | feature 分支：从主分支拉、已存在则切过去、合并回主分支、冲突不自动解决 |
+
+改 v2 的流程逻辑时，先改 `src/flow.js` 的 `CHECKPOINTS`，跑 `node test/flow.js`；
+它挂了就别往下改，后面的循环都是按这张表走的。
+
+
 ## Mock OneBot
 
 `test/mock-onebot.js` 是一个手写的极简 OneBot 服务端，自带 WS 帧编解码，**不需要真的连 QQ 就能测**。`e2e.js`、`full.js`、`resilience.js` 都靠它造群消息和断线场景。

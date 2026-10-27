@@ -112,6 +112,13 @@ export function runTurn({
     if (/ECONNREFUSED|ETIMEDOUT|network/i.test(msg)) {
       return '网络错误，连不上模型服务，稍后发「继续」重试。'
     }
+    if (/EPERM|EACCES|operation not permitted/i.test(msg)) {
+      return '文件权限不足（EPERM）：dsh 进程被沙箱限制，写不了 ~/.dsh。' +
+        '请从普通终端启动 bridge，不要在受限环境里跑。'
+    }
+    if (/ENOENT.*dsh|spawn dsh/i.test(msg)) {
+      return '找不到 dsh 可执行文件：检查 bot.config.json 的 dshBin 是否指向真实路径。'
+    }
     return `回合异常终止：${msg.slice(0, 200)}`
   }
   runnerClassify = classifyError
@@ -126,15 +133,41 @@ export function runTurn({
   signal?.addEventListener('abort', abortHandler, { once: true })
 
   return new Promise((resolve) => {
-    child.on('close', (code) => {
+    // spawn 失败（dsh 不在 PATH、路径配错、没有执行权限）不会触发 close，
+    // 只会发一个 error 事件。不接这个事件就是未捕获异常，整个 bridge 进程直接死——
+    // 试跑第一轮就这么崩过一次。转成一次失败的回合，交给上层返工/报错逻辑。
+    let settled = false
+    const done = (payload) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
       signal?.removeEventListener('abort', abortHandler)
+      resolve(payload)
+    }
+
+    child.on('error', (err) => {
+      done({
+        sessionId: sid,
+        finalText,
+        exitCode: null,
+        timedOut: false,
+        stderr: stderrTail,
+        turnError: err.message,
+        errorSummary: `启动 dsh 失败（${err.code ?? 'ERROR'}）：${err.message}`,
+        sessionLocked: false,
+        spawnFailed: true,
+      })
+    })
+
+    child.on('close', (code) => {
       // 有些错误不会产生 turn_end 事件，只会打到 stderr 然后进程退出
       //（比如 session 写锁被占用）。所以两类来源都要看。
       const fatal = turnError ?? (code !== 0 ? stderrTail : null)
       const sessionLocked = /already owned by an active write handle/i.test(fatal ?? '')
+      // 沙箱/权限类错误重试一万次也不会好，标记出来让上层直接报错，别烧三轮返工
+      const envFailed = /EPERM|EACCES|operation not permitted/i.test(fatal ?? '')
 
-      resolve({
+      done({
         sessionId: sid,
         finalText,
         exitCode: code,
@@ -144,6 +177,7 @@ export function runTurn({
         // session 被锁有专门的重试路径，不走通用异常播报
         errorSummary: sessionLocked ? null : (runnerClassify?.(fatal) ?? null),
         sessionLocked,
+        envFailed,
       })
     })
   })

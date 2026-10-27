@@ -1,6 +1,10 @@
 # 真实配置含 QQ 号、群号、项目绝对路径，不入库
 bot.config.json
 
+# 迁移/试跑时的备份，不入库
+*.bak-*
+.state.bak-*/
+
 # 运行产物
 node_modules/
 *.log

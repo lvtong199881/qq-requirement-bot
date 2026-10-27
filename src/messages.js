@@ -32,6 +32,58 @@ export const MESSAGE_VARS = {
 }
 
 export const MESSAGE_TEMPLATES = {
+  // ── v2 编排：由状态机驱动，不经任何文本解析 ──
+  v2Kickoff: {
+    group: 'v2 流程',
+    label: '受理需求',
+    desc: '收到需求、开始跑第一个阶段',
+    vars: ['reqId'],
+    template: '收到，开始处理。需求标识：{{reqId}}',
+  },
+  v2StageStart: {
+    group: 'v2 流程',
+    label: '阶段开始',
+    desc: '心跳和阶段切换时说明现在在干什么',
+    vars: ['stage'],
+    template: '当前「{{stage}}」阶段中。',
+  },
+  v2StageDone: {
+    group: 'v2 流程',
+    label: '阶段完成',
+    vars: ['stage'],
+    template: '{{stage}}阶段已完成。',
+  },
+  v2Artifact: {
+    group: 'v2 流程',
+    label: '产物回传',
+    vars: ['artifacts'],
+    template: '产物：{{artifacts}}',
+  },
+  v2Waiting: {
+    group: 'v2 流程',
+    label: '等用户确认',
+    vars: ['content'],
+    template: '等你确认：\n{{content}}',
+  },
+  v2Blocked: {
+    group: 'v2 流程',
+    label: '卡住',
+    vars: ['reason'],
+    template: '卡住了：{{reason}}',
+  },
+  v2Done: {
+    group: 'v2 流程',
+    label: '需求完成',
+    vars: ['reqId'],
+    template: '需求 {{reqId}} 全部完成。',
+  },
+  v2Queued: {
+    group: 'v2 流程',
+    label: '排队',
+    vars: [],
+    template: '正在跑，这条消息已排队，本轮结束后处理。',
+  },
+
   // ── 消息 1：用户发消息后的回执 ──
   ack: {
     group: '回执（消息 1）',

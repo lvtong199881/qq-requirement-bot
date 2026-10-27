@@ -166,6 +166,9 @@ export class GroupStateMachine {
       pendingReject: saved?.pendingReject ?? null,
       // /release 等二次确认
       pendingRelease: saved?.pendingRelease ?? null,
+      // v2 编排状态：checkpoint、返工计数、roleSessions、等待事项全在里面。
+      // 和上面那批旧字段并存，v1 读旧的、v2 读这个，互不影响。
+      flow: saved?.flow ?? null,
     }
   }
 

@@ -9,6 +9,8 @@
 import { loadConfig, resolveModelEnv } from './config.js'
 import { OneBot } from './onebot.js'
 import { runTurn } from './runner.js'
+import { createFlowBridge } from './flow-bridge.js'
+import { getCheckpoint, CHECKPOINTS } from './flow.js'
 import { parseGate, gateInstructions } from './protocol.js'
 import { sanitize, RateLimiter, sleep, formatDuration } from './format.js'
 import { Runtime } from './runtime.js'
@@ -94,7 +96,22 @@ const runtime = new Runtime({
 const log = (...a) => runtime.info(...a)
 const detail = (...a) => config.verbose && runtime.log('debug', ...a)
 
+// v2 编排接入层。createFlowBridge 只捕获依赖，不立刻执行任何动作；
+// sendPlain 是函数声明会提升，所以这里引用它不会碰到 TDZ。
+const flowBridge = createFlowBridge({
+  config,
+  store,
+  machine,
+  log,
+  sendPlain,
+  runTurn,
+  bot,
+  modelEnv,
+  repoRoot: config.repoRoot,
+})
+
 log(`配置就绪：skill=${config.skillDir}`)
+log(`编排实现：${config.orchestrator}${config.orchestrator === 'v2' ? '（状态机驱动）' : '（旧版：解析标记与编排记录）'}`)
 log(`项目目录：${config.projectDir}`)
 log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
 
@@ -829,6 +846,13 @@ bot.on('message', async (frame) => {
   }
   log(`[${groupId}] 收到：${text.slice(0, 80)}`)
 
+  // ── v2 编排：状态机是唯一真相源，不走下面的意图路由 ──
+  // 分流点放在这里而不是更早，是因为权限、群信息、initiator 都已经就位。
+  // v2 自己处理 /stop 和 /release，其余消息按「新需求 / 回答 / 排队」三态处理。
+  if (config.orchestrator === 'v2') {
+    return flowBridge.handleMessage({ groupId, text, replyTo, st, initiator })
+  }
+
   // ── /指令（白名单）────────────────────────────────────────────
   const cmd = parseCommand(text)
   if (cmd) {
@@ -1175,6 +1199,22 @@ cleanupOrphanStates()
  * 两者共用同一份计算，避免列表和详情各算一套、结果对不上。
  * 列表每 3 秒轮询一次，把 50 条日志和阶段表都带上纯属浪费带宽。
  */
+/** 从 v2 流状态推导阶段列表，给面板详情用 */
+function flowStages(flow) {
+  const main = CHECKPOINTS.filter((c) => !['fix', 're-review', 'merge-fix'].includes(c.id))
+  const idx = main.findIndex((c) => c.id === flow.current)
+  return main.map((c, i) => {
+    if (idx >= 0 && i < idx) return { name: c.label, status: '已完成' }
+    if (idx === i) {
+      if (flow.status === 'done') return { name: c.label, status: '已完成' }
+      if (flow.status === 'blocked') return { name: c.label, status: '阻塞' }
+      if (flow.status === 'waiting_user') return { name: c.label, status: '等待确认' }
+      return { name: c.label, status: '进行中' }
+    }
+    return { name: c.label, status: '未开始' }
+  })
+}
+
 function buildSnapshot({ full = true } = {}) {
   const groups = machine
     .listAll()
@@ -1187,6 +1227,36 @@ function buildSnapshot({ full = true } = {}) {
       }
     })
     .map((g) => {
+    // v2：状态机自己就知道在哪一步，不需要解析编排记录。
+    // 以前面板和回执都从同一份 markdown 里猜，格式一改两边一起错。
+    if (g.flow) {
+      const flow = g.flow
+      const cp = flow.current ? getCheckpoint(flow.current) : null
+      const statusText =
+        { running: '进行中', waiting_user: '等你确认', blocked: '卡住', done: '已完成' }[flow.status] ?? '未开始'
+      const item = {
+        groupId: g.groupId,
+        groupName: knownGroups.get(g.groupId)?.name ?? null,
+        reqId: flow.reqId ?? null,
+        stage: cp?.label ?? (flow.status === 'done' ? '已交付' : null),
+        stageStatus: statusText,
+        status: flow.status === 'done' ? 'idle' : 'waiting',
+        waitingLabel: flow.waiting?.decisions?.length
+          ? `${flow.waiting.decisions.length} 项待决策`
+          : flow.waiting?.reason ?? '',
+        turn: g.turn ?? 0,
+        initiator: g.initiator ?? null,
+        lastActiveAt: g.lastActiveAt ?? null,
+        activeTurn: runtime.turnInfo(g.groupId),
+      }
+      if (full) {
+        item.stageStartedAt = g.stageStartedAt || null
+        item.stages = flowStages(flow)
+      }
+      return item
+    }
+
+    // v1：老路径，从编排记录解析
     const table = groupStageTable(g)
     const stages = table.stages
     const running = stages.find((x) => isStageRunning(x.status))

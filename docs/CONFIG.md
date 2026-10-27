@@ -12,6 +12,7 @@
   "skillDir": "",                                  // 留空 = 自动探测（推荐）
   "dshBin": "dsh",
   "profile": "qqbot",
+  "orchestrator": "v1",                            // v1=旧版；v2=状态机驱动（见下文）
 
   "bot": { "qq": "", "name": "产品同学" },         // 群里显示的昵称
 
@@ -58,3 +59,15 @@
 ```
 
 **关于 `skillDir`**：默认留空。bridge 会依次探测 `$QQ_RS_SKILL_ROOT/requirement-spec`、`~/.agents/skills/requirement-spec`、`~/.dsh/skills/requirement-spec` 等位置，用 `SKILL.md` 里的 `name: requirement-spec` 校验是不是对的那份。换机器、多人共用、目录搬家都不用改配置。只有确实要指向特殊位置时才显式写。
+
+## 编排实现：v1 / v2
+
+| 值 | 流程谁控制 | 当前阶段从哪来 | 备注 |
+| --- | --- | --- | --- |
+| `v1`（默认） | agent 读整份 requirement-spec 自己推进 | 解析 `[[WAITING]]` 标记 + 编排记录表格 | 现网在跑 |
+| `v2` | bridge 按 `src/flow.js` 的 checkpoint 表推进 | 状态机自己持有，不解析任何文本 | 新需求试跑 |
+
+v2 下每个阶段的能力由 `skills/<角色>/SKILL.md` 提供，bridge 只负责顺序、输入清单、产物校验、返工和停点。
+两套实现并存：群状态里的 `flow` 字段归 v2，`stage/finishedStages/...` 归 v1，互不影响。
+验证完再删 v1，不用一次性替换。
+
