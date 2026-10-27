@@ -70,4 +70,6 @@ description: 评审 agent —— 相当于同事工程师做 code review。只�
 ```
 
 `blockers` 是本阶段的核心产出：阻断和应修逐条写进去（`severity: "blocker"`），建议项也写（`severity: "suggestion"`）。bridge 靠这个决定「回开发修」还是「放行测试」。
+
+**有需要用户拍板的事，`status` 用 `needs_input`，不要用 `done`。** 用 `done` 带 `decisions` 会被当成「确认通过」直接放行，问题没人回答。
 **不要在正文里问用户**。

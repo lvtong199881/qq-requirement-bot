@@ -1,5 +1,5 @@
-import { formatDuration } from '../src/format.js'
-import { renderMessage } from '../src/messages.js'
+import { formatDuration } from '../src/ui/format.js'
+import { renderMessage } from '../src/ui/messages.js'
 
 /** 心跳/回执的话术边界：曾经把「阶段刚开始」播成「已进行 0 分钟」 */
 

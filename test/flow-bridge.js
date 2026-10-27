@@ -10,8 +10,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock } from '../src/flow-bridge.js'
-import { getCheckpoint } from '../src/flow.js'
-import { receiptFile } from '../src/orchestrator.js'
+import { getCheckpoint } from '../src/flow/flow.js'
+import { receiptFile } from '../src/flow/orchestrator.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {
@@ -142,6 +142,14 @@ console.log('\n== 用户回答按问题展开 ==')
 
   // 没有回答就不生成段
   check('空回答返回空串', buildAnswerBlock(root, 'demo', '') === '')
+
+  // 优先用「上一轮 agent 自己提的问题」，不是旧的《待提问清单》
+  const decisions = [{ q: '版本号变更是否保留' }, { q: '单测执行方式是否接受' }]
+  const byDecisions = buildAnswerBlock(root, 'demo', 'AA', decisions)
+  check('写明是上一轮提问', byDecisions.includes('按上一轮提问的顺序'), byDecisions)
+  check('第一条对应 A', byDecisions.includes('第 1 条 版本号变更是否保留 → 用户选 A'), byDecisions)
+  check('第二条对应 A', byDecisions.includes('第 2 条 单测执行方式是否接受 → 用户选 A'), byDecisions)
+  check('不再混入旧清单的问题', !byDecisions.includes('弹窗时机'), byDecisions)
   rmSync(root, { recursive: true, force: true })
 }
 
@@ -183,7 +191,7 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
   check('首次会话是新起（无 sessionId）', agentCalls[0].sessionId === null)
   check('播报受理', sent.some((t) => t.includes('开始处理')))
   check('播报阶段完成', sent.some((t) => t.includes('需求澄清阶段已完成')))
-  check('播报在等用户', sent.some((t) => t.includes('等你回复')))
+  check('播报在等用户', sent.some((t) => t.includes('回复「通过」') || t.includes('等你回复')))
   check('需求绑进群状态', saved.get('g1').reqId === flow.reqId, `${saved.get('g1').reqId} vs ${flow.reqId}`)
 }
 

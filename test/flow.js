@@ -15,7 +15,7 @@ import {
   resumeFromUser,
   needsAgent,
   FIRST_CHECKPOINT,
-} from '../src/flow.js'
+} from '../src/flow/flow.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {

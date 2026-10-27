@@ -9,9 +9,9 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { runFlow } from '../src/flow-runner.js'
-import { receiptFile } from '../src/orchestrator.js'
-import { initialState, getCheckpoint, CHECKPOINTS, resumeFromUser } from '../src/flow.js'
+import { runFlow } from '../src/flow/flow-runner.js'
+import { receiptFile } from '../src/flow/orchestrator.js'
+import { initialState, getCheckpoint, CHECKPOINTS, resumeFromUser } from '../src/flow/flow.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {

@@ -166,11 +166,22 @@
   .btn-primary{background:#e7f0fb;border-color:#b6d3f2;color:#0969da}
   .btn-primary:hover{background:#d6e6fa;color:#0757b8}
 
+  /* 二级页返回 */
+  .page-head.crumbs{display:flex;align-items:center;gap:12px}
+  .page-head.crumbs h1{margin:0}
+
   /* 设置页 */
+  .timeout-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0}
+  .timeout-item{display:flex;flex-direction:column;gap:6px}
+  .timeout-item .k{font-size:12px;color:var(--dim)}
   .panel{width:100%}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+  /* 标题+描述在左、操作按钮在右 */
+  .card-row{display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .card-row h2{margin:0 0 2px}
+  .card-row .desc{margin:0}
   .card h2{margin:0 0 6px;font-size:13.5px;font-weight:600}
-  .card .desc{margin:0 0 16px;color:var(--dim);font-size:12.5px;line-height:1.75}
+  .card .desc{margin:0 0 8px;color:var(--dim);font-size:12.5px;line-height:1.75}
   .field{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:8px;
     color:var(--text);padding:10px 12px;font:13px/1.6 ui-monospace,Menlo,monospace;
     outline:none;transition:.12s;resize:vertical}
@@ -365,6 +376,19 @@
           <div class="kv-item"><span class="k">心跳间隔</span><span class="v">{{ inst.config?.heartbeatMinutes ?? '—' }} 分钟</span></div>
           <div class="kv-item"><span class="k">回合超时</span><span class="v">{{ inst.config?.turnTimeoutMin ?? '—' }} 分钟</span></div>
           <div class="kv-item"><span class="k">服务群数</span><span class="v">{{ inst.groups?.length ?? 0 }}</span></div>
+          <div class="kv-item" style="grid-column:1/-1">
+            <span class="k">当前需求</span>
+            <span class="v">
+              <template v-if="inst.groups?.length">
+                <div v-for="g in inst.groups" :key="g.groupId" style="line-height:1.7">
+                  <code style="color:var(--blue)">{{ g.reqId || '未绑定' }}</code>
+                  <span class="muted"> · {{ g.stage || '未开始' }} · {{ g.stageStatus || '—' }}</span>
+                  <span class="muted"> · 群 {{ g.groupId }}</span>
+                </div>
+              </template>
+              <template v-else>—</template>
+            </span>
+          </div>
           <div class="kv-item" style="grid-column:1/-1"><span class="k">项目目录</span><span class="v">{{ inst.config?.projectDir || '—' }}</span></div>
           <div class="kv-item" style="grid-column:1/-1"><span class="k">工作目录</span><span class="v">{{ inst.instance?.cwd || '—' }}</span></div>
           <div class="kv-item" style="grid-column:1/-1"><span class="k">Node 版本</span><span class="v">{{ inst.instance?.nodeVersion || '—' }}</span></div>
@@ -372,30 +396,19 @@
       </div>
     </template>
 
-    <!-- ===== 设置 ===== -->
-    <template v-if="view === 'settings'">
-      <div class="page-head"><h1>设置</h1></div>
+    <!-- ===== 群消息文案（设置下的二级页） ===== -->
+    <template v-if="view === 'messages'">
+      <div class="page-head crumbs">
+        <button class="menu-btn" @click="switchView('settings')">← 设置</button>
+        <h1>群消息文案</h1>
+      </div>
       <div class="panel">
         <div class="card">
-          <h2>指令白名单</h2>
           <p class="desc">
-            名单里的 QQ 号可以在任意群驱动 bot。群主和群管理员默认就能用，不必写在这里。<br>
-            多个 QQ 号用逗号分隔（中英文都行）；留空表示不额外放行任何成员。
+            bot 在群里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
+            留空保存 = 该条恢复默认；带 <span style="color:#0969da">●</span> 的表示已自定义。
           </p>
-          <textarea class="field" :class="{ invalid: !!settingsError }" v-model="adminInput"
-                    rows="4" placeholder="10001, 10002"
-                    @input="settingsError = ''; settingsOk = ''"></textarea>
-          <div class="row">
-            <button class="menu-btn btn-primary" @click="saveSettings()" :disabled="settingsSaving">
-              {{ settingsSaving ? '保存中…' : '保存' }}
-            </button>
-            <button class="menu-btn" @click="loadSettings()" :disabled="settingsSaving">重置</button>
-            <span v-if="settingsError" class="msg err">{{ settingsError }}</span>
-            <span v-else-if="settingsOk" class="msg ok">{{ settingsOk }}</span>
-          </div>
-        </div>
 
-        <div class="card">
           <h2>群消息文案</h2>
           <p class="desc">
             bot 在群里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
@@ -433,6 +446,67 @@
             <span v-if="messagesOk" class="msg ok">{{ messagesOk }}</span>
             <span v-if="messageErrors._" class="msg err">{{ messageErrors._ }}</span>
           </div>
+                </div>
+      </div>
+    </template>
+
+    <!-- ===== 设置 ===== -->
+    <template v-if="view === 'settings'">
+      <div class="page-head"><h1>设置</h1></div>
+      <div class="panel">
+        <div class="card">
+          <h2>指令白名单</h2>
+          <p class="desc">
+            名单里的 QQ 号可以在任意群驱动 bot。群主和群管理员默认就能用，不必写在这里。<br>
+            多个 QQ 号用逗号分隔（中英文都行）；留空表示不额外放行任何成员。
+          </p>
+          <textarea class="field" :class="{ invalid: !!settingsError }" v-model="adminInput"
+                    rows="4" placeholder="10001, 10002"
+                    @input="settingsError = ''; settingsOk = ''"></textarea>
+          <div class="row">
+            <button class="menu-btn btn-primary" @click="saveSettings()" :disabled="settingsSaving">
+              {{ settingsSaving ? '保存中…' : '保存' }}
+            </button>
+            <button class="menu-btn" @click="loadSettings()" :disabled="settingsSaving">重置</button>
+            <span v-if="settingsError" class="msg err">{{ settingsError }}</span>
+            <span v-else-if="settingsOk" class="msg ok">{{ settingsOk }}</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>阶段超时</h2>
+          <p class="desc">
+            每个阶段的回合上限。开发、测试、验收要跑构建、装包和逐条核对，默认给 60 分钟；
+            其余阶段主要是读写文档，30 分钟足够。改完点保存立即生效，不用重启。
+          </p>
+          <div class="timeout-grid">
+            <label v-for="t in timeoutFields" :key="t.key" class="timeout-item">
+              <span class="k">{{ t.label }}</span>
+              <select class="field" v-model.number="stageTimeouts[t.key]"
+                      @change="settingsError = ''; settingsOk = ''">
+                <option v-for="n in timeoutOptions" :key="n" :value="n">{{ n }} 分钟</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button class="menu-btn btn-primary" @click="saveTimeouts()" :disabled="settingsSaving">
+              {{ settingsSaving ? '保存中…' : '保存' }}
+            </button>
+            <button class="menu-btn" @click="loadSettings()" :disabled="settingsSaving">重置</button>
+            <span v-if="settingsError" class="msg err">{{ settingsError }}</span>
+            <span v-else-if="settingsOk" class="msg ok">{{ settingsOk }}</span>
+          </div>
+        </div>
+
+        <div class="card card-row">
+          <div>
+            <h2>群消息文案</h2>
+            <p class="desc">
+              bot 在群里说的话，按四类消息 + 交互提示分组，共 {{ messages.length || 40 }} 条。
+              改完保存所有实例立即生效。
+            </p>
+          </div>
+          <button class="menu-btn btn-primary" @click="switchView('messages')">编辑 →</button>
         </div>
 
         <div class="card">
@@ -503,7 +577,8 @@
           <dl class="kv">
             <dt>PID</dt><dd>{{ modal.inst.instance?.pid }}</dd>
             <dt>端口</dt><dd>{{ modal.inst.instance?.port }}</dd>
-            <dt>需求名</dt><dd>{{ modal.group.reqId || '—' }}</dd>
+            <dt>需求标识</dt><dd><code style="color:var(--blue)">{{ modal.group.reqId || '—' }}</code></dd>
+            <dt>需求名称</dt><dd>{{ modal.group.name || '—' }}</dd>
             <dt>QQ 群名</dt><dd>{{ modal.group.groupName || '—' }}</dd>
             <dt>群 ID</dt><dd>{{ modal.group.groupId }}</dd>
             <dt>发起人</dt><dd>{{ modal.group.initiator?.nickname || '—' }}<span v-if="modal.group.initiator?.userId"> ({{ modal.group.initiator.userId }})</span></dd>
@@ -578,6 +653,14 @@ createApp({
 
     // 设置页
     const adminInput = ref('')
+    const stageTimeouts = ref({ default: 30, dev: 60, test: 60, acceptance: 60 })
+    const timeoutOptions = ref([10, 15, 30, 60])
+    const timeoutFields = [
+      { key: 'default', label: '其他阶段（默认）' },
+      { key: 'dev', label: '开发' },
+      { key: 'test', label: '测试' },
+      { key: 'acceptance', label: '验收' },
+    ]
     const savedAdminUsers = ref([])
     const superAdminUsers = ref([])
     const messages = ref([])
@@ -650,7 +733,7 @@ createApp({
         startPoll()       // 切回大盘：立刻拉一次 + 恢复轮询
       } else {
         stopPoll()        // 切走：停轮询，避免后台空跑
-        if (v === 'settings') loadSettings()
+        if (v === 'settings' || v === 'messages') loadSettings()
         if (v === 'instances') loadInstances() // 实例页要最新内存/时长，拉一次即可
       }
     }
@@ -675,6 +758,8 @@ createApp({
         superAdminUsers.value = d.superAdmin || []
         adminInput.value = (d.adminUsers || []).join(', ')
         messages.value = (d.messages || []).map((m) => ({ ...m }))
+        if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
+        if (Array.isArray(d.timeoutOptions) && d.timeoutOptions.length) timeoutOptions.value = d.timeoutOptions
         messageErrors.value = {}
       } catch (e) {
         settingsError.value = '读取失败：' + e.message
@@ -703,6 +788,31 @@ createApp({
         settingsOk.value = d.adminUsers.length
           ? '已保存 ' + d.adminUsers.length + ' 个 QQ 号' + suffix
           : '已清空白名单' + suffix
+      } catch (e) {
+        settingsError.value = '保存失败：' + e.message
+      } finally {
+        settingsSaving.value = false
+      }
+    }
+
+    async function saveTimeouts() {
+      settingsError.value = ''
+      settingsOk.value = ''
+      settingsSaving.value = true
+      try {
+        const r = await fetch('/api/settings/save', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ stageTimeouts: stageTimeouts.value }),
+        })
+        const d = await r.json()
+        if (!d.ok) {
+          settingsError.value = d.error || '保存失败'
+          return
+        }
+        if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
+        const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
+        settingsOk.value = '已保存' + (reloaded ? '，' + reloaded + ' 个实例已生效' : '')
       } catch (e) {
         settingsError.value = '保存失败：' + e.message
       } finally {
@@ -760,6 +870,8 @@ createApp({
           return
         }
         messages.value = (d.messages || []).map((m) => ({ ...m }))
+        if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
+        if (Array.isArray(d.timeoutOptions) && d.timeoutOptions.length) timeoutOptions.value = d.timeoutOptions
         const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
         const n = messages.value.filter((m) => m.custom).length
         messagesOk.value = n
@@ -913,6 +1025,7 @@ createApp({
       messages, messageGroups, messageErrors, messagesOk, messagesSaving,
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
       switchView, loadSettings, saveSettings,
+      stageTimeouts, timeoutOptions, timeoutFields, saveTimeouts,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
     }
   },

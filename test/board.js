@@ -9,8 +9,8 @@
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { renderBoard, writeBoard } from '../src/board.js'
-import { initialState } from '../src/flow.js'
+import { renderBoard, writeBoard } from '../src/flow/board.js'
+import { initialState } from '../src/flow/flow.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {

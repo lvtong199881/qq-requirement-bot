@@ -106,7 +106,7 @@ if (reachable) {
   ok(`能连上 ${wsUrl}`)
 } else {
   // 连不上时给出具体原因，别只丢一句「连不上」
-  const { explainProbe } = await import('./onebot.js')
+  const { explainProbe } = await import('./transport/onebot.js')
   let probe = 'unknown'
   try {
     const net = await import('node:net')

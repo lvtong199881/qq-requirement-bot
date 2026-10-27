@@ -11,7 +11,7 @@ import { createServer } from 'node:http'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { startPanel } from '../src/panel.js'
+import { startPanel } from '../src/ui/panel.js'
 
 let pass = 0, fail = 0
 const check = (name, cond, extra = '') => {

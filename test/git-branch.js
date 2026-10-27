@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { gitRun, detectMainBranch, ensureFeatureBranch, mergeFeature } from '../src/flow-bridge.js'
+import { gitRun, detectMainBranch, ensureFeatureBranch, mergeFeature } from '../src/infra/git.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {

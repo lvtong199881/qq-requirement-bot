@@ -8,7 +8,7 @@ import {
   renderMessage,
   validateMessageTemplate,
   validateAllMessages,
-} from '../src/messages.js'
+} from '../src/ui/messages.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {
@@ -103,8 +103,8 @@ console.log('\n== 默认渲染 ==')
   const ack = renderMessage('ack', { stage: '开发', duration: '1小时2分钟' })
   check('回执', ack === '当前开发阶段中，已进行 1小时2分钟。', ack)
 
-  const hb = renderMessage('heartbeat', { stage: '测试', duration: '30秒' })
-  check('心跳', hb === '当前测试阶段中，已进行 30秒。', hb)
+  const hb = renderMessage('heartbeat', { stage: '测试', duration: '30分钟' })
+  check('心跳', hb === '当前测试阶段中，已进行 30分钟。', hb)
 
   const start = renderMessage('stageStart', { stage: '设计' })
   check('阶段已开始', start === '设计阶段已开始。', start)

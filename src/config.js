@@ -170,7 +170,16 @@ export function loadConfig(configPath) {
       maxFiles: raw.upload?.maxFiles ?? 8,
       maxFileMB: raw.upload?.maxFileMB ?? 20,
     },
-    turnTimeoutMs: raw.turnTimeoutMs ?? 45 * 60 * 1000,
+    // 分阶段超时（分钟）。dev/test/acceptance 要跑构建、装包、逐条核对，留够时间；
+    // 其余阶段大多是读文档写文档，半小时足够。旧的全局 turnTimeoutMs 仍然生效，
+    // 作为 stageTimeouts.default 的兜底。
+    stageTimeouts: {
+      default: minutes(raw.stageTimeouts?.default, raw.turnTimeoutMs ? raw.turnTimeoutMs / 60000 : 30),
+      dev: minutes(raw.stageTimeouts?.dev, 60),
+      test: minutes(raw.stageTimeouts?.test, 60),
+      acceptance: minutes(raw.stageTimeouts?.acceptance, 60),
+    },
+    turnTimeoutMs: raw.turnTimeoutMs ?? 30 * 60 * 1000,
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
@@ -252,4 +261,11 @@ export function resolveModelEnv() {
     if (v) env[n] = v
   }
   return env
+}
+
+/** 阶段超时分钟数：非法值退回默认，夹在 1..180 之间 */
+function minutes(v, fallback) {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return Math.round(fallback)
+  return Math.min(180, Math.max(1, Math.round(n)))
 }

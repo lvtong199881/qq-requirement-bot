@@ -7,15 +7,15 @@
  *   → 分条推送回群 → 检测 [[WAITING]] → 保存 sessionId 等下一次 @
  */
 import { loadConfig, resolveModelEnv } from './config.js'
-import { OneBot } from './onebot.js'
+import { OneBot } from './transport/onebot.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
-import { getCheckpoint, CHECKPOINTS } from './flow.js'
-import { RateLimiter, sleep } from './format.js'
+import { getCheckpoint, CHECKPOINTS } from './flow/flow.js'
+import { RateLimiter, sleep } from './ui/format.js'
 import { Runtime } from './runtime.js'
-import { renderMessage } from './messages.js'
+import { renderMessage } from './ui/messages.js'
 import { InstanceRegistry } from './instances.js'
-import { createBridgeServer } from './server.js'
+import { createBridgeServer } from './ui/server.js'
 import { join as pathJoin } from 'node:path'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -117,11 +117,6 @@ const knownGroups = new Map()
  * @param {number|string} messageId 被引用的消息 id
  * @returns {object|null}
  */
-function replySegment(messageId) {
-  if (!messageId) return null
-  return { type: 'reply', data: { id: String(messageId) } }
-}
-
 /**
  * 发消息。replyTo 有值时以「引用回复」形式发出，跟真人回消息一样。
  * @param {string} groupId
@@ -133,15 +128,14 @@ function replySegment(messageId) {
 // 模块级：sendText 与各群的心跳共用（bridge 当前只服务少数群，共享一个计时够用）。
 let lastActivityAt = Date.now()
 
-async function sendText(groupId, text, { replyTo } = {}) {
+async function sendText(groupId, text) {
   const wait = limiter.delayFor()
   if (wait > 0) await sleep(wait)
 
-  const seg = replySegment(replyTo)
-  const message = seg ? [seg, { type: 'text', data: { text } }] : text
-
+  // 不引用用户消息、不 @ 人：引用会把一条普通播报变成一串嵌套卡片，
+  // 群里刷起来更乱，而且 reply 段在某些客户端上会折叠正文。
   try {
-    await bot.sendGroupMsg(groupId, message)
+    await bot.sendGroupMsg(groupId, text)
     lastActivityAt = Date.now() // 群里收到消息了，心跳重新计时
   } catch (err) {
     log(`发送失败（${groupId}）：${err.message}`)
@@ -411,6 +405,7 @@ function buildSnapshot({ full = true } = {}) {
         groupId: g.groupId,
         groupName: knownGroups.get(g.groupId)?.name ?? null,
         reqId: flow.reqId ?? null,
+        name: flow.name ?? null,
         stage: cp?.label ?? (flow.status === 'done' ? '已交付' : null),
         stageStatus: statusText,
         status: flow.status === 'done' ? 'idle' : 'waiting',
@@ -473,6 +468,7 @@ function buildSnapshot({ full = true } = {}) {
       model: config.modelLabel ?? null,
       heartbeatMinutes: config.heartbeat?.idleMinutes ?? 5,
       turnTimeoutMin: Math.round(config.turnTimeoutMs / 60000),
+      stageTimeouts: config.stageTimeouts ?? null,
     },
     onebot: {
       url: config.onebot.ws,
@@ -538,11 +534,33 @@ function startApi() {
     // 面板保存设置后热更新，不用重启 bridge
     applySettings: (patch) => {
       if (patch?.messageTemplates !== undefined) {
-        config.messageTemplates = Object.fromEntries(
+        const next = Object.fromEntries(
           Object.entries(patch.messageTemplates).filter(([, v]) => typeof v === 'string' && v.trim()),
         )
+        // 必须就地改内容，不能换对象：flow-bridge 启动时把 config.messageTemplates
+        // 存成了局部引用，换掉对象它还在用旧的，改了文案看起来「没生效」。
+        for (const k of Object.keys(config.messageTemplates)) delete config.messageTemplates[k]
+        Object.assign(config.messageTemplates, next)
         const n = Object.keys(config.messageTemplates).length
         runtime.info(n ? `[面板] 群消息文案已更新（${n} 条自定义）` : '[面板] 群消息文案已全部回到默认')
+      }
+      if (patch?.stageTimeouts && typeof patch.stageTimeouts === 'object') {
+        const pick = (v, dflt) => {
+          const n = Number(v)
+          return Number.isFinite(n) && n > 0 ? Math.min(180, Math.max(1, Math.round(n))) : dflt
+        }
+        const cur = config.stageTimeouts ?? {}
+        config.stageTimeouts = {
+          default: pick(patch.stageTimeouts.default, cur.default ?? 30),
+          dev: pick(patch.stageTimeouts.dev, cur.dev ?? 60),
+          test: pick(patch.stageTimeouts.test, cur.test ?? 60),
+          acceptance: pick(patch.stageTimeouts.acceptance, cur.acceptance ?? 60),
+        }
+        config.turnTimeoutMs = config.stageTimeouts.default * 60000
+        runtime.info(
+          `[面板] 阶段超时已更新：默认 ${config.stageTimeouts.default} 分钟，` +
+            `开发 ${config.stageTimeouts.dev}、测试 ${config.stageTimeouts.test}、验收 ${config.stageTimeouts.acceptance}`,
+        )
       }
       if (Array.isArray(patch?.adminUsers)) {
         config.adminUsers = patch.adminUsers.map((x) => String(x))

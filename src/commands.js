@@ -6,7 +6,7 @@
  */
 
 /** 指令表。desc 用于 /help，scope 决定谁能用 */
-import { renderMessage } from './messages.js'
+import { renderMessage } from './ui/messages.js'
 
 export const COMMANDS = {
   help: {

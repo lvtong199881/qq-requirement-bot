@@ -11,11 +11,11 @@ import { createServer } from 'node:http'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { InstanceRegistry } from './instances.js'
+import { InstanceRegistry } from '../instances.js'
 import { MESSAGE_TEMPLATES, MESSAGE_VARS, validateAllMessages } from './messages.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const STATIC = join(HERE, '..', 'static')
+const STATIC = join(HERE, '..', '..', 'static')
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -130,6 +130,23 @@ export function parseAdminUsers(raw) {
 }
 
 /** 读 bot.config.json 里的可编辑项 */
+/** 面板只提供这几档；传入别的值一律拒绝，避免手改成 3 分钟把回合切成碎片 */
+const TIMEOUT_OPTIONS = [10, 15, 30, 60]
+
+/** 校验四个阶段的超时：只接受白名单档位 */
+function parseStageTimeouts(input) {
+  const keys = ['default', 'dev', 'test', 'acceptance']
+  const out = {}
+  for (const k of keys) {
+    const n = Number(input?.[k])
+    if (!TIMEOUT_OPTIONS.includes(n)) {
+      return { ok: false, error: `${k} 必须是 ${TIMEOUT_OPTIONS.join(' / ')} 之一（当前 ${input?.[k]}）` }
+    }
+    out[k] = n
+  }
+  return { ok: true, value: out }
+}
+
 function readSettings(repoRoot) {
   const file = join(repoRoot, 'bot.config.json')
   try {
@@ -151,6 +168,13 @@ function readSettings(repoRoot) {
         custom: !!(raw.messageTemplates?.[key] && raw.messageTemplates[key].trim()),
       })),
       messageVars: MESSAGE_VARS,
+      stageTimeouts: {
+        default: raw.stageTimeouts?.default ?? 30,
+        dev: raw.stageTimeouts?.dev ?? 60,
+        test: raw.stageTimeouts?.test ?? 60,
+        acceptance: raw.stageTimeouts?.acceptance ?? 60,
+      },
+      timeoutOptions: TIMEOUT_OPTIONS,
     }
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
@@ -170,6 +194,14 @@ function writeSettings(repoRoot, patch) {
     return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
   }
   if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
+  if (patch.stageTimeouts !== undefined) {
+    raw.stageTimeouts = {
+      default: patch.stageTimeouts.default,
+      dev: patch.stageTimeouts.dev,
+      test: patch.stageTimeouts.test,
+      acceptance: patch.stageTimeouts.acceptance,
+    }
+  }
   if (patch.messageTemplates !== undefined) {
     // 空 = 全部回默认；某条等于默认值也不写入，保持配置干净
     const clean = {}
@@ -291,14 +323,24 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         if (body.superAdmin !== undefined) {
           return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
         }
-        if (body.adminUsers === undefined && body.messageTemplates === undefined) {
+        if (
+          body.adminUsers === undefined &&
+          body.messageTemplates === undefined &&
+          body.stageTimeouts === undefined
+        ) {
           return json(res, 400, {
             ok: false,
-            error: '没有要保存的字段（adminUsers / messageTemplates）',
+            error: '没有要保存的字段（adminUsers / messageTemplates / stageTimeouts）',
           })
         }
 
         const patch = {}
+
+        if (body.stageTimeouts !== undefined) {
+          const v = parseStageTimeouts(body.stageTimeouts)
+          if (!v.ok) return json(res, 400, { ok: false, error: v.error })
+          patch.stageTimeouts = v.value
+        }
 
         if (body.adminUsers !== undefined) {
           const parsed = parseAdminUsers(body.adminUsers)
@@ -344,7 +386,7 @@ export function startPanel({ repoRoot, port = 7879, token }) {
 
 // 直接运行：node src/panel.js
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { loadConfig } = await import('./config.js')
+  const { loadConfig } = await import('../config.js')
   let config
   try {
     config = loadConfig()

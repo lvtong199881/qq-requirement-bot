@@ -17,6 +17,7 @@ export const MESSAGE_VARS = {
   target: '「需求 xxx」或「当前需求」',
   reason: '异常原因',
   content: '需要用户决定的内容',
+  next: '下一步阶段名',
   artifacts: '产物文件名，顿号分隔',
   action: '用户动作的简述（收到批准 / 收到修改意见 …）',
   cmd: '指令名，如 stop',
@@ -65,6 +66,12 @@ export const MESSAGE_TEMPLATES = {
     label: '等用户确认',
     vars: ['content'],
     template: '等你确认：\n{{content}}',
+  },
+  v2Confirm: {
+    group: 'v2 流程',
+    label: '等确认进下一步',
+    vars: ['stage', 'next'],
+    template: '「{{stage}}」已完成，回复「通过」进入下一步（{{next}}），回「打回」重做这一步。',
   },
   v2Blocked: {
     group: 'v2 流程',

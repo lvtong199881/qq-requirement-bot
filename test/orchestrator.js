@@ -18,8 +18,8 @@ import {
   validateReceipt,
   verifyOutputs,
   clearReceipt,
-} from '../src/orchestrator.js'
-import { getCheckpoint } from '../src/flow.js'
+} from '../src/flow/orchestrator.js'
+import { getCheckpoint } from '../src/flow/flow.js'
 
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {

@@ -13,11 +13,13 @@
 import { join, basename, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
-import { renderMessage } from './messages.js'
+import { renderMessage } from './ui/messages.js'
+import { formatDuration } from './ui/format.js'
 import { parseCommand } from './commands.js'
-import { initialState, resumeFromUser, currentCheckpoint, needsAgent } from './flow.js'
-import { runFlow } from './flow-runner.js'
-import { writeBoard } from './board.js'
+import { initialState, resumeFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
+import { runFlow } from './flow/flow-runner.js'
+import { writeBoard } from './flow/board.js'
+import { gitRun, detectMainBranch, ensureFeatureBranch } from './infra/git.js'
 
 /**
  * 需求唯一标识：随机 8 位。
@@ -195,9 +197,12 @@ export function createFlowBridge(deps) {
     const flow = st.flow
     // 用户这句话既是「对等待事项的回答」，也可能是修改意见；先原样存进 vars，
     // 由该阶段的 agent 自己判断怎么用（bridge 不做语义猜测）。
+    // 上一轮 agent 提的问题也要存下来——否则「AA」这种回答会被拿去和
+    // 《待提问清单》（需求澄清阶段的旧清单）比对，永远对不上。
+    const prevDecisions = flow.waiting?.decisions ?? []
     const answered = {
       ...resumeFromUser(flow),
-      vars: { ...flow.vars, userAnswer: text },
+      vars: { ...flow.vars, userAnswer: text, lastDecisions: prevDecisions },
     }
     st.flow = answered
     store.save(groupId, st)
@@ -280,7 +285,12 @@ export function createFlowBridge(deps) {
         userAnswer: flow.vars?.userAnswer ?? '',
         // 用户回答单独成段，并且尽量和问题编号对齐——直接塞进「输入文件清单」里，
         // agent 会把它当成一个文件名或占位符去猜（实测：它数了字母个数，怀疑是乱码）。
-        answerBlock: buildAnswerBlock(st.projectDir, flow.reqId, flow.vars?.userAnswer, config),
+        answerBlock: buildAnswerBlock(
+          st.projectDir,
+          flow.reqId,
+          flow.vars?.userAnswer,
+          flow.vars?.lastDecisions,
+        ),
         projectTree: listTop(st.projectDir),
         changedFiles: '',
         diff: '',
@@ -293,6 +303,10 @@ export function createFlowBridge(deps) {
           `主分支：${flow.vars?.mainBranch ?? (() => { try { return detectMainBranch(st.projectDir) } catch { return 'main' } })()}`,
       }),
       onCheckpointStart: async (cp) => {
+        // 记下阶段开始时刻，心跳要报「这一阶段已经跑了多久」。
+        // 放在 bridge 而不是 flow.js：状态机是纯函数，不碰时间。
+        st.flow = { ...st.flow, checkpointStartedAt: Date.now() }
+        store.save(groupId, st)
         // 开发阶段前切到 feature/<reqId>：代码改动和提交都落在 feature 上，
         // 主分支在合并阶段之前保持干净。切不过去就直接报错，不让 agent 在主分支上写代码。
         if (cp.id === 'dev') {
@@ -302,7 +316,7 @@ export function createFlowBridge(deps) {
             log(`[${groupId}] 不是 git 仓库，跳过 feature 分支`)
           } else {
           const main = detectMainBranch(st.projectDir)
-          const b = ensureFeatureBranch(st.projectDir, flow.reqId)
+          const b = ensureFeatureBranch(st.projectDir, st.flow.reqId)
           if (!b.ok) throw new Error(`切换 feature 分支失败：${b.error}`)
           log(`[${groupId}] 分支：${b.branch}${b.created ? `（从 ${b.from ?? main} 新建）` : '（已存在，切过去）'}`)
           st.flow = {
@@ -318,11 +332,20 @@ export function createFlowBridge(deps) {
         if (!cp.role) return
         await sendPlain(groupId, renderMessage('v2StageStart', { stage: cp.label }, templates), { replyTo }).catch(() => {})
       },
-      onCheckpointEnd: async (cp, adv, receipt) => {
+      onCheckpointEnd: async (cp, adv, receipt, verifyReason) => {
         // 返工和卡住都不播「完成」——那是假消息，用户会以为过了。
         // bridge 自己的动作也不播：merge 还没执行就说「合并阶段已完成」是骗人的。
         if (adv.action === 'retry' || adv.action === 'blocked') return
         if (!cp.role) return
+
+        // 回执和产物校验都落日志：出问题时能直接看出是「agent 没写」「写了但没落盘」
+        // 还是「写了也落盘了、只是格式不对」，不用再去翻会话文件
+        const st0 = receipt?.status ?? '未写回执'
+        const summary = String(receipt?.summary ?? '').replace(/\s+/g, ' ').slice(0, 100)
+        log(`[${groupId}] 回执：status=${st0}${summary ? ` summary=${summary}` : ''}`)
+        // 产物缺失时 flow-runner 会把原因塞进第 4 个参数；有值就说明校验没过
+        if (verifyReason) log(`[${groupId}] 产物校验不通过：${String(verifyReason).slice(0, 200)}`)
+        if (receipt?.decisions?.length) log(`[${groupId}] 本回合提出 ${receipt.decisions.length} 条待决策`)
         // 开发阶段登记了 debug 包，后面的测试/验收要靠它，存进 vars。
         // agent 忘了写就自己从构建产物里找——比让测试阶段拿着空占位符去猜强。
         if (cp.id === 'dev') {
@@ -345,7 +368,11 @@ export function createFlowBridge(deps) {
         await bridgeAction({ groupId, cp, flow, st, replyTo })
       },
       runAgent: async ({ role, checkpoint, prompt, sessionId }) => {
-        log(`[${groupId}] v2 回合：${checkpoint.id}（${role}${sessionId ? '，续跑' : '，新会话'}）`)
+        const startedAt = Date.now()
+        const timeoutMin = Math.round(stageTimeoutMs(checkpoint.id, config) / 60000)
+        log(
+          `[${groupId}] v2 回合：${checkpoint.id}（${role}，${sessionId ? '续跑' : '新会话'}，超时 ${timeoutMin} 分钟，prompt ${prompt.length} 字）`,
+        )
         const r = await runTurn({
           dshBin: config.dshBin,
           profile: config.profile,
@@ -353,7 +380,9 @@ export function createFlowBridge(deps) {
           sessionId,
           prompt,
           env: modelEnv,
-          timeoutMs: config.turnTimeoutMs,
+          // 按阶段取超时：dev/test/acceptance 跑构建和逐条核对，给足时间；
+          // 其余阶段默认半小时。配置里没写的阶段退回 default。
+          timeoutMs: stageTimeoutMs(checkpoint.id, config),
           signal: aborter.signal,
           onEvent: () => {},
         })
@@ -369,8 +398,14 @@ export function createFlowBridge(deps) {
         // runTurn 可以来自 runner.js（exitCode/timedOut），也可以是测试注入的简化实现（ok）。
         // 不写死其中一种，否则换个实现就得改这里。
         const ok = r.ok !== undefined ? r.ok : r.exitCode === 0 && !r.timedOut
-        if (!ok) log(`[${groupId}] 回合失败：${r.error ?? r.errorSummary ?? r.turnError ?? '未知'}`)
-        return { ok, sessionId: r.sessionId, error: r.error ?? r.errorSummary ?? r.turnError ?? null }
+        const secs = Math.round((Date.now() - startedAt) / 1000)
+        const why = r.error ?? r.errorSummary ?? r.turnError ?? '未知'
+        if (!ok) {
+          log(`[${groupId}] 回合失败（${secs}s，${timeoutMin} 分钟上限）：${why}`)
+        } else {
+          log(`[${groupId}] 回合完成（${secs}s）：${checkpoint.id}`)
+        }
+        return { ok, sessionId: r.sessionId, error: ok ? null : why, secs }
       },
     }
   }
@@ -456,10 +491,12 @@ export function createFlowBridge(deps) {
       if (decisions) {
         await sendPlain(groupId, renderMessage('v2Waiting', { content: decisions }, templates), { replyTo }).catch(() => {})
       } else {
-        // 需求澄清这种：等用户回答疑点清单，但清单在产物文件里，群里只说在等什么
+        // 没有决策项 = 阶段正常完成，人工模式下等一句「通过」。
+        // 之前这里复用了「等你回复上面的问题」，可上面根本没提问，用户只会困惑。
+        const nextLabel = getCheckpoint(flow.waiting?.advanceTo)?.label ?? '下一步'
         await sendPlain(
           groupId,
-          '等你回复上面的问题，回答后我继续。',
+          renderMessage('v2Confirm', { stage: currentCheckpoint(flow)?.label ?? '', next: nextLabel }, templates),
           { replyTo },
         ).catch(() => {})
       }
@@ -493,7 +530,12 @@ export function createFlowBridge(deps) {
       if (!flow || flow.status !== 'running') return
       const cp = currentCheckpoint(flow)
       if (!cp) return
-      sendPlain(groupId, renderMessage('v2StageStart', { stage: cp.label }, templates), {}).catch(() => {})
+      const elapsed = flow.checkpointStartedAt ? Date.now() - flow.checkpointStartedAt : null
+      sendPlain(
+        groupId,
+        renderMessage('heartbeat', { stage: cp.label, duration: elapsed == null ? '一会儿' : formatDuration(elapsed) }, templates),
+        {},
+      ).catch(() => {})
     }, minutes * 60 * 1000)
   }
 
@@ -519,11 +561,16 @@ export function createFlowBridge(deps) {
  * 尝试按位展开成 Q-1 → B 这种形式（读《待提问清单》拿到问题列表），
  * 对不上就原样引用并说明——让 agent 知道这是一串选项字母还是自然语言。
  */
-export function buildAnswerBlock(projectDir, reqId, rawAnswer) {
+export function buildAnswerBlock(projectDir, reqId, rawAnswer, lastDecisions) {
   const answer = String(rawAnswer ?? '').trim()
   if (!answer) return ''
 
-  const questions = parseQuestionList(join(projectDir, 'docs/requirements', reqId, '待提问清单.md'))
+  // 优先用「上一轮 agent 自己提的问题」：用户回答的就是这些。
+  // 没有才退回需求澄清阶段的《待提问清单》——那是 req-prd 回合才适用的旧清单。
+  const decisions = Array.isArray(lastDecisions) ? lastDecisions.filter((d) => d?.q) : []
+  const questions = decisions.length
+    ? decisions.map((d, i) => ({ id: `第 ${i + 1} 条`, title: d.q }))
+    : parseQuestionList(join(projectDir, 'docs/requirements', reqId, '待提问清单.md'))
   const letters = answer.replace(/[^A-Za-z]/g, '').toUpperCase()
 
   const lines = ['【用户对上一轮提问的回答】', `用户原话：「${answer}」`, '']
@@ -534,7 +581,7 @@ export function buildAnswerBlock(projectDir, reqId, rawAnswer) {
     /^[A-Za-z]+$/.test(answer.replace(/[\s、,，.]/g, '')) &&
     letters.length >= Math.min(3, questions.length)
   if (questions.length && looksLikeLetters) {
-    lines.push('按《待提问清单》的顺序对应如下：')
+    lines.push(decisions.length ? '按上一轮提问的顺序对应如下：' : '按《待提问清单》的顺序对应如下：')
     for (let i = 0; i < questions.length; i++) {
       const pick = letters[i]
       lines.push(
@@ -604,89 +651,6 @@ function packDirectory(dir, outFile) {
   } catch {
     return null
   }
-}
-
-/**
- * 真正执行提交。用 execFileSync 而不是拼 shell 字符串：
- * 提交信息里有中文、冒号、引号，拼字符串很容易被 shell 吃掉。
- */
-function gitCommit(cwd, message) {
-  try {
-    execFileSync('git', ['add', '-A'], { cwd, stdio: 'ignore' })
-    execFileSync('git', ['commit', '-F', '-'], {
-      cwd,
-      input: message,
-      stdio: ['pipe', 'ignore', 'ignore'],
-    })
-    return true
-  } catch {
-    return false
-  }
-}
-
-/**
- * 跑 git 并返回结果。和 safeGit 的区别：这个不吞错误，调用方需要知道成没成。
- */
-export function gitRun(cwd, args) {
-  try {
-    const out = execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-    return { ok: true, out: String(out ?? '').trim() }
-  } catch (err) {
-    const stderr = String(err?.stderr ?? '').trim()
-    return { ok: false, error: stderr || String(err?.message ?? 'git 执行失败') }
-  }
-}
-
-/** 主分支名：main 优先，退回 master，都没有就用当前分支 */
-export function detectMainBranch(cwd) {
-  for (const name of ['main', 'master']) {
-    if (gitRun(cwd, ['rev-parse', '--verify', '--quiet', name]).ok) return name
-  }
-  const cur = gitRun(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  return cur.ok ? cur.out : 'main'
-}
-
-/**
- * 确保当前在 feature/<reqId> 分支上，从主分支拉出来。
- * 已存在就切过去（返工/续跑），不会再建一个。
- */
-export function ensureFeatureBranch(cwd, reqId) {
-  const desired = `feature/${reqId}`
-  const cur = gitRun(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])
-  if (!cur.ok) return { ok: false, error: `不是 git 仓库：${cur.error}` }
-  if (cur.out === desired) return { ok: true, branch: desired, created: false }
-
-  if (gitRun(cwd, ['rev-parse', '--verify', '--quiet', desired]).ok) {
-    const co = gitRun(cwd, ['checkout', desired])
-    return co.ok ? { ok: true, branch: desired, created: false } : { ok: false, error: co.error }
-  }
-
-  // 必须从主分支拉：当前不在主分支就先回去
-  const main = detectMainBranch(cwd)
-  if (cur.out !== main) {
-    const back = gitRun(cwd, ['checkout', main])
-    if (!back.ok) return { ok: false, error: `切回 ${main} 失败：${back.error}` }
-  }
-  const create = gitRun(cwd, ['checkout', '-b', desired])
-  return create.ok
-    ? { ok: true, branch: desired, from: main, created: true }
-    : { ok: false, error: create.error }
-}
-
-/** 把 feature 合回主分支。冲突不自动解决，交给人。 */
-export function mergeFeature(cwd, reqId) {
-  const branch = `feature/${reqId}`
-  const main = detectMainBranch(cwd)
-  const co = gitRun(cwd, ['checkout', main])
-  if (!co.ok) return { ok: false, branch, error: `切到 ${main} 失败：${co.error}` }
-
-  const r = gitRun(cwd, ['merge', '--no-ff', branch, '-m', `merge: ${branch}`])
-  if (r.ok) return { ok: true, main, branch }
-
-  // 冲突不自动选边。不管取哪边都可能覆盖掉另一边真实有效的改动，
-  // 而且合并结果看起来「成功」，错得很安静。abort 掉保留现场，交给开发处理。
-  gitRun(cwd, ['merge', '--abort'])
-  return { ok: false, branch, main, conflict: true, error: r.error || '合并冲突' }
 }
 
 /** 递归找出目录下所有 png（设计稿按页面分子目录，只找一层会漏） */
@@ -773,4 +737,11 @@ function collectFiles(dir, re) {
   }
   walk(dir)
   return out
+}
+
+/** 某个阶段的回合超时（毫秒）。配置按阶段给，没配就用 default */
+export function stageTimeoutMs(checkpointId, cfg) {
+  const map = cfg?.stageTimeouts ?? {}
+  const m = Number(map[checkpointId] ?? map.default ?? 30)
+  return Math.min(180, Math.max(1, m)) * 60 * 1000
 }

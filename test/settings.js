@@ -2,7 +2,7 @@
  * 设置页的输入解析：白名单分隔、校验、边界。
  *   node test/settings.js
  */
-import { parseAdminUsers } from '../src/panel.js'
+import { parseAdminUsers } from '../src/ui/panel.js'
 
 let pass = 0, fail = 0
 const eq = (name, got, want) => {
