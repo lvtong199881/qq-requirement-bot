@@ -46,7 +46,9 @@ export const CHECKPOINTS = [
     id: 'req-prd',
     role: 'req',
     label: '需求定稿',
-    input: ['待提问清单.md', '<userAnswer>', 'AGENTS.md'],
+    // 用户回答不放在「输入文件清单」里——那是文件列表，混进去 agent 会当成文件名去猜。
+    // 改由 vars.answerBlock 单独成段，见 orchestrator.buildPrompt。
+    input: ['待提问清单.md', 'AGENTS.md'],
     output: ['需求卡片.md', 'PRD.md'],
     deliverable: 'PRD.md',
     next: 'design',

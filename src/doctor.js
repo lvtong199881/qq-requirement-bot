@@ -7,7 +7,6 @@
 import { existsSync } from 'node:fs'
 import { loadConfig, resolveApiKey } from './config.js'
 import { runTurn } from './runner.js'
-import { parseGate } from './protocol.js'
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const runRealTurn = process.argv.includes('--turn')
@@ -152,8 +151,6 @@ if (runRealTurn) {
   if (res.exitCode === 0 && res.finalText) {
     ok(`${secs}s 内返回：${res.finalText.slice(0, 80)}`)
     ok(`sessionId：${res.sessionId}`)
-    const gate = parseGate(res.finalText)
-    ok(`闸门解析：${gate.state}${gate.label ? '（' + gate.label + '）' : ''}`)
   } else {
     fail(`回合失败（退出码 ${res.exitCode}，超时=${res.timedOut}）`)
     if (res.stderr) console.log(res.stderr.split('\n').slice(-5).join('\n'))

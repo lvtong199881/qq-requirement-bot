@@ -89,6 +89,11 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     '',
   ]
 
+  // 用户回答单独成段（不和输入文件清单混在一起），由 varsFor 组织好
+  if (vars?.answerBlock) {
+    lines.push(vars.answerBlock, '')
+  }
+
   // 产物位置必须写死。不写的话 agent 会自己去 docs/requirements/ 下挑一个目录——
   // 实测挑中了「最近改动的那个需求」，把新需求的产物写进了旧目录，
   // bridge 按 reqId 校验当然找不到，于是判定「没产出」开始返工。

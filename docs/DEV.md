@@ -44,8 +44,7 @@ node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参�
 
 ## v2 编排（状态机驱动）
 
-`orchestrator: "v2"` 时启用。流程不再由 agent 自己推进，而是 bridge 持有状态机。
-这四组测试覆盖 v2，全部不消耗 token：
+流程由 bridge 持有状态机推进，不解析任何文本。这几组测试全部不消耗 token：
 
 | 脚本 | 覆盖什么 |
 | --- | --- |

@@ -501,31 +501,24 @@ async function stopGroup(groupId) {
 async function restartGroup(groupId) {
   const st = machine.peek(groupId)
   if (!st) return { ok: false, error: '这个群不在服务范围内' }
+  if (!st.flow) return { ok: false, error: '这个群还没有需求，直接 @ 它说要做什么就行' }
 
   machine.interrupt(groupId)
   await sleep(300)
 
-  const recovered = stageInfoFor(st)
-  const stage = recovered.stage
-  const effectiveReqId = st.reqId || recovered.reqId
-  const bound = { reqId: effectiveReqId, stage, waitingLabel: st.waitingLabel }
-  const anchorText = effectiveReqId
-    ? anchorBlock({
-        reqId: effectiveReqId,
-        projectDir: st.projectDir,
-        stage,
-        envHints: config.envHints,
-      })
-    : ''
-  const promptBody = routedPrompt({ intent: INTENT.CONTINUE, userText: '（管理员从面板重启）', bind: bound })
+  // 把状态从 running/blocked 拉回可执行，再走一遍正常的消息入口。
+  // 不再自己拼 prompt——v2 的入口只认「新需求 / 回答 / 继续」三态。
+  const flow = st.flow
+  st.flow = { ...flow, status: 'running', waiting: null }
+  store.save(groupId, st)
 
-  handleTurn(groupId, '（管理员从面板重启）', {
-    isContinuation: !!st.sessionId && st.status !== STATES.IDLE,
-    anchor: anchorText,
-    promptBody,
-    intent: INTENT.CONTINUE,
-  }).catch((e) => log(`重启失败：${e.message}`))
-
+  await flowBridge.handleMessage({
+    groupId,
+    text: '继续',
+    replyTo: null,
+    st: machine.peek(groupId),
+    initiator: null,
+  })
   return { ok: true, message: '已重启' }
 }
 

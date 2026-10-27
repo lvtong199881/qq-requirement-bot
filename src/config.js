@@ -126,9 +126,6 @@ export function loadConfig(configPath) {
     ...raw,
     configPath: path,
     repoRoot: REPO_ROOT,
-    // 编排实现：v1=旧版（解析 [[WAITING]] 和编排记录表格），v2=状态机驱动。
-    // 默认仍是 v1，改配置切过去；验证完再删旧版，删之前两套并存不出事。
-    orchestrator: raw.orchestrator === 'v2' ? 'v2' : 'v1',
     projectDir,
     skillDir: resolveSkillDir(raw.skillDir),
     dshBin: raw.dshBin || 'dsh',

@@ -97,7 +97,7 @@ try {
 
   // 第一条：起一个回合
   mock.sendGroupAt({ groupId, text: '首页加个欢迎弹窗' })
-  check('第一回合已开始', await waitFor(() => logs.join('').includes('回合开始')))
+  check('第一回合已开始', await waitFor(() => logs.join('').includes('v2 回合：')))
   check('假 dsh 被调起 1 次', (await waitFor(() => calls() >= 1, 10_000)) && calls() === 1, `实际 ${calls()}`)
 
   // 第二条：插在回合中途
