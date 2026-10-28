@@ -83,6 +83,8 @@ export const CHECKPOINTS = [
     // 改成看 git diff 有没有东西，比「声称写了哪些文件」可靠。
     // 注意：这个 checkpoint 开始前 bridge 会先切到 feature/<reqId> 分支。
     verify: 'gitDiff',
+    // 要往设备上装包跑，占用独占设备资源
+    needsDevice: true,
     deliverable: null,
     next: 'review',
   },
@@ -123,6 +125,7 @@ export const CHECKPOINTS = [
     input: ['PRD.md', '技术方案.md', '<debugPackage>', '<testAccount>'],
     output: ['测试报告.md'],
     deliverable: '测试报告.md',
+    needsDevice: true,
     next: 'acceptance',
   },
   {
@@ -132,6 +135,7 @@ export const CHECKPOINTS = [
     input: ['PRD.md', '需求卡片.md', '设计说明.md', 'figma-import/', '<screenshots>', '<debugPackage>'],
     output: ['验收文档.md'],
     deliverable: '验收文档.md',
+    needsDevice: true,
     next: 'merge',
   },
   {

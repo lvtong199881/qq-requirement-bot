@@ -224,6 +224,17 @@ export function loadConfig(configPath) {
     ),
     // 裸仓库的远端地址；空则从 projectDir 的 origin 推断
     remoteUrl: typeof raw.remoteUrl === 'string' ? raw.remoteUrl.trim() : '',
+    // ── 设备（模拟器/真机）──
+    // 开发、测试、验收都要往设备上装包，设备是独占资源，按台分配。
+    // platform 决定怎么发现设备，devices 为空时按平台自动探测。
+    platform: ['harmony', 'android', 'ios'].includes(raw.platform) ? raw.platform : 'harmony',
+    devices: Array.isArray(raw.devices) ? raw.devices : [],
+    tools: {
+      hdc: typeof raw.tools?.hdc === 'string' ? raw.tools.hdc : 'hdc',
+      adb: typeof raw.tools?.adb === 'string' ? raw.tools.adb : 'adb',
+      xcrun: typeof raw.tools?.xcrun === 'string' ? raw.tools.xcrun : 'xcrun',
+    },
+
     // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
     limits: {
       maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),

@@ -21,6 +21,7 @@ import { runFlow } from './flow/flow-runner.js'
 import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
+import { listDevices, DevicePool } from './infra/device.js'
 import {
   ensureBareRepo,
   createWorktree,
@@ -73,6 +74,8 @@ export function formatDecisions(decisions) {
 const mergeLocks = new Map()
 /** 群 → 已持有的 worktree 槽。合并收尾时释放 */
 const worktreeSlots = new Map()
+/** 群 → 已占用的设备。阶段结束释放 */
+const deviceSlots = new Map()
 
 export function createFlowBridge(deps) {
   const { config, store, machine, log, sendPlain, runTurn, bot, modelEnv, repoRoot, gitDiff } = deps
@@ -345,6 +348,8 @@ export function createFlowBridge(deps) {
         // 代码工作区：dev 之后才有；之前的阶段不传，避免 agent 去找一个不存在的目录
         // merge 阶段在专用工作区里操作；其他阶段用需求自己的工作区
         workDir: (flow.current === 'merge' ? flow.vars?.mergeWorkDir : flow.workDir) ?? flow.workDir ?? '',
+        deviceId: flow.vars?.deviceId ?? '',
+        platform: config.platform ?? 'harmony',
         dataDir: reqDirOf(flow),
         // 目录树给对地方：dev 之后看工作区，之前看主仓库
         projectTree: listTop(flow.workDir ?? st.projectDir),
@@ -366,6 +371,41 @@ export function createFlowBridge(deps) {
         // 开发阶段建一个独立工作区（worktree）。这一步是团队化的核心：
         // 所有需求共用主工作区时，两个需求的 dev 会互相 checkout 打断对方，
         // 而且没有任何报错——代码就写到了错误的分支上。worktree 让每个需求独占一个目录。
+        // 需要设备（模拟器/真机）的阶段先抢一台。设备是独占资源：
+        // 两个回合同时往同一台设备装包，会出现「包被覆盖」「测试跑到别人的版本上」
+        // 这类极难排查的问题，而且完全没有报错。
+        if (cp.needsDevice && !deviceSlots.has(groupId)) {
+          const found = listDevices(config)
+          if (!found.ok) throw new Error(`设备发现失败：${found.error}`)
+          if (!found.devices.length) {
+            throw new Error(
+              `「${cp.label}」需要${found.label}设备，但没有检测到任何在线设备` +
+                `（平台 ${found.platform}）。启动模拟器后回复「继续」。`,
+            )
+          }
+
+          const pool = new DevicePool({
+            lockDir: join(config.repoDir, 'pools', 'device'),
+            platform: found.platform,
+            devices: found.devices,
+          })
+          const slot = await pool.acquire({
+            waitMs: 60 * 60 * 1000,
+            pollMs: 2000,
+            reqId: st.flow.reqId,
+            stage: cp.id,
+          })
+          if (!slot) {
+            throw new Error(
+              `${found.devices.length} 台${found.label}设备都被占用，等了一小时仍没空出来`,
+            )
+          }
+          deviceSlots.set(groupId, slot)
+          st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: slot.deviceId } }
+          store.save(groupId, st)
+          log(`[${groupId}] 已占用设备 ${slot.deviceId}（${found.label}，共 ${found.devices.length} 台）`)
+        }
+
         // 合并阶段用一个全局唯一的专用工作区，配合文件锁串行——
         // 如果在需求自己的工作区里 checkout 主分支，那条工作区就被污染了，
         // 而如果各自在主仓库合并，两个需求会互相打断。
@@ -481,6 +521,19 @@ export function createFlowBridge(deps) {
           await sendPlain(groupId, '回复「通过」后会把 feature 分支合并进主分支（合并会自动跑编译和单元测试）。', { replyTo }).catch(() => {})
         }
         await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir, replyTo })
+
+        // 设备是阶段级资源：这个阶段跑完就还回去，别让 review 这种
+        // 不需要设备的阶段白占着一台模拟器
+        if (!cp.forceKeepDevice) {
+          const dev = deviceSlots.get(groupId)
+          if (dev) {
+            dev.release()
+            deviceSlots.delete(groupId)
+            st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: null } }
+            store.save(groupId, st)
+            log(`[${groupId}] 已释放设备 ${dev.deviceId}`)
+          }
+        }
 
         // 合并回合结束就放锁，别占着让下一个需求干等
         const held = mergeLocks.get(groupId)
@@ -706,11 +759,35 @@ export function createFlowBridge(deps) {
 
   /** 并发资源快照，面板要显示「几个槽位在用 / 谁在排队」 */
   function poolStats() {
+    // 设备是「指定型」资源，要报出每台的状态（谁占着），不能只报总数
+    let devices = { platform: config.platform ?? 'harmony', items: [], available: 0, total: 0 }
+    try {
+      const found = listDevices(config)
+      if (found.ok) {
+        const pool = new DevicePool({
+          lockDir: join(config.repoDir, 'pools', 'device'),
+          platform: found.platform,
+          devices: found.devices,
+        })
+        const items = pool.status()
+        devices = {
+          platform: found.platform,
+          label: found.label,
+          items,
+          total: items.length,
+          available: items.filter((d) => !d.busy).length,
+        }
+      }
+    } catch {
+      /* 设备探测失败不影响其他指标 */
+    }
+
     return {
       worktree: worktreePool.stats(),
       turns: turnPool.stats(),
       pendingWorktrees: worktreePool.position(),
       pendingTurns: turnPool.position(),
+      devices,
     }
   }
 

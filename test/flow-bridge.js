@@ -82,6 +82,10 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
       worktreeRoot: join(repoRoot, 'worktrees'),
       dataRoot: join(repoRoot, 'data'),
       remoteUrl: originRepo,
+      // 配置指定设备，跳过自动发现——CI/测试机上没有真模拟器
+      platform: 'harmony',
+      devices: ['mock-hdc-1'],
+      tools: {},
       // 和线上一致：人工确认模式。不设这个，流程会一路跑到底，
       // 测试就没法验证「停在某个阶段等用户」的行为。
       approval,

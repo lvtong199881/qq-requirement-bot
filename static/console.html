@@ -312,6 +312,20 @@
           <span v-if="p.pendingTurns" class="pq">排队 {{ p.pendingTurns }}</span>
           <span v-if="poolRows.length > 1" class="pmuted">PID {{ p.pid }}</span>
         </div>
+        <div class="pool-item" v-for="p in poolRows" :key="'dv' + p.pid">
+          <span class="pk">{{ p.devices?.label || '设备' }}</span>
+          <span class="pv">
+            <b :class="{ warn: p.devices?.available === 0 && p.devices?.total > 0 }">
+              {{ p.devices?.available ?? 0 }}</b>/{{ p.devices?.total ?? 0 }}
+          </span>
+          <span v-if="!p.devices?.total" class="pq">无在线设备</span>
+          <span
+            v-for="d in (p.devices?.items || []).filter((x) => x.busy)"
+            :key="d.id"
+            class="pq"
+            :title="d.id"
+          >占用 {{ d.holder || d.id }}</span>
+        </div>
       </div>
 
       <div v-if="groupRows.length" class="inst">

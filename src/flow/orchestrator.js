@@ -119,6 +119,19 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     '',
   )
 
+  // 设备由 bridge 分配，不让 agent 自己挑——多需求并行时它一挑就会撞上别人的设备
+  if (checkpoint.needsDevice) {
+    lines.push(
+      '【本阶段分配给你的设备】',
+      vars?.deviceId
+        ? `- 设备 ID：${vars.deviceId}（平台：${vars?.platform ?? 'harmony'}）`
+        : '- 没有分配到设备——这是异常情况，直接写回执报 blocked，不要自己去找设备',
+      '- 只用这一台：所有装包、启动、截图、日志抓取都指向它。不要连别的设备，',
+      '  也不要重启或重置它（别的需求可能正在用另一台，而你重启设备会影响你我之外的人）。',
+      '',
+    )
+  }
+
   // 本机环境提示（DevEco 路径、构建要加 --no-daemon、已知状态这类）。
   // 以前写在 bot.config.json 的 envHints 里由 v1 注入，v2 漏了这段，
   // agent 会去猜工具链路径、重复验证已经完成的构建。
