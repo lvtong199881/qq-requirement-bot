@@ -529,6 +529,11 @@ function buildSnapshot({ full = true } = {}) {
       botQQ: config.bot.qq,
       botName: config.bot.name,
       projectDir: config.projectDir,
+      // 团队化改造后新增的三处路径与并发上限，面板要能看到实际用的是哪
+      repoDir: config.repoDir,
+      worktreeRoot: config.worktreeRoot,
+      dataRoot: config.dataRoot,
+      limits: config.limits,
       groupPolicy: config.groupPolicy.mode,
       model: config.modelLabel ?? null,
       heartbeatMinutes: config.heartbeat?.idleMinutes ?? 5,
