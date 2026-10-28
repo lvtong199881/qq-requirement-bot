@@ -815,14 +815,31 @@ const { createApp, ref, computed, onMounted, onUnmounted, watch } = Vue
 
 createApp({
   setup() {
-    // 视图写进 URL hash：刷新页面不会跳回大盘，也能直接把链接发给别人
+    // 视图写进真实路径（/console/emulators），不用 hash：
+    // 刷新不会跳回大盘，链接也能直接发给别人。服务端把 /console/* 都回同一份 HTML。
     const VIEWS = ['board', 'emulators', 'instances', 'settings', 'messages']
-    const initialView = (location.hash || '').replace(/^#\/?/, '')
-    const view = ref(VIEWS.includes(initialView) ? initialView : 'board')
+    const BASE = '/console'
+
+    /** 从当前路径解析视图；/console 或 /console/ 都算大盘 */
+    function viewFromPath() {
+      const seg = (location.pathname || '').replace(/^\/console\/?/, '').replace(/\/$/, '')
+      return VIEWS.includes(seg) ? seg : 'board'
+    }
+
+    function pathForView(v) {
+      return v === 'board' ? BASE : `${BASE}/${v}`
+    }
+
+    const view = ref(viewFromPath())
     watch(view, (v) => {
-      if ((location.hash || '').replace(/^#\/?/, '') !== v) {
-        history.replaceState(null, '', '#' + v)
+      if (location.pathname !== pathForView(v)) {
+        history.pushState(null, '', pathForView(v))
       }
+    })
+    // 浏览器前进/后退也要跟着切视图
+    window.addEventListener('popstate', () => {
+      const v = viewFromPath()
+      if (v !== view.value) view.value = v
     })
 
     // 侧栏收起态：记住上次选择（隐私模式下 localStorage 可能抛错，静默降级）

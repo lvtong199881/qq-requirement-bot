@@ -247,7 +247,11 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
 
     try {
       // 页面
-      if (path === '/' || path === '/console') return serveStatic(res, 'console.html')
+      // 前端用真实路径做路由（/console/emulators 这种），刷新要能直接命中，
+      // 所以 /console 下所有子路径都回同一份 HTML，视图切换由前端按 pathname 决定。
+      if (path === '/' || path === '/console' || path.startsWith('/console/')) {
+        return serveStatic(res, 'console.html')
+      }
       if (path === '/vue.js') return serveStatic(res, 'vue.global.prod.js')
 
       // 需求大盘：按「群」维度摊平，前端拿到就能直接画表格
