@@ -122,6 +122,22 @@ bridge 会在任务包里给出冲突信息（`<mergeConflict>`）。这时**不
 - [ ] push 结果写清（没有 remote 不算失败）
 - [ ] 没有切分支、没有 merge 到主分支
 
+### 不要动版本号
+
+`versionCode` / `versionName`（鸿蒙的 `AppScope/app.json5`、Android 的 `build.gradle`）
+是**发布决策**，不是开发决策。改它会造成三件事：
+
+1. 交付说明和实际包对不上——实测出现过「文档写 1.0.0.5、HAP 清单是 1.0.0.2」，
+   验收阶段被迫停下来问用户以哪个为准；
+2. 多个需求并发时会在这同一个文件上打架；
+3. 版本号一旦被随手改掉，后续所有人对「当前是哪个版本」的判断都失去依据。
+
+**需要覆盖安装时不要改版本号**：
+- 鸿蒙：`hdc -t <deviceId> install -r <hap>`（`-r` 是 replace，同版本可直接覆盖）
+- 装不上就先 `hdc -t <deviceId> uninstall <bundleName>` 再装
+
+只有在用户明确要求「升版本」时才改，并且改完在回执里写清楚。
+
 ## 回执
 
 **产物位置以【产物位置】为准**：prompt 里会给出文档目录的绝对路径（`~/.qq-bot/data/<reqId>/`）。

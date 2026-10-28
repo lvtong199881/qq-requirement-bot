@@ -685,6 +685,28 @@ export function createFlowBridge(deps) {
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
 
 /**
+ * 检查本回合有没有动不该动的文件。
+ *
+ * 版本号（versionCode / versionName）是发布决策。实测有人顺手把它从 1000000
+ * 改成 1000002，结果交付说明和 HAP 清单对不上，验收阶段被迫停下来问
+ * 「以哪个为准」。这类改动不该由开发回合做，出现了就明确报出来。
+ *
+ * 只看工作区相对基线的 diff，不修改任何东西——修不修由人决定。
+ */
+function checkForbiddenChanges(workDir, mainBranch = 'main') {
+  const hits = []
+  const r = gitRun(workDir, ['diff', `origin/${mainBranch}...HEAD`, '--unified=0'])
+  const diff = r.ok ? (r.out ?? '') : ''
+  if (!diff) return hits
+
+  if (/^[+-]\s*"?version(Code|Name)"?\s*:/m.test(diff)) {
+    const file = diff.match(/^\+\+\+ b\/(.+)$/m)?.[1]
+    hits.push(`版本号被改动（${file ?? '未知文件'}）`)
+  }
+  return hits
+}
+
+/**
  * 真正执行合并：把开发工作区的 feature 分支并进主分支。
  *
  * 为什么由 bridge 做：git 的元数据（索引、refs）在各个工作区自己的 .git 里，
@@ -702,6 +724,15 @@ async function doMerge({ groupId, flow, st, log, config }) {
   const mainBranch = flow.vars?.mainBranch ?? config.mainBranch ?? 'main'
 
   if (!devDir || !existsSync(devDir)) return { ok: false, error: `开发工作区不存在：${devDir}` }
+
+  // 合并前拦住不该有的改动：版本号是发布决策，开发回合动了就得有人看一眼
+  const forbidden = checkForbiddenChanges(devDir, flow.vars?.mainBranch ?? mainBranch)
+  if (forbidden.length) {
+    return {
+      ok: false,
+      error: `发现不该有的改动，已中止合并：${forbidden.join('；')}。确认后回「继续」可以强制合并`,
+    }
+  }
 
   // 1. 提交开发工作区的改动
   const dirty = gitRun(devDir, ['status', '--porcelain'])
