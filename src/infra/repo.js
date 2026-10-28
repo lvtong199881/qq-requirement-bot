@@ -84,7 +84,9 @@ export function createWorktree({ repoDir, worktreeRoot, reqId, mainBranch }) {
   const path = join(worktreeRoot, reqId)
   const branch = `feature/${reqId}`
 
-  if (existsSync(path)) return { ok: true, path, branch, existed: true, stale: false }
+  // 「目录存在」不等于「工作区可用」：上次建到一半失败会留下空目录，
+  // 直接复用就成了一个没有代码的工作区，agent 会在里面找不到任何文件。
+  if (isUsableWorkspace(path)) return { ok: true, path, branch, existed: true, stale: false }
 
   try {
     mkdirSync(worktreeRoot, { recursive: true })
@@ -124,18 +126,14 @@ export function createWorktree({ repoDir, worktreeRoot, reqId, mainBranch }) {
     join(repoDir, 'objects') + '\n',
   )
 
-  // 起点提交：主仓是裸仓库，它的分支在 refs/remotes/origin/* 下
-  const pulled = gitRun(path, ['fetch', '--no-tags', repoDir, base])
+  // 起点：分支已存在（返工/续跑）就从本地分支取，否则从主分支取。
+  // 注意主仓是裸仓库，主分支在 refs/remotes/origin/* 下。
+  const from = branchExists ? `refs/heads/${branch}` : base
+  const pulled = gitRun(path, ['fetch', '--no-tags', repoDir, from])
   if (!pulled.ok) return { ok: false, error: `拉取起点失败：${pulled.error}` }
 
-  const co = branchExists
-    ? gitRun(path, ['checkout', '-q', '-b', branch, `refs/remotes/origin/${branch}`])
-    : gitRun(path, ['checkout', '-q', '-b', branch, 'FETCH_HEAD'])
-  if (!co.ok) {
-    // 复用已有分支时 refs/remotes/origin/<branch> 可能不在，退回本地同名分支
-    const alt = gitRun(path, ['checkout', '-q', branch])
-    if (!alt.ok) return { ok: false, error: `检出分支失败：${co.error}` }
-  }
+  const co = gitRun(path, ['checkout', '-q', '-b', branch, 'FETCH_HEAD'])
+  if (!co.ok) return { ok: false, error: `检出分支失败：${co.error}` }
 
   // origin 指向真正的远端：主仓只当 clone 源，push 要推到真仓库，
   // 否则 push 会写主仓 —— 又跑到工作区外面去了。
@@ -165,6 +163,13 @@ export function removeWorktree({ repoDir, path, branch }) {
     if (!r.ok && !/not found/i.test(r.error)) notes.push(`删除分支失败：${r.error}`)
   }
   return { ok: notes.length === 0, notes }
+}
+
+/** 工作区是否真的可用：是独立仓库、有 .git 目录、且检出过提交 */
+function isUsableWorkspace(path) {
+  if (!existsSync(path)) return false
+  if (!existsSync(join(path, '.git', 'HEAD'))) return false
+  return gitRun(path, ['rev-parse', '--verify', '--quiet', 'HEAD']).ok
 }
 
 /**
