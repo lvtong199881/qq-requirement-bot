@@ -257,13 +257,10 @@
   }
   .ff-actions .menu-btn.primary:hover { filter: brightness(1.08); }
 
-  /* 卡片头：标题 + 统计 */
-  .card-head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    gap: 12px; margin-bottom: 12px;
-  }
-  .card-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
-  .card-head .muted { font-size: 12px; color: var(--dim); }
+  /* 展示区：无外框，只留一行统计 */
+  .emu-section { margin-top: 16px; }
+  .emu-stat-line { font-size: 12px; color: var(--dim); margin-bottom: 10px; }
+  .emu-empty { margin-top: 4px; }
 
   /* ── 模拟器：卡片网格 ── */
   .emu-grid {
@@ -410,45 +407,40 @@
         </div>
       </div>
 
-      <!-- 展示区 -->
-      <div class="panel">
-        <div class="card">
-          <div class="card-head">
-            <h2>模拟器</h2>
-            <span class="muted">
-              共 {{ filteredEmulators.length }} 个 · 运行中 {{ filteredRunningCount }}
-              <template v-if="emuFilterActive"> · 已筛选</template>
-            </span>
-          </div>
+      <!-- 展示区：不包边框，卡片自己就是卡片 -->
+      <div class="emu-section">
+        <div class="emu-stat-line">
+          共 {{ filteredEmulators.length }} 个 · 运行中 {{ filteredRunningCount }}
+          <span v-if="emuFilterActive"> · 已筛选</span>
+        </div>
 
-          <div v-if="filteredEmulators.length" class="emu-grid">
-            <div class="emu-card" v-for="e in filteredEmulators" :key="(e.platform || '') + ':' + e.name">
-              <div class="emu-head">
-                <span class="emu-badge" :class="e.running ? 'on' : 'off'">
-                  <span class="dot"></span>{{ e.running ? '运行中' : '已停止' }}
-                </span>
-                <span class="emu-type">{{ e.type }}</span>
-              </div>
-              <div class="emu-name" :title="e.name">{{ e.name }}</div>
-              <div class="emu-meta">
-                <span class="mk">OS</span><span class="mv">{{ e.os || '—' }}</span>
-              </div>
-              <div class="emu-meta" v-if="emuPlatformOptions.length > 1">
-                <span class="mk">平台</span><span class="mv">{{ emuPlatformLabel(e.platform) }}</span>
-              </div>
-              <div class="emu-actions">
-                <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">启动</button>
-                <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
-                <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">清数据启动</button>
-                <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
-              </div>
+        <div v-if="filteredEmulators.length" class="emu-grid">
+          <div class="emu-card" v-for="e in filteredEmulators" :key="(e.platform || '') + ':' + e.name">
+            <div class="emu-head">
+              <span class="emu-badge" :class="e.running ? 'on' : 'off'">
+                <span class="dot"></span>{{ e.running ? '运行中' : '已停止' }}
+              </span>
+              <span class="emu-type">{{ e.type }}</span>
+            </div>
+            <div class="emu-name" :title="e.name">{{ e.name }}</div>
+            <div class="emu-meta">
+              <span class="mk">OS</span><span class="mv">{{ e.os || '—' }}</span>
+            </div>
+            <div class="emu-meta" v-if="emuPlatformOptions.length > 1">
+              <span class="mk">平台</span><span class="mv">{{ emuPlatformLabel(e.platform) }}</span>
+            </div>
+            <div class="emu-actions">
+              <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">启动</button>
+              <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
+              <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">清数据启动</button>
+              <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
             </div>
           </div>
-
-          <p v-else-if="!emuError" class="desc">
-            {{ emulators.length ? '没有符合筛选条件的模拟器。' : '没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。' }}
-          </p>
         </div>
+
+        <p v-else-if="!emuError" class="desc emu-empty">
+          {{ emulators.length ? '没有符合筛选条件的模拟器。' : '没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。' }}
+        </p>
       </div>
     </template>
 
