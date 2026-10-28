@@ -137,6 +137,11 @@ export function createWorktree({ repoDir, worktreeRoot, reqId, mainBranch }) {
 
   // origin 指向真正的远端：主仓只当 clone 源，push 要推到真仓库，
   // 否则 push 会写主仓 —— 又跑到工作区外面去了。
+  // 本地补一个 main 引用：diff、rebase、merge 都拿它当基线。
+  // 不补的话 `git diff main...feature` 会因为本地没有 main 而退化成空 diff。
+  const mainRef = gitRun(repoDir, ['rev-parse', '--verify', '--quiet', `origin/${mainBranch}`]).out?.trim()
+  if (mainRef) gitRun(path, ['update-ref', `refs/heads/${mainBranch}`, mainRef])
+
   const remoteUrl = gitRun(repoDir, ['remote', 'get-url', 'origin']).out?.trim()
   if (remoteUrl) gitRun(path, ['remote', 'add', 'origin', remoteUrl])
 
@@ -273,6 +278,11 @@ export function ensureMergeWorktree({ repoDir, worktreeRoot, mainBranch }) {
 
   const co = gitRun(path, ['checkout', '-q', '-b', mainBranch, 'FETCH_HEAD'])
   if (!co.ok) return { ok: false, error: `检出主分支失败：${co.error}` }
+
+  // 本地补一个 main 引用：diff、rebase、merge 都拿它当基线。
+  // 不补的话 `git diff main...feature` 会因为本地没有 main 而退化成空 diff。
+  const mainRef = gitRun(repoDir, ['rev-parse', '--verify', '--quiet', `origin/${mainBranch}`]).out?.trim()
+  if (mainRef) gitRun(path, ['update-ref', `refs/heads/${mainBranch}`, mainRef])
 
   const remoteUrl = gitRun(repoDir, ['remote', 'get-url', 'origin']).out?.trim()
   if (remoteUrl) gitRun(path, ['remote', 'add', 'origin', remoteUrl])
