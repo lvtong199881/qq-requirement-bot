@@ -107,6 +107,16 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     `- 本阶段文档产物：${(checkpoint.output ?? []).join('、') || '无文件产物，结论写进回执'}`,
     `- 回执 ${receiptFile(checkpoint.id)} 也写在这个目录`,
   )
+  // 多仓库（组件化项目）：每个仓库一个独立工作区，都列出来
+  const workspaces = vars?.workspaces ?? null
+  if (workspaces && Object.keys(workspaces).length > 1) {
+    lines.push('【各仓库工作区】这个需求涉及多个仓库，每个仓库一个工作区：')
+    for (const [id, path] of Object.entries(workspaces)) {
+      lines.push(`- ${id}：${path}`)
+    }
+    lines.push('代码改动写进对应的仓库工作区，别串仓。')
+  }
+
   // 合并回次要拉开发工作区的分支过来：两个工作区都是独立仓库，只能靠路径互通
   const devWorkDir = vars?.devWorkDir ?? ''
   if (devWorkDir) {

@@ -79,6 +79,15 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
       dshBin: 'dsh',
       profile: 'test',
       // 团队化改造后：文档写 dataRoot，代码在 worktree 里
+      // 多仓库配置：单仓库就是一项
+      repos: [{
+        id: 'app',
+        path: projectDir,
+        primary: true,
+        repoDir: join(repoRoot, 'repo.git'),
+        worktreeRoot: join(repoRoot, 'worktrees'),
+      }],
+      primaryRepo: { id: 'app', path: projectDir, primary: true, repoDir: join(repoRoot, 'repo.git'), worktreeRoot: join(repoRoot, 'worktrees') },
       repoDir: join(repoRoot, 'repo.git'),
       worktreeRoot: join(repoRoot, 'worktrees'),
       dataRoot: join(repoRoot, 'data'),

@@ -147,6 +147,19 @@ export function loadConfig(configPath) {
   // projectDir 是从 repos 派生的，不是独立配置项：下游大量代码按单仓库写，
   // 主仓库的路径就继续叫这个名，省得全项目改一遍。
   const projectDir = primaryRepo.path
+
+  // 每个仓库一套裸仓库与工作区根目录。单仓库沿用原来的固定路径
+  // （~/.qq-bot/repo.git、~/.qq-bot/worktrees），不破坏已经跑起来的数据；
+  // 多仓库按 id 分目录，互不干扰。
+  const single = repos.length === 1
+  const repoBase = expandHome(raw.repoDir?.trim?.() || '~/.qq-bot/repo.git')
+  const wtBase = expandHome(raw.worktreeRoot?.trim?.() || '~/.qq-bot/worktrees')
+  const reposRoot = join(dirname(repoBase), 'repos')
+  const wtRoot = dirname(wtBase)
+  for (const r of repos) {
+    r.repoDir = single ? repoBase : join(reposRoot, `${r.id}.git`)
+    r.worktreeRoot = single ? wtBase : join(wtRoot, `${r.id}`)
+  }
   if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
     throw new Error(`主仓库路径不存在或不是目录：${projectDir}`)
   }

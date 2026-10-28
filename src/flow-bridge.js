@@ -446,26 +446,51 @@ export function createFlowBridge(deps) {
             log(`[${groupId}] 已分配工作区名额 ${stats.used}/${stats.max}`)
           }
 
-          const mainBranch = config.mainBranch || detectRepoMainBranch(st.projectDir)
-          const repo = ensureBareRepo({
-            repoDir: config.repoDir,
-            remoteUrl: config.remoteUrl || remoteUrlOf(st.projectDir),
-            mainBranch,
-          })
-          if (!repo.ok) throw new Error(`初始化裸仓库失败：${repo.error}`)
+          // 涉及哪些仓库：默认只有主仓库；技术方案回执里声明了才扩展
+          // （组件化项目：改组件库要同时给那个仓库开工作区）
+          const repoIds = st.flow.repos?.length ? st.flow.repos : [config.primaryRepo.id]
+          const workspaces = { ...(st.flow.workspaces ?? {}) }
+          let primaryWt = null
 
-          const wt = createWorktree({
-            repoDir: config.repoDir,
-            worktreeRoot: config.worktreeRoot,
-            reqId: st.flow.reqId,
-            mainBranch: repo.mainBranch,
-          })
-          if (!wt.ok) throw new Error(`创建工作区失败：${wt.error}`)
+          for (const repoId of repoIds) {
+            const repoCfg = config.repos.find((r) => r.id === repoId)
+            if (!repoCfg) throw new Error(`技术方案里声明的仓库未配置：${repoId}`)
+
+            const mainBranch =
+              config.mainBranch || detectRepoMainBranch(repoCfg.path)
+            // 远端地址优先级：仓库自己配的 > 全局 remoteUrl（单仓库场景）> 从仓库路径的 origin 推断
+            const repo = ensureBareRepo({
+              repoDir: repoCfg.repoDir,
+              remoteUrl: repoCfg.remoteUrl || config.remoteUrl || remoteUrlOf(repoCfg.path),
+              mainBranch,
+            })
+            if (!repo.ok) throw new Error(`初始化裸仓库失败（${repoId}）：${repo.error}`)
+
+            const wt = createWorktree({
+              repoDir: repoCfg.repoDir,
+              worktreeRoot: repoCfg.worktreeRoot,
+              reqId: st.flow.reqId,
+              mainBranch: repo.mainBranch,
+            })
+            if (!wt.ok) throw new Error(`创建工作区失败（${repoId}）：${wt.error}`)
+
+            workspaces[repoId] = {
+              path: wt.path,
+              branch: wt.branch,
+              repoDir: repoCfg.repoDir,
+              mainBranch: repo.mainBranch,
+            }
+            if (repoCfg.primary) primaryWt = wt
+            log(`[${groupId}] 工作区 ${repoId}：${wt.path}`)
+          }
+
+          if (!primaryWt) throw new Error('主仓库没有建出工作区')
 
           // 把暂存区里已经攒下的文档搬进工作区：从这一刻起产物跟着工作区走，
           // 合并时直接提交。搬完删暂存区，避免同一份文档出现两个来源。
+          // 文档跟着主仓库走（多仓库时也只在一处，避免同一份文档两份来源）
           const scratchDir = st.flow.dataDir
-          const wtDocs = join(wt.path, 'docs/requirements', st.flow.reqId)
+          const wtDocs = join(primaryWt.path, 'docs/requirements', st.flow.reqId)
           // 重跑时 dataDir 已经指向工作区了，src 和 dest 是同一个目录，不用搬
           const needMove = scratchDir && existsSync(scratchDir) && scratchDir !== wtDocs
           if (needMove) {
@@ -479,20 +504,20 @@ export function createFlowBridge(deps) {
             }
           }
 
-          log(
-            `[${groupId}] 工作区：${wt.path}` +
-              (wt.stale ? '（远端不可达，基于本地分支创建，可能落后）' : '') +
-              (wt.reusedBranch ? '（复用已有分支）' : ''),
-          )
           st.flow = {
             ...st.flow,
-            workDir: wt.path,
-            dataDir: join(wt.path, 'docs/requirements', st.flow.reqId),
+            workspaces,
+            // workDir 继续指向主仓库：绝大多数需求只动它
+            workDir: primaryWt.path,
+            dataDir: join(primaryWt.path, 'docs/requirements', st.flow.reqId),
             vars: {
               ...st.flow.vars,
-              workDir: wt.path,
-              featureBranch: wt.branch,
-              mainBranch: repo.mainBranch,
+              workDir: primaryWt.path,
+              workspaces: Object.fromEntries(
+                Object.entries(workspaces).map(([id, w]) => [id, w.path]),
+              ),
+              featureBranch: primaryWt.branch,
+              mainBranch: primaryWt.mainBranch,
             },
           }
           store.save(groupId, st)
@@ -998,16 +1023,21 @@ export function parseQuestionList(file) {
 function cleanupAfterMerge({ groupId, flow, log, config }) {
   const notes = []
 
-  // 1. 需求自己的工作区 + 本地 feature 分支
-  if (flow.workDir) {
+  // 1. 所有仓库的工作区 + 本地 feature 分支（多仓库时逐个回收）
+  const spaces = flow.workspaces && Object.keys(flow.workspaces).length
+    ? Object.entries(flow.workspaces)
+    : flow.workDir
+      ? [['app', { path: flow.workDir, branch: flow.vars?.featureBranch, repoDir: config.repoDir }]]
+      : []
+
+  for (const [repoId, w] of spaces) {
     const r = removeWorktree({
-      repoDir: config.repoDir,
-      path: flow.workDir,
-      branch: flow.vars?.featureBranch ?? `feature/${flow.reqId}`,
+      repoDir: w.repoDir ?? config.repoDir,
+      path: w.path ?? flow.workDir,
+      branch: w.branch ?? flow.vars?.featureBranch ?? `feature/${flow.reqId}`,
     })
     notes.push(...r.notes)
-    // removeWorktree 的 notes 只在失败时非空
-    if (r.ok) log(`[${groupId}] 已回收工作区：${flow.workDir}`)
+    if (r.ok) log(`[${groupId}] 已回收工作区 ${repoId}：${w.path ?? flow.workDir}`)
   }
 
   // 2. 文档目录（仓库里已有归档副本）
