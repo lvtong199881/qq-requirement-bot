@@ -219,6 +219,80 @@
   .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
   .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
+
+  /* ── 并发闸门总览 ── */
+  .pool-strip {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    padding: 10px 14px; margin-bottom: 12px;
+    background: var(--surface2, var(--card2)); border: 1px solid var(--line); border-radius: 8px;
+    font-size: 13px;
+  }
+  .pool-item { display: flex; align-items: center; gap: 6px; }
+  .pool-item .pk { color: var(--dim); }
+  .pool-item .pv b { font-variant-numeric: tabular-nums; }
+  .pool-item .pv b.warn { color: var(--red); }
+  .pool-item .pq { color: var(--yellow); font-size: 12px; }
+  .pool-item .pmuted { color: var(--dim); font-size: 12px; }
+  .ws-cell { font-size: 12px; }
+  .ws-cell .ws { color: var(--blue); font-size: 12px; }
+
+  /* ── 模拟器：筛选 ── */
+  .emu-filters {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    padding: 10px 0 14px; margin-bottom: 8px;
+    border-bottom: 1px solid var(--hairline, var(--line));
+  }
+  .filter-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .filter-group .fl { color: var(--dim); font-size: 12px; }
+  .fchip {
+    padding: 3px 11px; font-size: 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--dim);
+    transition: all .12s;
+  }
+  .fchip:hover { border-color: var(--blue); color: var(--blue); }
+  .fchip.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .fchip .cn { opacity: .75; font-size: 11px; margin-left: 2px; }
+
+  /* ── 模拟器：卡片网格 ── */
+  .emu-grid {
+    display: grid; gap: 12px; margin-top: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  }
+  .emu-card {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; background: var(--card);
+    display: flex; flex-direction: column; gap: 7px;
+    transition: border-color .12s, box-shadow .12s;
+  }
+  .emu-card:hover { border-color: var(--blue); box-shadow: 0 2px 10px rgba(0,0,0,.07); }
+  .emu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .emu-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  }
+  .emu-badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .emu-badge.on { color: var(--green); background: rgba(63,185,80,.14); }
+  .emu-badge.on .dot { background: var(--green); }
+  .emu-badge.off { color: var(--dim); background: var(--surface3, #eef1f4); }
+  .emu-badge.off .dot { background: var(--gray); }
+  .emu-type {
+    font-size: 11px; color: var(--dim);
+    padding: 1px 7px; border: 1px solid var(--line); border-radius: 4px;
+  }
+  .emu-name {
+    font-size: 14px; font-weight: 600; line-height: 1.35; word-break: break-all;
+  }
+  .emu-meta { display: flex; gap: 8px; font-size: 12px; }
+  .emu-meta .mk { color: var(--dim); min-width: 30px; }
+  .emu-meta .mv { color: var(--text); word-break: break-all; }
+  .emu-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
+  .emu-actions .menu-btn { padding: 3px 10px; font-size: 12px; }
+  .emu-actions .menu-btn.danger { color: var(--red); }
+  .emu-actions .menu-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .emu-error {
+    margin: 8px 0; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+    color: var(--red); background: rgba(248, 81, 73, .08); border: 1px solid rgba(248, 81, 73, .25);
+  }
 </style>
 </head>
 <body>
@@ -300,7 +374,7 @@
       <div class="page-head">
         <h1>模拟器</h1>
         <div class="stats">
-          <span>{{ emuPlatform }} · 共 <b>{{ emulators.length }}</b> 个，运行中 <b>{{ runningEmuCount }}</b></span>
+          <span>共 <b>{{ emulators.length }}</b> 个 · 运行中 <b>{{ runningEmuCount }}</b></span>
         </div>
       </div>
 
@@ -308,44 +382,67 @@
         <div class="card">
           <p class="desc">
             这台机器上装的所有模拟器。启动后开发、测试、验收才能往上面装包跑。<br>
-            「清除数据」会重置为出厂状态并保留模拟器本身；「删除」会连模拟器一起移除，不可恢复。
+            「清数据」会重置为出厂状态并保留模拟器本身；「删除」会连模拟器一起移除，不可恢复。
           </p>
+
+          <!-- 筛选：平台 + 类型 -->
+          <div class="emu-filters">
+            <div class="filter-group" v-if="emuPlatforms.length > 1">
+              <span class="fl">平台</span>
+              <button
+                v-for="pf in emuPlatforms"
+                :key="pf.value"
+                class="fchip"
+                :class="{ on: emuPlatformFilter === pf.value }"
+                @click="emuPlatformFilter = pf.value"
+              >{{ pf.label }} <span class="cn">{{ pf.count }}</span></button>
+            </div>
+            <div class="filter-group">
+              <span class="fl">类型</span>
+              <button
+                class="fchip"
+                :class="{ on: emuTypeFilter === '' }"
+                @click="emuTypeFilter = ''"
+              >全部 <span class="cn">{{ emulators.length }}</span></button>
+              <button
+                v-for="t in emuTypes"
+                :key="t.value"
+                class="fchip"
+                :class="{ on: emuTypeFilter === t.value }"
+                @click="emuTypeFilter = t.value"
+              >{{ t.value }} <span class="cn">{{ t.count }}</span></button>
+            </div>
+          </div>
 
           <div v-if="emuError" class="emu-error">{{ emuError }}</div>
 
-          <table class="emu-table" v-if="emulators.length">
-            <thead>
-              <tr>
-                <th style="width:70px">状态</th>
-                <th>名称</th>
-                <th style="width:100px">类型</th>
-                <th style="width:180px">OS</th>
-                <th style="width:320px">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="e in emulators" :key="e.name">
-                <td>
-                  <span class="dot" :style="{background: e.running ? 'var(--green)' : 'var(--gray)'}"></span>
-                  {{ e.running ? '运行中' : '已停止' }}
-                </td>
-                <td><code>{{ e.name }}</code></td>
-                <td class="muted">{{ e.type }}</td>
-                <td class="muted">{{ e.os || '—' }}</td>
-                <td class="emu-actions">
-                  <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">
-                    启动
-                  </button>
-                  <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
-                  <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">
-                    启动并清数据
-                  </button>
-                  <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-else class="desc">没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。</p>
+          <div v-if="filteredEmulators.length" class="emu-grid">
+            <div class="emu-card" v-for="e in filteredEmulators" :key="e.platform + ':' + e.name">
+              <div class="emu-head">
+                <span class="emu-badge" :class="e.running ? 'on' : 'off'">
+                  <span class="dot"></span>{{ e.running ? '运行中' : '已停止' }}
+                </span>
+                <span class="emu-type">{{ e.type }}</span>
+              </div>
+              <div class="emu-name" :title="e.name">{{ e.name }}</div>
+              <div class="emu-meta">
+                <span class="mk">OS</span><span class="mv">{{ e.os || '—' }}</span>
+              </div>
+              <div class="emu-meta" v-if="emuPlatforms.length > 1">
+                <span class="mk">平台</span><span class="mv">{{ e.platform }}</span>
+              </div>
+              <div class="emu-actions">
+                <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">启动</button>
+                <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
+                <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">清数据启动</button>
+                <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <p v-else-if="!emuError" class="desc">
+            {{ emulators.length ? '没有符合筛选条件的模拟器。' : '没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。' }}
+          </p>
         </div>
       </div>
     </template>
@@ -624,7 +721,7 @@
           </p>
           <div class="chips">
             <span class="chip" v-for="q in superAdminUsers" :key="q">{{ q }}</span>
-            <span v-if="!superAdminUsers.length" class="chip" style="opacity:.6">（未配置）</span>
+            <span v-if="!superAdminUsers.length" class="fchip" style="opacity:.6">（未配置）</span>
           </div>
         </div>
       </div>
@@ -802,6 +899,56 @@ createApp({
     const emuBusy = ref(false)
     const runningEmuCount = computed(() => emulators.value.filter((e) => e.running).length)
 
+    // 筛选：平台（多平台时才有得选）+ 类型
+    const emuPlatformFilter = ref('')
+    const emuTypeFilter = ref('')
+
+    /** 可选平台（带各自数量），只有一个平台时不显示这组筛选 */
+    const emuPlatforms = computed(() => {
+      const map = new Map()
+      for (const e of emulators.value) {
+        const p = e.platform || 'unknown'
+        map.set(p, (map.get(p) ?? 0) + 1)
+      }
+      return [...map.entries()].map(([value, count]) => ({
+        value,
+        label: emuPlatformLabel(value),
+        count,
+      }))
+    })
+
+    /** 可选类型（带数量），按名字排序 */
+    const emuTypes = computed(() => {
+      const map = new Map()
+      for (const e of emulators.value) {
+        if (emuPlatformFilter.value && (e.platform || 'unknown') !== emuPlatformFilter.value) continue
+        const t = e.type || 'unknown'
+        map.set(t, (map.get(t) ?? 0) + 1)
+      }
+      return [...map.entries()]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+    })
+
+    function emuPlatformLabel(p) {
+      return { harmony: '鸿蒙', android: 'Android', ios: 'iOS' }[p] ?? p
+    }
+
+    const filteredEmulators = computed(() =>
+      emulators.value.filter((e) => {
+        if (emuPlatformFilter.value && (e.platform || 'unknown') !== emuPlatformFilter.value) return false
+        if (emuTypeFilter.value && (e.type || 'unknown') !== emuTypeFilter.value) return false
+        return true
+      }),
+    )
+
+    // 类型筛选值可能在新一次加载后不存在了，自动回落到「全部」
+    watch(emuTypes, (list) => {
+      if (emuTypeFilter.value && !list.some((t) => t.value === emuTypeFilter.value)) {
+        emuTypeFilter.value = ''
+      }
+    })
+
     async function loadEmulators() {
       try {
         const r = await fetch('/api/emulators')
@@ -814,6 +961,11 @@ createApp({
         emuError.value = ''
         emuPlatform.value = d.label || d.platform || '模拟器'
         emulators.value = d.items || []
+        // 平台的 item 里可能没带 platform 字段，用返回值补上
+        for (const e of emulators.value) if (!e.platform) e.platform = d.platform
+        if (emuPlatformFilter.value && !emuPlatforms.value.some((p) => p.value === emuPlatformFilter.value)) {
+          emuPlatformFilter.value = ''
+        }
       } catch (e) {
         emuError.value = '面板连不上：' + e.message
       }
@@ -1190,6 +1342,7 @@ createApp({
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
       emulators, emuPlatform, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
+      emuPlatformFilter, emuTypeFilter, emuPlatforms, emuTypes, filteredEmulators, emuPlatformLabel,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
       messages, messageGroups, messageErrors, messagesOk, messagesSaving,
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
