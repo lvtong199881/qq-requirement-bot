@@ -347,8 +347,10 @@ export function createFlowBridge(deps) {
       persist: (flow) => {
         st.flow = flow
         store.save(groupId, st)
-        // 编排记录跟着状态走一次：面板和人都看这份，不需要谁去解析它
-        writeBoard(reqDirOf(flow), flow)
+        // 编排记录跟着状态走一次：面板和人都看这份，不需要谁去解析它。
+        // 但已经收尾（done）的不写——收尾清理刚把工作区删掉，
+        // 这里再写一次会把目录重新建出来，留下一棵只有编排记录的空树。
+        if (flow.status !== 'done') writeBoard(reqDirOf(flow), flow)
       },
       varsFor: (cp, flow) => ({
         reqDir: reqDirOf(flow) + '/',
