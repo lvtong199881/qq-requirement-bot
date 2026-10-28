@@ -11,7 +11,7 @@
  * 副作用（发消息、起进程、写盘）都通过 deps 注入，方便单测。
  */
 import { join, basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, rmSync, cpSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
@@ -213,7 +213,9 @@ export function createFlowBridge(deps) {
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
     // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
     const reqId = makeReqId()
-    // 暂存区建在项目内：子进程沙箱只能写会话工作区
+    // 暂存区建在项目内：子进程沙箱只能写会话工作区。
+    // 用本地 exclude 忽略它，接入方不需要改 .gitignore。
+    ensureScratchIgnored(st.projectDir)
     const dataDir = join(st.projectDir, '.qq-bot-scratch', reqId)
     try {
       mkdirSync(dataDir, { recursive: true })
@@ -933,6 +935,32 @@ function detectRepoMainBranch(projectDir) {
  * 新需求用 flow.dataDir（仓库外）；改造前的需求没有这个字段，退回仓库内老路径，
  * 这样历史需求还能继续跑完，不会被一次性切断。
  */
+/**
+ * 让暂存区被 git 忽略，但**不改项目的 .gitignore**。
+ *
+ * 用 `.git/info/exclude`：它是本地忽略规则，不进仓库、不影响别人、
+ * 也不需要接入方为这套系统做任何改造。第一次用到时才写，写完不再重复。
+ */
+export function ensureScratchIgnored(projectDir) {
+  const exclude = join(projectDir, '.git', 'info', 'exclude')
+  try {
+    if (existsSync(exclude)) {
+      const cur = readFileSync(exclude, 'utf8')
+      if (!cur.includes('.qq-bot-scratch')) {
+        writeFileSync(exclude, cur.replace(/\n*$/, '\n') + '.qq-bot-scratch/\n')
+      }
+      return
+    }
+    // 没有 .git（不是仓库，或者是 worktree 目录）时什么都不做：
+    // 暂存区只在主项目里出现，worktree 里不会有
+    if (!existsSync(join(projectDir, '.git'))) return
+    mkdirSync(dirname(exclude), { recursive: true })
+    writeFileSync(exclude, '.qq-bot-scratch/\n')
+  } catch {
+    /* 加不上就算了：暂存区会出现在 git status 里，不影响流程正确性 */
+  }
+}
+
 /**
  * 产物目录。分两个阶段两种位置，原因是沙箱和成本：
  *
