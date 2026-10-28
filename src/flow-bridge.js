@@ -549,6 +549,15 @@ export function createFlowBridge(deps) {
           `[${groupId}] v2 回合：${checkpoint.id}（${role}，${sessionId ? '续跑' : '新会话'}，超时 ${timeoutMin} 分钟，prompt ${prompt.length} 字）`,
         )
         const r = await runTurn({
+          // 记下子进程 pid：bridge 重启时靠它判断「这个回合是真的被打断了，
+          // 还是子进程还活着、只是我这个父进程换了一个」
+          onChild: (child) => {
+            st.flow = {
+              ...st.flow,
+              activeTurn: { pid: child.pid ?? null, checkpointId: checkpoint.id, startedAt: Date.now() },
+            }
+            store.save(groupId, st)
+          },
           dshBin: config.dshBin,
           profile: config.profile,
           projectDir: st.projectDir,
@@ -580,6 +589,8 @@ export function createFlowBridge(deps) {
         } else {
           log(`[${groupId}] 回合完成（${secs}s）：${checkpoint.id}`)
         }
+        st.flow = { ...st.flow, activeTurn: null }
+        store.save(groupId, st)
         return { ok, sessionId: r.sessionId, error: ok ? null : why, secs }
         } finally {
           // 不管是正常完成、超时还是抛错，执行槽都要还回去

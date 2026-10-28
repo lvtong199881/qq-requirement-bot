@@ -390,6 +390,17 @@ cleanupOrphanStates()
  * 回执在 → 直接继续推进；回执不在 → 告诉用户重跑这一步。
  * 子进程已 detached，正在跑的那个回合不会因为重启而死。
  */
+/** 进程还活着吗（MSYS/Unix 通用；pid 可能被复用，所以只在高置信场景用） */
+function pidAlive(pid) {
+  if (!pid) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function recoverInterruptedFlows() {
   for (const groupId of store.allGroupIds()) {
     const st = store.get(groupId)
@@ -407,9 +418,16 @@ function recoverInterruptedFlows() {
       flowBridge
         .handleMessage({ groupId, text: '继续', replyTo: null, st, initiator: null, can: null })
         .catch((err) => log(`[${groupId}] 恢复失败：${err.message}`))
-    } else {
+    } else if (pidAlive(flow.activeTurn?.pid)) {
+      // 子进程还活着：只是 bridge 换了进程，回合本身没断。
+      // 这时提示「重跑」会让用户白等一次，也会让两份产物打架。
+      log(`[${groupId}] 「${cp.label}」的子进程还活着（pid ${flow.activeTurn.pid}），等它写完回执`)
+    } else if (st.recoverNotifiedFor !== cp.id) {
       log(`[${groupId}] 「${cp.label}」的回合被打断，等用户发继续`)
+      store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
       sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+    } else {
+      log(`[${groupId}] 「${cp.label}」仍等待用户发继续（已提示过，不重复发）`)
     }
   }
 }
