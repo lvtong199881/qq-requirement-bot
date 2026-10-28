@@ -964,6 +964,35 @@ createApp({
       emuApplyFilter()
     }
 
+    async function loadEmulators() {
+      try {
+        const r = await fetch('/api/emulators')
+        const d = await r.json()
+        if (d.ok === false) {
+          emuError.value = d.error || '读取模拟器失败'
+          emulators.value = []
+          return
+        }
+        emuError.value = ''
+        emuPlatform.value = d.label || d.platform || '模拟器'
+        emulators.value = d.items || []
+        // 接口返回的条目可能不带 platform，用整体平台补上，卡片才能按平台筛选
+        for (const e of emulators.value) if (!e.platform) e.platform = d.platform
+
+        // 数据变了之后，已应用的筛选值和草稿可能已失效，回落到「全部」
+        if (emuPlatformFilter.value && !emuPlatformOptions.value.some((p) => p.value === emuPlatformFilter.value)) {
+          emuPlatformFilter.value = ''
+          emuPlatformDraft.value = ''
+        }
+        if (emuTypeFilter.value && !emuTypeOptions.value.includes(emuTypeFilter.value)) {
+          emuTypeFilter.value = ''
+          emuTypeDraft.value = ''
+        }
+      } catch (e) {
+        emuError.value = '面板连不上：' + e.message
+      }
+    }
+
     async function emuAct(action, emu, reset = false) {
       const verbs = { start: reset ? '启动并清除数据' : '启动', stop: '关闭', delete: '删除' }
       const verb = verbs[action] || action
