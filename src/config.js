@@ -122,23 +122,33 @@ export function loadConfig(configPath) {
     throw new Error(`配置文件不是合法 JSON：${path}\n${err.message}`)
   }
 
-  const projectDir = resolve(expandHome(raw.projectDir ?? ''))
-  if (!raw.projectDir) throw new Error('config 缺少 projectDir（需求要落到的项目根目录）')
+  // 仓库只有一种配法：repos 数组。单仓库就是一个元素，不需要第二套入口——
+  // 以前同时认 projectDir 和 repos，两套配置迟早会不一致。
+  if (!Array.isArray(raw.repos) || raw.repos.length === 0) {
+    throw new Error(
+      'config 缺少 repos（需求要落到的仓库列表）。单仓库写一项即可：\n' +
+        '  "repos": [{ "id": "app", "path": "~/your-project" }]',
+    )
+  }
 
-  // 组件化项目可能有多个仓库：主 app + 若干组件库（通过 ohpm/npm 依赖引入）。
-  // 第一个（或标了 primary 的）是主仓库，需求默认只动它；技术方案里声明了
-  // 额外仓库时才为那些仓库单独开工作区。单仓库项目不需要配 repos。
-  const repos = (raw.repos ?? []).map((r, i) => ({
+  const repos = raw.repos.map((r, i) => ({
     id: String(r.id ?? `repo${i}`),
     path: resolve(expandHome(r.path ?? '')),
     primary: r.primary === true || i === 0,
   }))
+  if (repos.filter((r) => r.primary).length > 1) {
+    throw new Error('repos 里只能有一个 primary')
+  }
   for (const r of repos) {
     if (!r.path || !existsSync(r.path)) throw new Error(`repos 里的 ${r.id} 路径不存在：${r.path}`)
   }
-  const primaryRepo = repos.find((r) => r.primary) ?? null
+
+  const primaryRepo = repos.find((r) => r.primary) ?? repos[0]
+  // projectDir 是从 repos 派生的，不是独立配置项：下游大量代码按单仓库写，
+  // 主仓库的路径就继续叫这个名，省得全项目改一遍。
+  const projectDir = primaryRepo.path
   if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
-    throw new Error(`projectDir 不存在或不是目录：${projectDir}`)
+    throw new Error(`主仓库路径不存在或不是目录：${projectDir}`)
   }
 
   return {
@@ -146,9 +156,8 @@ export function loadConfig(configPath) {
     configPath: path,
     repoRoot: REPO_ROOT,
     projectDir,
-    // 没配 repos 时就是单仓库，下游继续用 projectDir
-    repos: repos.length ? repos : [{ id: 'app', path: projectDir, primary: true }],
-    primaryRepo: primaryRepo ?? { id: 'app', path: projectDir, primary: true },
+    repos,
+    primaryRepo,
     skillDir: resolveSkillDir(raw.skillDir),
     dshBin: raw.dshBin || 'dsh',
     profile: raw.profile || 'qqbot',
@@ -165,7 +174,16 @@ export function loadConfig(configPath) {
     // 想限制范围时才写 groups，留空表示「全自动」。
     groups: (raw.groups ?? []).map((g) => ({
       groupId: String(g.groupId),
-      projectDir: g.projectDir ? resolve(expandHome(g.projectDir)) : projectDir,
+      // 群级可以指向另一个已配置的仓库（不同群服务不同产品线），
+      // 但必须出现在 repos 里——不允许凭空多出一个仓库
+      projectDir: g.repo
+        ? (repos.find((r) => r.id === String(g.repo))?.path ??
+          (() => {
+            throw new Error(`群 ${g.groupId} 指定了未配置的仓库：${g.repo}`)
+          })())
+        : g.projectDir
+          ? resolve(expandHome(g.projectDir))
+          : projectDir,
       approval: g.approval === 'auto' ? 'auto' : 'manual',
     })),
     groupPolicy: normalizeGroupPolicy(raw.groupPolicy),

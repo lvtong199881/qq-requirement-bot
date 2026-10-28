@@ -46,6 +46,24 @@ test/               独立测试脚本，没有框架
 依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
 和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
 
+## 仓库配置
+
+只有一个入口：`repos` 数组。单仓库就写一项——不需要第二个配置项。
+
+```json
+{
+  "repos": [
+    { "id": "app", "path": "~/your-project", "primary": true },
+    { "id": "ui-kit", "path": "~/ohos-ui-kit" }
+  ]
+}
+```
+
+- `primary` 标主仓库；不标就是第一个。只能有一个
+- 代码里的 `config.projectDir` 是主仓库路径的派生值，不是独立配置
+- 群级可以用 `"repo": "ui-kit"` 指向另一个已配置的仓库（不同群服务不同产品线），
+  指向未配置的 id 会直接报错
+
 ## 三个进程
 
 改造后是三个独立进程，各管一摊，通过 HTTP 调用：
