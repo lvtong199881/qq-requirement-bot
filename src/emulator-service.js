@@ -21,43 +21,29 @@
 import { createServer } from 'node:http'
 import { loadConfig } from './config.js'
 import { createEmulatorManager } from './infra/emulator.js'
+import { PLATFORMS } from './infra/platform.js'
 
 const DEFAULT_PORT = 7880
 
-/** 平台能力描述：调用方据此拼命令，不用自己判断平台差异 */
-const CAPABILITIES = {
-  harmony: {
-    platform: 'harmony',
-    label: '鸿蒙',
-    // 构建与单测都走 hvigor；--no-daemon 是必须的，这台机器上 daemon 会卡死
-    build: {
-      tool: 'hvigor',
-      args: ['--mode', 'module', '-p', 'module=entry@default', 'assembleHap', '--no-daemon'],
-    },
-    test: {
-      tool: 'hvigor',
-      args: ['--mode', 'module', '-p', 'module=entry@default', 'test', '--no-daemon'],
-    },
-    // 装包与驱动设备用的工具
-    deploy: { install: 'hdc', installArgs: ['install'] },
-    sdkEnv: 'DEVECO_SDK_HOME',
-  },
-  android: {
-    platform: 'android',
-    label: 'Android',
-    build: { tool: 'gradle', args: ['assembleDebug'] },
-    test: { tool: 'gradle', args: ['testDebugUnitTest'] },
-    deploy: { install: 'adb', installArgs: ['install', '-r'] },
-    sdkEnv: 'ANDROID_HOME',
-  },
-  ios: {
-    platform: 'ios',
-    label: 'iOS',
-    build: { tool: 'xcodebuild', args: ['-scheme', 'App', 'build'] },
-    test: { tool: 'xcodebuild', args: ['test'] },
-    deploy: { install: 'xcrun', installArgs: ['simctl', 'install'] },
-    sdkEnv: 'DEVELOPER_DIR',
-  },
+/**
+ * 平台能力：直接从 platform.js 派生，不再单独维护一份。
+ * 以前这里有一套 build/test/deploy 定义，和 infra/platform.js 各写各的，
+ * 加一个平台要改两处，迟早对不上。
+ */
+function capabilitiesOf(platformId) {
+  const p = PLATFORMS[platformId] ?? PLATFORMS.harmony
+  return {
+    ok: true,
+    platform: p.id,
+    label: p.label,
+    artifactExt: p.artifactExt,
+    sdkEnv: p.sdkEnv,
+    build: p.build,
+    test: p.test,
+    install: p.install,
+    uninstall: p.uninstall,
+    notes: p.notes ?? [],
+  }
 }
 
 function readJsonBody(req) {
@@ -131,8 +117,7 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
       }
 
       if (req.method === 'GET' && path === '/api/capabilities') {
-        const caps = CAPABILITIES[cfg.platform ?? 'harmony'] ?? CAPABILITIES.harmony
-        return json(res, 200, { ok: true, ...caps })
+        return json(res, 200, capabilitiesOf(cfg.platform ?? 'harmony'))
       }
 
       // ── 列表 ──

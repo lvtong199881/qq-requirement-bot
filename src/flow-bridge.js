@@ -23,6 +23,7 @@ import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
 import { createEmulatorClient } from './infra/emulator-client.js'
+import { platformOf, renderCommand } from './infra/platform.js'
 import {
   ensureBareRepo,
   createWorktree,
@@ -90,6 +91,7 @@ export function createFlowBridge(deps) {
   // 设备归模拟器服务管：编排层只申请/释放，不碰具体设备也不读平台配置。
   // 允许注入，测试就不必真的起一个服务。
   const emulator = deps.emulator ?? createEmulatorClient(config)
+  const platform = platformOf(config)
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
@@ -363,7 +365,12 @@ export function createFlowBridge(deps) {
         // merge 阶段在专用工作区里操作；其他阶段用需求自己的工作区
         workDir: (flow.current === 'merge' ? flow.vars?.mergeWorkDir : flow.workDir) ?? flow.workDir ?? '',
         deviceId: flow.vars?.deviceId ?? '',
-        platform: config.platform ?? 'harmony',
+        platform: platform.id,
+        // 平台命令块：构建/测试/装包怎么跑，由适配器决定
+        platformBlock: buildPlatformBlock(platform, {
+          deviceId: flow.vars?.deviceId ?? '<设备ID>',
+          artifactId: flow.vars?.artifactId ?? '<应用ID>',
+        }),
         dataDir: reqDirOf(flow),
         // 目录树给对地方：dev 之后看工作区，之前看主仓库
         projectTree: listTop(flow.workDir ?? st.projectDir),
@@ -547,7 +554,7 @@ export function createFlowBridge(deps) {
 
         if (cp.id === 'dev') {
           const fromReceipt = receipt?.deliverables?.debugPackage
-          const found = fromReceipt || findLatestHap(st.projectDir)
+          const found = fromReceipt || findLatestHap(st.projectDir, platform)
           if (found) {
             st.flow = { ...st.flow, vars: { ...st.flow.vars, debugPackage: found } }
             store.save(groupId, st)
@@ -708,6 +715,18 @@ export function createFlowBridge(deps) {
   }
 
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
+
+/** 把平台适配器渲染成任务包里的一段命令说明 */
+function buildPlatformBlock(platform, vars) {
+  const lines = ['【平台命令】' + platform.label]
+  lines.push(`- 构建：${renderCommand(platform.build, vars)}`)
+  lines.push(`- 单测：${renderCommand(platform.test, vars)}`)
+  lines.push(`- 装包：${renderCommand(platform.install, vars)}`)
+  lines.push(`- 安装包后缀：${platform.artifactExt}`)
+  if (platform.sdkEnv) lines.push(`- 需要导出的环境变量：${platform.sdkEnv}`)
+  for (const note of platform.notes ?? []) lines.push(`- ${note}`)
+  return lines.join('\n')
+}
 
 /**
  * 检查本回合有没有动不该动的文件。
@@ -1205,10 +1224,12 @@ function listTop(dir) {
  * 从构建产物里找最新的应用包（排除测试包）。
  * 开发 agent 可能忘了在回执里登记，但包一般已经构建出来了。
  */
-function findLatestHap(projectDir) {
+function findLatestHap(projectDir, platform) {
   let newest = null
+  // 安装包后缀跟平台走：鸿蒙 .hap、Android .apk、iOS .app
+  const extRe = new RegExp(`${platform.artifactExt.replace('.', '\\.')}$`, 'i')
   for (const root of [join(projectDir, 'entry/build'), join(projectDir, 'build')]) {
-    for (const f of collectFiles(root, /\.hap$/i)) {
+    for (const f of collectFiles(root, extRe)) {
       if (/ohosTest/i.test(f)) continue
       try {
         const m = statSync(f).mtimeMs

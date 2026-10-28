@@ -107,6 +107,12 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     `- 本阶段文档产物：${(checkpoint.output ?? []).join('、') || '无文件产物，结论写进回执'}`,
     `- 回执 ${receiptFile(checkpoint.id)} 也写在这个目录`,
   )
+  // 平台命令：构建/测试/装包的具体写法由 bridge 按平台填，skill 里只写占位符。
+  // 换平台时改 platform.js 一处，不用全项目搜 hvigor 和 hdc。
+  if (vars?.platformBlock) {
+    lines.push(vars.platformBlock)
+  }
+
   // 多仓库（组件化项目）：每个仓库一个独立工作区，都列出来
   const workspaces = vars?.workspaces ?? null
   if (workspaces && Object.keys(workspaces).length > 1) {
