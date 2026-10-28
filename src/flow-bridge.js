@@ -11,7 +11,7 @@
  * 副作用（发消息、起进程、写盘）都通过 deps 注入，方便单测。
  */
 import { join, basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, rmSync, cpSync } from 'node:fs'
 import { execSync, execFileSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
@@ -213,8 +213,8 @@ export function createFlowBridge(deps) {
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
     // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
     const reqId = makeReqId()
-    // 目录建在项目内的 docs/requirements/<reqId>/，子进程沙箱才允许写
-    const dataDir = join(st.projectDir, 'docs/requirements', reqId)
+    // 暂存区建在项目内：子进程沙箱只能写会话工作区
+    const dataDir = join(st.projectDir, '.qq-bot-scratch', reqId)
     try {
       mkdirSync(dataDir, { recursive: true })
     } catch (err) {
@@ -337,7 +337,8 @@ export function createFlowBridge(deps) {
     return {
       skillsDir,
       reqDir,
-      gitDiff: () => readGitDiff(st.projectDir),
+      // dev 之后代码改动都在工作区，看主项目的 diff 只会是空
+      gitDiff: () => readGitDiff(st.flow.workDir || st.projectDir),
       // 群配置是手动批准时，每个阶段的产物都停下来等人点头
       requireApproval: config.approval === 'manual',
       persist: (flow) => {
@@ -456,6 +457,21 @@ export function createFlowBridge(deps) {
           })
           if (!wt.ok) throw new Error(`创建工作区失败：${wt.error}`)
 
+          // 把暂存区里已经攒下的文档搬进工作区：从这一刻起产物跟着工作区走，
+          // 合并时直接提交。搬完删暂存区，避免同一份文档出现两个来源。
+          const scratchDir = st.flow.dataDir
+          const wtDocs = join(wt.path, 'docs/requirements', st.flow.reqId)
+          if (scratchDir && existsSync(scratchDir)) {
+            try {
+              mkdirSync(wtDocs, { recursive: true })
+              cpSync(scratchDir, wtDocs, { recursive: true, force: true })
+              rmSync(scratchDir, { recursive: true, force: true })
+              log(`[${groupId}] 已把暂存区文档搬进工作区（${basename(wtDocs)}）`)
+            } catch (err) {
+              log(`[${groupId}] 搬暂存区失败（继续用暂存区）：${err.message}`)
+            }
+          }
+
           log(
             `[${groupId}] 工作区：${wt.path}` +
               (wt.stale ? '（远端不可达，基于本地分支创建，可能落后）' : '') +
@@ -464,6 +480,7 @@ export function createFlowBridge(deps) {
           st.flow = {
             ...st.flow,
             workDir: wt.path,
+            dataDir: join(wt.path, 'docs/requirements', st.flow.reqId),
             vars: {
               ...st.flow.vars,
               workDir: wt.path,
@@ -564,7 +581,9 @@ export function createFlowBridge(deps) {
           },
           dshBin: config.dshBin,
           profile: config.profile,
-          projectDir: st.projectDir,
+          // cwd 决定子进程的沙箱边界：dev 之后必须切到工作区，
+          // 否则产物写在 worktree 里也超出工作区，照样被拒。
+          projectDir: st.flow.workDir || st.projectDir,
           sessionId,
           prompt,
           env: modelEnv,
@@ -662,6 +681,7 @@ export function createFlowBridge(deps) {
       const reqDir = reqDirOf(flow)
       const missing = checkFinalArtifacts(reqDir)
       if (missing.length) {
+        log(`[${groupId}] 收尾缺产物（${reqDir}）：${missing.join('、')}`)
         await sendPlain(groupId, `收尾检查发现缺产物：${missing.join('、')}`, { replyTo }).catch(() => {})
         return
       }
@@ -913,14 +933,22 @@ function detectRepoMainBranch(projectDir) {
  * 新需求用 flow.dataDir（仓库外）；改造前的需求没有这个字段，退回仓库内老路径，
  * 这样历史需求还能继续跑完，不会被一次性切断。
  */
+/**
+ * 产物目录。分两个阶段两种位置，原因是沙箱和成本：
+ *
+ * - dev 之前（澄清/设计/技术方案）：`<projectDir>/.qq-bot-scratch/<reqId>/`
+ *   dsh 子进程跑在 workspace-write 沙箱里，只能写会话工作区，所以必须落在项目内。
+ *   但这几个阶段只写文档，没必要为每个需求 checkout 一份 worktree（项目 268M，
+ *   12 个并发就是 2G）。放暂存区、进 .gitignore，主分支和工作区都不会脏。
+ *
+ * - dev 之后：`<workDir>/docs/requirements/<reqId>/`
+ *   进了工作区就该跟着工作区走，合并时直接提交，不需要额外搬运。
+ *
+ * 整个要保证的是：写的人和校验的人用同一个 reqDirOf。
+ */
 export function reqDirOf(flow) {
-  // 产物必须落在会话工作区内：dsh 子进程跑在 workspace-write 沙箱里，
-  // 写到工作区外（比如 ~/.qq-bot/data）会被直接拒绝，agent 只能写回工作区，
-  // 编排层按 reqId 校验找不到就判定「没产出」，于是无限重跑同一阶段。
-  //
-  // 有工作区就用工作区（dev 之后），没有就用主项目（dev 之前）。
-  const base = flow?.workDir || flow?.projectDir
-  return join(base, 'docs/requirements', flow.reqId)
+  if (flow?.workDir) return join(flow.workDir, 'docs/requirements', flow.reqId)
+  return join(flow?.projectDir ?? '.', '.qq-bot-scratch', flow.reqId)
 }
 
 /**

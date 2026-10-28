@@ -46,6 +46,7 @@ for (const role of ['req', 'design', 'tech-plan', 'dev', 'review', 'test', 'acce
 function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
   const saved = new Map()
   const sent = []
+  const logs = []
   const agentCalls = []
   const queued = []
 
@@ -94,7 +95,7 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
     },
     store,
     machine,
-    log: () => {},
+    log: (m) => logs.push(String(m)),
     sendPlain: async (g, text) => { sent.push(text) },
     runTurn: async ({ prompt, sessionId }) => {
       const m = prompt.match(/【本回合只做这一步】.*（([\w-]+)）/)
@@ -116,6 +117,12 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
             writeFileSync(join(reqDir, out), '内容')
           }
         }
+        // 终检要求这 5 个文件都在。各阶段 output 与它不完全重合（比如 dev 阶段
+        // output 是技术方案），mock 里统一补齐，免得测的是「产物齐不齐」而不是流程。
+        for (const f of ['需求卡片.md', 'PRD.md', '技术方案.md', '测试报告.md', '验收文档.md']) {
+          const p = join(reqDir, f)
+          if (!existsSync(p)) writeFileSync(p, '内容')
+        }
         writeFileSync(
           join(reqDir, receiptFile(id)),
           JSON.stringify(plan.receipt ?? { status: 'done', summary: 'ok' }),
@@ -129,7 +136,7 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
     gitDiff: () => '+++ b/a.js',
   }
 
-  return { deps, saved, sent, agentCalls, queued }
+  return { deps, saved, sent, agentCalls, queued, logs }
 }
 
 function newState(groupId = 'g1') {
@@ -228,7 +235,7 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
 console.log('\n== 用户回答：需求定稿并复用会话 ==')
 {
   // 这个用例验证的是「回答后一路推进到收尾」，人工逐阶段确认会打断它
-  const { deps, saved, sent, agentCalls } = makeDeps({ approval: 'auto' })
+  const { deps, saved, sent, agentCalls, logs } = makeDeps({ approval: 'auto' })
   const bridge = createFlowBridge(deps)
   const st = newState()
   await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
