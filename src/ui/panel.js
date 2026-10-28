@@ -255,8 +255,14 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
         const rows = []
         let alerts = 0
+        // 并发资源是「实例级」的，但大盘按群展示，所以每个实例的池状态
+        // 单独收一份给前端画总览，行里只带这个群自己的排队信息。
+        const pools = []
         for (const s of statuses) {
           if (s.unreachable || (s.onebot && s.onebot.connected === false)) alerts += 1
+          if (s.pools && !s.unreachable) {
+            pools.push({ pid: s.instance?.pid ?? null, ...s.pools })
+          }
           for (const g of s.groups ?? []) {
             rows.push({
               pid: s.instance?.pid ?? null,
@@ -266,7 +272,7 @@ export function startPanel({ repoRoot, port = 7879, token }) {
             })
           }
         }
-        return json(res, 200, { rows, alerts, at: Date.now() })
+        return json(res, 200, { rows, alerts, pools, at: Date.now() })
       }
 
       // 实例页：按「进程」维度，只在切过去时拉一次

@@ -294,6 +294,26 @@
         </div>
       </div>
 
+      <!-- 并发闸门总览：直接回答「还能再并行几个需求」 -->
+      <div v-if="poolRows.length" class="pool-strip">
+        <div class="pool-item" v-for="p in poolRows" :key="'wt' + p.pid">
+          <span class="pk">工作区</span>
+          <span class="pv">
+            <b :class="{ warn: p.worktree.used >= p.worktree.max }">{{ p.worktree.used }}</b>/{{ p.worktree.max }}
+          </span>
+          <span v-if="p.pendingWorktrees" class="pq">排队 {{ p.pendingWorktrees }}</span>
+          <span v-if="poolRows.length > 1" class="pmuted">PID {{ p.pid }}</span>
+        </div>
+        <div class="pool-item" v-for="p in poolRows" :key="'tk' + p.pid">
+          <span class="pk">执行槽</span>
+          <span class="pv">
+            <b :class="{ warn: p.turns.used >= p.turns.max }">{{ p.turns.used }}</b>/{{ p.turns.max }}
+          </span>
+          <span v-if="p.pendingTurns" class="pq">排队 {{ p.pendingTurns }}</span>
+          <span v-if="poolRows.length > 1" class="pmuted">PID {{ p.pid }}</span>
+        </div>
+      </div>
+
       <div v-if="groupRows.length" class="inst">
         <table>
           <thead>
@@ -303,6 +323,7 @@
               <th style="width:180px">QQ 群</th>
               <th style="width:160px">发起人</th>
               <th>当前阶段</th>
+              <th style="width:200px">工作区</th>
               <th style="width:70px"></th>
             </tr>
           </thead>
@@ -332,6 +353,13 @@
                     <span class="bdur">{{ badgeOf(row).dur }}</span>
                   </template>
                 </span>
+              </td>
+              <td class="ws-cell">
+                <template v-if="row.workDir">
+                  <code class="ws" :title="row.workDir">{{ shortPath(row.workDir) }}</code>
+                  <span v-if="row.featureBranch" class="muted"> · {{ row.featureBranch }}</span>
+                </template>
+                <span v-else class="muted">—</span>
               </td>
               <td style="text-align:right">
                 <button class="menu-btn" @click.stop="openMenu($event, row)">⋯</button>
@@ -689,6 +717,14 @@ createApp({
 
     /** 需求大盘的行：/api/board 已经按群维度摊平，前端不再自己展平 */
     const groupRows = computed(() => board.value.rows || [])
+    const poolRows = computed(() => board.value.pools || [])
+
+    /** 长路径只显示最后两段，完整值放 title */
+    function shortPath(p) {
+      if (!p) return '—'
+      const parts = String(p).split('/').filter(Boolean)
+      return parts.length <= 2 ? p : '…/' + parts.slice(-2).join('/')
+    }
     const alertCount = computed(() => board.value.alerts || 0)
 
     // ── 两套数据：大盘按群、实例页按进程，各拉各的接口 ──
@@ -1020,7 +1056,7 @@ createApp({
 
     return {
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
-      instanceCount, groupCount, alertCount, groupRows,
+      instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
       messages, messageGroups, messageErrors, messagesOk, messagesSaving,
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
