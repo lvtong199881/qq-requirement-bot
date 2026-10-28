@@ -83,8 +83,9 @@ export function createFlowBridge(deps) {
   // 两层并发闸门，都落在磁盘上（进程崩了占位会按 pid 自动清理）：
   //   worktree 池 —— 同时处于开发期的需求数，决定磁盘占用
   //   执行槽     —— 同时跑的回合数，决定内存和 token 消耗
-  const worktreePool = new SlotPool(join(config.repoDir, 'pools', 'worktree'), config.limits?.maxWorktrees ?? 12)
-  const turnPool = new SlotPool(join(config.repoDir, 'pools', 'turn'), config.limits?.maxConcurrentTurns ?? 2)
+  const poolsRoot = join(config.repoDir, '..', 'pools')
+  const worktreePool = new SlotPool(join(poolsRoot, 'worktree'), config.limits?.maxWorktrees ?? 12)
+  const turnPool = new SlotPool(join(poolsRoot, 'turn'), config.limits?.maxConcurrentTurns ?? 2)
   // 设备归模拟器服务管：编排层只申请/释放，不碰具体设备也不读平台配置。
   // 允许注入，测试就不必真的起一个服务。
   const emulator = deps.emulator ?? createEmulatorClient(config)
@@ -405,7 +406,7 @@ export function createFlowBridge(deps) {
 
           // 合并是全局串行操作：两个需求同时验收通过时，不能让它们同时改主分支。
           // 拿不到锁就等，等到再进——回合本身还没开始，等待是安全的。
-          const lockFile = join(config.repoDir, 'merge.lock')
+          const lockFile = join(config.repoDir, '..', 'merge.lock')
           const waitMs = config.limits?.mergeLockWaitMs ?? 30 * 60 * 1000
           const lock = await acquireLock(lockFile, { waitMs, pollMs: 200 })
           if (!lock.ok) throw new Error('等待合并锁超时：另一个需求正在合并')
