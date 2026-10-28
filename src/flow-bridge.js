@@ -18,6 +18,7 @@ import { formatDuration } from './ui/format.js'
 import { parseCommand } from './commands.js'
 import { initialState, resumeFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
 import { runFlow } from './flow/flow-runner.js'
+import { readReceipt } from './flow/orchestrator.js'
 import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
@@ -703,8 +704,9 @@ async function doMerge({ groupId, flow, st, log, config }) {
   // 1. 提交开发工作区的改动
   const dirty = gitRun(devDir, ['status', '--porcelain'])
   if (dirty.out?.trim()) {
-    const receipt = readReceipt(join(devDir, 'docs/requirements', flow.reqId), 'dev') ?? {}
-    const msg = receipt.commitMessage || `feat(${flow.reqId}): ${flow.name ?? '需求实现'}`
+    const got = readReceipt(join(devDir, 'docs/requirements', flow.reqId), 'dev')
+    const msg =
+      got?.receipt?.commitMessage || `feat(${flow.reqId}): ${flow.name ?? '需求实现'}`
     for (const args of [['add', '-A'], ['-c', 'user.name=qq-bot', '-c', 'user.email=bot@local', 'commit', '-q', '-m', msg]]) {
       const r = gitRun(devDir, args)
       if (!r.ok) return { ok: false, error: `提交失败：${r.error}` }
