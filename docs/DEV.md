@@ -46,6 +46,39 @@ test/               独立测试脚本，没有框架
 依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
 和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
 
+## 三个进程
+
+改造后是三个独立进程，各管一摊，通过 HTTP 调用：
+
+```
+模拟器服务 :7880   ← 设备发现、启停、租约；配置只在这里读
+   ↑ HTTP
+bridge    :7878    ← 编排；需要设备时向服务申请租约
+panel     :7879    ← 面板；模拟器操作转发给服务，不自己实现
+
+全链路日志：.logs/{emulator,bridge,panel}-stdout.log
+```
+
+**为什么模拟器要单独成服务**：设备是机器级资源，和「谁在跑需求」无关。多个
+bridge 实例、面板、以后的别的工具都要用它；进程内 import 会把这些焊死，
+而且设备租约必须集中管理——分散在各自进程里的锁无法判断「这台现在归谁」。
+
+启动顺序无所谓，服务没起来时 bridge 会在需要设备的那一刻报明确错误。
+
+## 鸿蒙工具链脱离 DevEco
+
+`scripts/setup-ohos-toolchain.sh` 把 SDK / 模拟器 / hvigor 抽到独立目录
+（约 6 GB，完整 DevEco 是 11 GB），IDE 本体不需要：
+
+```bash
+./scripts/setup-ohos-toolchain.sh              # 装到 ~/ohos-toolchain
+./scripts/setup-ohos-toolchain.sh --link-sdk   # SDK 软链，省 5.5G
+source ~/ohos-toolchain/env.sh
+```
+
+实测：编译 9 秒、单测 6 秒（比 DevEco 的 `hvigorw` 快，那个会卡 daemon）。
+唯一仍依赖 DevEco 的是 SDK 本身——官方没有独立的 SDK 下载入口，只能从安装包里复制。
+
 ## 数据放在哪
 
 团队化改造后，bot **不持有任何主工作区**，只有裸仓库和按需创建的 worktree：

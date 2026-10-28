@@ -443,7 +443,7 @@ function flowStages(flow) {
   })
 }
 
-function buildSnapshot({ full = true } = {}) {
+async function buildSnapshot({ full = true } = {}) {
   const groups = machine
     .listAll()
     // 过滤掉项目目录已消失的残留（比如测试用临时目录留下的 state 文件）
@@ -548,7 +548,7 @@ function buildSnapshot({ full = true } = {}) {
     groups,
     resources: runtime.resources(),
     // 并发闸门快照：面板要回答「还能再并行几个需求」「谁在排队」
-    pools: flowBridge.poolStats?.() ?? null,
+    pools: (await flowBridge.poolStats?.()) ?? null,
     at: Date.now(),
   }
   if (full) snap.recentEvents = runtime.recentLogs(50)

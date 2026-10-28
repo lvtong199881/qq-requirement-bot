@@ -62,12 +62,12 @@ export function createBridgeServer({
     try {
       // ── 只读 ──
       if (method === 'GET' && path === '/api/status') {
-        return json(res, 200, snapshot())
+        return json(res, 200, await snapshot())
       }
 
       // 精简版：面板大盘每 3 秒轮询的就是这个
       if (method === 'GET' && path === '/api/summary') {
-        return json(res, 200, summary ? summary() : snapshot())
+        return json(res, 200, summary ? await summary() : await snapshot())
       }
 
       if (method === 'GET' && path === '/api/logs') {
@@ -84,7 +84,7 @@ export function createBridgeServer({
       // 不只看「进程活着」，还要看 OneBot 连接——连不上就处理不了消息，
       // 这时候把实例从负载里摘掉比让它继续挂着更有意义。
       if (method === 'GET' && path === '/healthz') {
-        const snap = summary ? summary() : snapshot()
+        const snap = summary ? await summary() : await snapshot()
         const connected = snap.onebot?.connected === true
         const busy = snap.pools?.turns ?? null
         return json(res, connected ? 200 : 503, {

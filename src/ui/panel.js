@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from '../instances.js'
-import { createEmulatorManager } from '../infra/emulator.js'
+import { createEmulatorClient } from '../infra/emulator-client.js'
 import { MESSAGE_TEMPLATES, MESSAGE_VARS, validateAllMessages } from './messages.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -375,9 +375,10 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
 
       // 模拟器：列出来（含未启动的）和各类操作。
       // 这是机器级资源，不分实例，所以放在面板这一层统一管理。
+      // 模拟器是独立服务，面板只做转发——不重复实现一遍设备管理
       if (path === '/api/emulators' && req.method === 'GET') {
-        const mgr = createEmulatorManager(config)
-        return json(res, 200, mgr.list())
+        const r = await createEmulatorClient(config).list()
+        return json(res, 200, r)
       }
 
       const emuAction = path.match(/^\/api\/emulators\/(start|stop|wipe|delete)$/)
@@ -387,16 +388,16 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         const name = String(body.name ?? '').trim()
         if (!name) return json(res, 400, { ok: false, error: '缺少 name' })
 
-        const mgr = createEmulatorManager(config)
+        const client = createEmulatorClient(config)
         const action = emuAction[1]
         const result =
           action === 'start'
-            ? await mgr.start(name, { reset: body.reset === true })
+            ? await client.start(name, { reset: body.reset === true })
             : action === 'stop'
-              ? await mgr.stop(name)
+              ? await client.stop(name)
               : action === 'wipe'
-                ? await mgr.wipe(name)
-                : await mgr.remove(name)
+                ? await client.wipe(name)
+                : await client.remove(name)
 
         console.log(`[模拟器] ${action} ${name}${result.ok ? '' : ' 失败：' + result.error}`)
         return json(res, result.ok ? 200 : 400, result)

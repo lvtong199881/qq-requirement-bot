@@ -235,6 +235,14 @@ export function loadConfig(configPath) {
       xcrun: typeof raw.tools?.xcrun === 'string' ? raw.tools.xcrun : 'xcrun',
     },
 
+    // 模拟器服务地址：设备发现、启停、租约都在那个服务里，编排层只调接口
+    emulatorService: {
+      url:
+        typeof raw.emulatorService?.url === 'string' && raw.emulatorService.url.trim()
+          ? raw.emulatorService.url.trim().replace(/\/$/, '')
+          : 'http://127.0.0.1:7880',
+    },
+
     // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
     limits: {
       maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),

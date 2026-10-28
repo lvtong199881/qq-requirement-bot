@@ -21,8 +21,7 @@ import { runFlow } from './flow/flow-runner.js'
 import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
-import { listDevices, DevicePool } from './infra/device.js'
-import { createEmulatorManager } from './infra/emulator.js'
+import { createEmulatorClient } from './infra/emulator-client.js'
 import {
   ensureBareRepo,
   createWorktree,
@@ -86,6 +85,9 @@ export function createFlowBridge(deps) {
   //   执行槽     —— 同时跑的回合数，决定内存和 token 消耗
   const worktreePool = new SlotPool(join(config.repoDir, 'pools', 'worktree'), config.limits?.maxWorktrees ?? 12)
   const turnPool = new SlotPool(join(config.repoDir, 'pools', 'turn'), config.limits?.maxConcurrentTurns ?? 2)
+  // 设备归模拟器服务管：编排层只申请/释放，不碰具体设备也不读平台配置。
+  // 允许注入，测试就不必真的起一个服务。
+  const emulator = deps.emulator ?? createEmulatorClient(config)
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
@@ -376,35 +378,17 @@ export function createFlowBridge(deps) {
         // 两个回合同时往同一台设备装包，会出现「包被覆盖」「测试跑到别人的版本上」
         // 这类极难排查的问题，而且完全没有报错。
         if (cp.needsDevice && !deviceSlots.has(groupId)) {
-          const found = listDevices(config)
-          if (!found.ok) throw new Error(`设备发现失败：${found.error}`)
-          if (!found.devices.length) {
+          const granted = await emulator.lease({ reqId: st.flow.reqId, stage: cp.id })
+          if (!granted.ok) {
             throw new Error(
-              `「${cp.label}」需要${found.label}设备，但没有检测到任何在线设备` +
-                `（平台 ${found.platform}）。启动模拟器后回复「继续」。`,
+              `「${cp.label}」需要设备，但模拟器服务没给：${granted.error}` +
+                (granted.offline ? '（启动 node src/emulator-service.js）' : '（启动一台模拟器后回复「继续」）'),
             )
           }
-
-          const pool = new DevicePool({
-            lockDir: join(config.repoDir, 'pools', 'device'),
-            platform: found.platform,
-            devices: found.devices,
-          })
-          const slot = await pool.acquire({
-            waitMs: 60 * 60 * 1000,
-            pollMs: 2000,
-            reqId: st.flow.reqId,
-            stage: cp.id,
-          })
-          if (!slot) {
-            throw new Error(
-              `${found.devices.length} 台${found.label}设备都被占用，等了一小时仍没空出来`,
-            )
-          }
-          deviceSlots.set(groupId, slot)
-          st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: slot.deviceId } }
+          deviceSlots.set(groupId, { deviceId: granted.deviceId })
+          st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: granted.deviceId } }
           store.save(groupId, st)
-          log(`[${groupId}] 已占用设备 ${slot.deviceId}（${found.label}，共 ${found.devices.length} 台）`)
+          log(`[${groupId}] 已租到设备 ${granted.deviceId}${granted.reused ? '（复用）' : ''}`)
         }
 
         // 合并阶段用一个全局唯一的专用工作区，配合文件锁串行——
@@ -528,7 +512,8 @@ export function createFlowBridge(deps) {
         if (!cp.forceKeepDevice) {
           const dev = deviceSlots.get(groupId)
           if (dev) {
-            dev.release()
+            // 释放失败不影响流程：租约会在服务重启时自然清空
+            await emulator.release(dev.deviceId).catch(() => {})
             deviceSlots.delete(groupId)
             st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: null } }
             store.save(groupId, st)
@@ -759,61 +744,30 @@ export function createFlowBridge(deps) {
   }
 
   /** 并发资源快照，面板要显示「几个槽位在用 / 谁在排队」 */
-  function poolStats() {
-    // 设备是「指定型」资源，要报出每台的状态（谁占着），不能只报总数
+  async function poolStats() {
+    // 设备状态问服务要：编排层不维护设备清单，避免和服务里的租约打架
     let devices = { platform: config.platform ?? 'harmony', items: [], available: 0, total: 0 }
-    try {
-      // 面板要展示「磁盘上装了哪些、哪个在跑」，所以走模拟器管理器；
-      // 编排层判断「能不能用」时才需要 listDevices（只认在线设备）。
-      const emu = createEmulatorManager(config)
-      const emuList = emu.list()
-      if (emuList.ok) {
-        const items = emuList.items.map((x) => ({
-          id: x.name,
-          name: x.name,
-          running: x.running,
-          busy: false,
-          holder: null,
-        }))
-        devices = {
-          platform: emuList.platform,
-          label: emuList.label,
-          items,
-          total: items.length,
-          available: items.filter((x) => x.running).length,
-          running: items.filter((x) => x.running).length,
-        }
+    const r = await emulator.list()
+    if (r.ok) {
+      const items = (r.items ?? []).map((x) => ({
+        id: x.name,
+        name: x.name,
+        running: x.running,
+        busy: x.leased === true,
+        holder: x.lease?.reqId ?? null,
+      }))
+      devices = {
+        platform: r.platform,
+        label: r.label,
+        items,
+        total: items.length,
+        available: items.filter((x) => x.running).length,
+        running: items.filter((x) => x.running).length,
+        offline: false,
       }
-    } catch {
-      /* 探测失败不影响其他指标 */
-    }
-    if (devices.items.length) return {
-      worktree: worktreePool.stats(),
-      turns: turnPool.stats(),
-      pendingWorktrees: worktreePool.position(),
-      pendingTurns: turnPool.position(),
-      devices,
-    }
-
-    try {
-      const found = listDevices(config)
-      if (found.ok) {
-        const pool = new DevicePool({
-          lockDir: join(config.repoDir, 'pools', 'device'),
-          platform: found.platform,
-          devices: found.devices,
-        })
-        const items = pool.status()
-        devices = {
-          platform: found.platform,
-          label: found.label,
-          items,
-          total: items.length,
-          available: items.filter((d) => !d.busy).length,
-        }
-      }
-    } catch {
-      /* 设备探测失败不影响其他指标 */
+    } else {
+      devices.offline = true
+      devices.error = r.error
     }
 
     return {
