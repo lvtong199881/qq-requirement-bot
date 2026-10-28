@@ -22,6 +22,7 @@ import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
 import { listDevices, DevicePool } from './infra/device.js'
+import { createEmulatorManager } from './infra/emulator.js'
 import {
   ensureBareRepo,
   createWorktree,
@@ -761,6 +762,39 @@ export function createFlowBridge(deps) {
   function poolStats() {
     // 设备是「指定型」资源，要报出每台的状态（谁占着），不能只报总数
     let devices = { platform: config.platform ?? 'harmony', items: [], available: 0, total: 0 }
+    try {
+      // 面板要展示「磁盘上装了哪些、哪个在跑」，所以走模拟器管理器；
+      // 编排层判断「能不能用」时才需要 listDevices（只认在线设备）。
+      const emu = createEmulatorManager(config)
+      const emuList = emu.list()
+      if (emuList.ok) {
+        const items = emuList.items.map((x) => ({
+          id: x.name,
+          name: x.name,
+          running: x.running,
+          busy: false,
+          holder: null,
+        }))
+        devices = {
+          platform: emuList.platform,
+          label: emuList.label,
+          items,
+          total: items.length,
+          available: items.filter((x) => x.running).length,
+          running: items.filter((x) => x.running).length,
+        }
+      }
+    } catch {
+      /* 探测失败不影响其他指标 */
+    }
+    if (devices.items.length) return {
+      worktree: worktreePool.stats(),
+      turns: turnPool.stats(),
+      pendingWorktrees: worktreePool.position(),
+      pendingTurns: turnPool.position(),
+      devices,
+    }
+
     try {
       const found = listDevices(config)
       if (found.ok) {

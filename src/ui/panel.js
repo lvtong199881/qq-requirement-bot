@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from '../instances.js'
+import { createEmulatorManager } from '../infra/emulator.js'
 import { MESSAGE_TEMPLATES, MESSAGE_VARS, validateAllMessages } from './messages.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -237,7 +238,7 @@ async function pushSettings(instances, patch, token) {
   return results
 }
 
-export function startPanel({ repoRoot, port = 7879, token }) {
+export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
   const registry = new InstanceRegistry(repoRoot)
 
   const server = createServer(async (req, res) => {
@@ -368,6 +369,35 @@ export function startPanel({ repoRoot, port = 7879, token }) {
         return json(res, 200, { ok: true, ...fresh, hotReloaded: pushed })
       }
 
+      // 模拟器：列出来（含未启动的）和各类操作。
+      // 这是机器级资源，不分实例，所以放在面板这一层统一管理。
+      if (path === '/api/emulators' && req.method === 'GET') {
+        const mgr = createEmulatorManager(config)
+        return json(res, 200, mgr.list())
+      }
+
+      const emuAction = path.match(/^\/api\/emulators\/(start|stop|wipe|delete)$/)
+      if (emuAction && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
+        const name = String(body.name ?? '').trim()
+        if (!name) return json(res, 400, { ok: false, error: '缺少 name' })
+
+        const mgr = createEmulatorManager(config)
+        const action = emuAction[1]
+        const result =
+          action === 'start'
+            ? await mgr.start(name, { reset: body.reset === true })
+            : action === 'stop'
+              ? await mgr.stop(name)
+              : action === 'wipe'
+                ? await mgr.wipe(name)
+                : await mgr.remove(name)
+
+        console.log(`[模拟器] ${action} ${name}${result.ok ? '' : ' 失败：' + result.error}`)
+        return json(res, result.ok ? 200 : 400, result)
+      }
+
       // 操作：终止 / 重启 —— groupId 走 body，不塞进路径
       const m = path.match(/^\/api\/groups\/(stop|restart)$/)
       if (m && req.method === 'POST') {
@@ -402,6 +432,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // 面板用独立的对外端口（bridge 自己占 panel.port，避免撞车）
   const port = Number(process.env.PANEL_PORT ?? config.panel?.publicPort ?? 7879)
   const token = process.env.PANEL_TOKEN ?? config.panel?.token ?? ''
-  await startPanel({ repoRoot: config.repoRoot ?? process.cwd(), port, token })
+  await startPanel({ repoRoot: config.repoRoot ?? process.cwd(), port, token, config })
   console.log(`\n  管理面板已启动：http://127.0.0.1:${port}/console\n`)
 }

@@ -249,6 +249,16 @@
         <span class="label" v-show="!collapsed">需求大盘</span>
       </button>
 
+      <button :class="{ active: view === 'emulators' }" @click="switchView('emulators')">
+        <!-- 手机：模拟器 -->
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <rect x="6" y="2" width="12" height="20" rx="2.5"/>
+          <path d="M10.5 18.5h3"/>
+        </svg>
+        <span class="label" v-show="!collapsed">模拟器</span>
+      </button>
+
       <button :class="{ active: view === 'instances' }" @click="switchView('instances')">
         <!-- 服务器：实例 -->
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -285,6 +295,61 @@
 
   <!-- 右侧内容 -->
   <main class="content">
+    <!-- ===== 模拟器 ===== -->
+    <template v-if="view === 'emulators'">
+      <div class="page-head">
+        <h1>模拟器</h1>
+        <div class="stats">
+          <span>{{ emuPlatform }} · 共 <b>{{ emulators.length }}</b> 个，运行中 <b>{{ runningEmuCount }}</b></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="card">
+          <p class="desc">
+            这台机器上装的所有模拟器。启动后开发、测试、验收才能往上面装包跑。<br>
+            「清除数据」会重置为出厂状态并保留模拟器本身；「删除」会连模拟器一起移除，不可恢复。
+          </p>
+
+          <div v-if="emuError" class="emu-error">{{ emuError }}</div>
+
+          <table class="emu-table" v-if="emulators.length">
+            <thead>
+              <tr>
+                <th style="width:70px">状态</th>
+                <th>名称</th>
+                <th style="width:100px">类型</th>
+                <th style="width:180px">OS</th>
+                <th style="width:320px">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="e in emulators" :key="e.name">
+                <td>
+                  <span class="dot" :style="{background: e.running ? 'var(--green)' : 'var(--gray)'}"></span>
+                  {{ e.running ? '运行中' : '已停止' }}
+                </td>
+                <td><code>{{ e.name }}</code></td>
+                <td class="muted">{{ e.type }}</td>
+                <td class="muted">{{ e.os || '—' }}</td>
+                <td class="emu-actions">
+                  <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">
+                    启动
+                  </button>
+                  <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
+                  <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">
+                    启动并清数据
+                  </button>
+                  <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="desc">没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。</p>
+        </div>
+      </div>
+    </template>
+
     <!-- ===== 需求大盘 ===== -->
     <template v-if="view === 'board'">
       <div class="page-head">
@@ -730,6 +795,54 @@ createApp({
       instances.value.reduce((n, i) => n + (i.groups?.length || 0), 0))
 
     /** 需求大盘的行：/api/board 已经按群维度摊平，前端不再自己展平 */
+    // ── 模拟器 ──
+    const emulators = ref([])
+    const emuPlatform = ref('鸿蒙')
+    const emuError = ref('')
+    const emuBusy = ref(false)
+    const runningEmuCount = computed(() => emulators.value.filter((e) => e.running).length)
+
+    async function loadEmulators() {
+      try {
+        const r = await fetch('/api/emulators')
+        const d = await r.json()
+        if (d.ok === false) {
+          emuError.value = d.error || '读取模拟器失败'
+          emulators.value = []
+          return
+        }
+        emuError.value = ''
+        emuPlatform.value = d.label || d.platform || '模拟器'
+        emulators.value = d.items || []
+      } catch (e) {
+        emuError.value = '面板连不上：' + e.message
+      }
+    }
+
+    async function emuAct(action, emu, reset = false) {
+      const verbs = { start: reset ? '启动并清除数据' : '启动', stop: '关闭', delete: '删除' }
+      const verb = verbs[action] || action
+      if (action === 'delete' && !confirm(`确定删除模拟器「${emu.name}」？这个操作不可恢复。`)) return
+      if (reset && !confirm(`确定清除「${emu.name}」的数据并启动？应用数据会被重置。`)) return
+
+      emuBusy.value = true
+      emuError.value = ''
+      try {
+        const r = await fetch('/api/emulators/' + action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: emu.name, reset }),
+        })
+        const d = await r.json()
+        if (!d.ok) emuError.value = verb + '失败：' + (d.error || '未知原因')
+        await loadEmulators()
+      } catch (e) {
+        emuError.value = verb + '失败：' + e.message
+      } finally {
+        emuBusy.value = false
+      }
+    }
+
     const groupRows = computed(() => board.value.rows || [])
     const poolRows = computed(() => board.value.pools || [])
 
@@ -765,6 +878,11 @@ createApp({
     }
 
     // ── 轮询：只在需求大盘页运行 ──
+    // 切到模拟器页时拉一次（不做轮询：启动要几十秒，轮询只会刷掉按钮状态）
+    watch(view, (v) => {
+      if (v === 'emulators') loadEmulators()
+    })
+
     function startPoll() {
       if (pollTimer) return
       loadBoard()
@@ -1071,6 +1189,7 @@ createApp({
     return {
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
+      emulators, emuPlatform, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
       messages, messageGroups, messageErrors, messagesOk, messagesSaving,
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
