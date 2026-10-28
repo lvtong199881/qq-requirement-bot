@@ -262,10 +262,9 @@ console.log('\n== 用户回答：需求定稿并复用会话 ==')
   check('后续进入设计', agentCalls[2]?.id === 'design', agentCalls[2]?.id)
   check('设计用新会话', agentCalls[2]?.sessionId === null)
   // 合并是开发回合，跑完直接收尾
-  // 合并由 bridge 执行，要真实工作区和远端。单测环境没有这些，
-  // 所以这里只验「一路推进到合并阶段」——合并本身由端到端验证。
-  check('推进到合并阶段', flow.current === 'merge', flow.current)
-  check('合并缺工作区时给出明确原因', logs.some((l) => /开发工作区不存在/.test(l)) || flow.status === 'done', logs.slice(-2).join(' / '))
+  // merge 已改回 agent 回合，mock 会把它当普通阶段跑完
+  check('合并回合跑完', flow.status === 'done' || flow.current === 'merge', `${flow.status} / ${flow.current}`)
+  check('合并回合被派给 agent', agentCalls.some((c) => c.id === 'merge'), agentCalls.map((c) => c.id).join(' → '))
 }
 
 console.log('\n== 运行中插话：排队不打断 ==')

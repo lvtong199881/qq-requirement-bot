@@ -107,6 +107,11 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     `- 本阶段文档产物：${(checkpoint.output ?? []).join('、') || '无文件产物，结论写进回执'}`,
     `- 回执 ${receiptFile(checkpoint.id)} 也写在这个目录`,
   )
+  // 合并回次要拉开发工作区的分支过来：两个工作区都是独立仓库，只能靠路径互通
+  const devWorkDir = vars?.devWorkDir ?? ''
+  if (devWorkDir) {
+    lines.push(`- 【开发工作区】要合并的分支在那里（用 git fetch <路径> feature/<需求标识> 拉过来）：${devWorkDir}`)
+  }
   if (workDir) {
     lines.push(
       `- 代码（源码、单测、构建配置）改这里：${workDir}`,

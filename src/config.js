@@ -124,6 +124,19 @@ export function loadConfig(configPath) {
 
   const projectDir = resolve(expandHome(raw.projectDir ?? ''))
   if (!raw.projectDir) throw new Error('config 缺少 projectDir（需求要落到的项目根目录）')
+
+  // 组件化项目可能有多个仓库：主 app + 若干组件库（通过 ohpm/npm 依赖引入）。
+  // 第一个（或标了 primary 的）是主仓库，需求默认只动它；技术方案里声明了
+  // 额外仓库时才为那些仓库单独开工作区。单仓库项目不需要配 repos。
+  const repos = (raw.repos ?? []).map((r, i) => ({
+    id: String(r.id ?? `repo${i}`),
+    path: resolve(expandHome(r.path ?? '')),
+    primary: r.primary === true || i === 0,
+  }))
+  for (const r of repos) {
+    if (!r.path || !existsSync(r.path)) throw new Error(`repos 里的 ${r.id} 路径不存在：${r.path}`)
+  }
+  const primaryRepo = repos.find((r) => r.primary) ?? null
   if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
     throw new Error(`projectDir 不存在或不是目录：${projectDir}`)
   }
@@ -133,6 +146,9 @@ export function loadConfig(configPath) {
     configPath: path,
     repoRoot: REPO_ROOT,
     projectDir,
+    // 没配 repos 时就是单仓库，下游继续用 projectDir
+    repos: repos.length ? repos : [{ id: 'app', path: projectDir, primary: true }],
+    primaryRepo: primaryRepo ?? { id: 'app', path: projectDir, primary: true },
     skillDir: resolveSkillDir(raw.skillDir),
     dshBin: raw.dshBin || 'dsh',
     profile: raw.profile || 'qqbot',

@@ -140,9 +140,9 @@ export const CHECKPOINTS = [
   },
   {
     id: 'merge',
-    // 合并由 bridge 执行：要跨两个工作区操作（开发工作区 fetch 到合并工作区），
-    // 这是桥的职责，agent 只在自己工作区里。
-    role: null,
+    // 合并交回 agent：合并失败（冲突、依赖版本对不上）要有人解决，停下等人
+    // 是最差的结果。agent 在合并工作区里能自由操作 git，冲突它自己看、自己解。
+    role: 'dev',
     label: '合并',
     input: ['技术方案.md', '<mergeInfo>'],
     output: [],

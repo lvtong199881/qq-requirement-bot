@@ -787,18 +787,6 @@ async function doMerge({ groupId, flow, st, log, config }) {
 }
 
   async function bridgeAction({ groupId, cp, flow, st, replyTo }) {
-    // 合并由 bridge 做：git 元数据在工作区外的裸仓库里，agent 碰不了。
-    // 顺序：开发工作区的改动先提交 → 合并工作区 fetch 并合并 → push。
-    if (cp.id === 'merge') {
-      const result = await doMerge({ groupId, flow, st, log, config })
-      if (!result.ok) {
-        await sendPlain(groupId, `合并失败：${result.error}`, { replyTo }).catch(() => {})
-        throw new Error(result.error)
-      }
-      if (result.notes?.length) log(`[${groupId}] 合并：${result.notes.join('；')}`)
-      return
-    }
-
     if (cp.id === 'wrapup') {
       const reqDir = reqDirOf(flow)
       const missing = checkFinalArtifacts(reqDir)
