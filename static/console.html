@@ -257,10 +257,8 @@
   }
   .ff-actions .menu-btn.primary:hover { filter: brightness(1.08); }
 
-  /* 展示区：无外框，只留一行统计 */
+  /* 展示区：无外框，直接铺卡片 */
   .emu-section { margin-top: 16px; }
-  .emu-stat-line { font-size: 12px; color: var(--dim); margin-bottom: 10px; }
-  .emu-empty { margin-top: 4px; }
 
   /* ── 模拟器：卡片网格 ── */
   .emu-grid {
@@ -409,11 +407,6 @@
 
       <!-- 展示区：不包边框，卡片自己就是卡片 -->
       <div class="emu-section">
-        <div class="emu-stat-line">
-          共 {{ filteredEmulators.length }} 个 · 运行中 {{ filteredRunningCount }}
-          <span v-if="emuFilterActive"> · 已筛选</span>
-        </div>
-
         <div v-if="filteredEmulators.length" class="emu-grid">
           <div class="emu-card" v-for="e in filteredEmulators" :key="(e.platform || '') + ':' + e.name">
             <div class="emu-head">
@@ -438,9 +431,6 @@
           </div>
         </div>
 
-        <p v-else-if="!emuError" class="desc emu-empty">
-          {{ emulators.length ? '没有符合筛选条件的模拟器。' : '没有检测到模拟器。确认本机装了 DevEco Studio 并创建过模拟器。' }}
-        </p>
       </div>
     </template>
 
@@ -1345,7 +1335,12 @@ createApp({
 
     const closeAll = () => { menu.value = null }
     onMounted(() => {
-      startPoll() // 默认停在需求大盘
+      // 首次进入按 URL hash 决定加载什么。watch(view) 只在「切换」时触发，
+      // 直接打开 #emulators 这种地址时不会走那一支，数据就一直是空的。
+      if (view.value === 'emulators') loadEmulators()
+      else if (view.value === 'settings' || view.value === 'messages') loadSettings()
+      else if (view.value === 'instances') loadInstances()
+      else startPoll() // 默认停在需求大盘
       window.addEventListener('click', closeAll)
       window.addEventListener('scroll', closeAll, true)
     })

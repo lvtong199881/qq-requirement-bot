@@ -91,5 +91,42 @@ console.log('\n== 模板引用的函数都有定义 ==')
   check('事件处理函数都已导出', missing.length === 0, missing.join(', '))
 }
 
+console.log('\n== 直接访问非大盘视图会加载数据 ==')
+{
+  // 用 hash=#emulators 进入时，watch(view) 不会触发（view 没有「变化」），
+  // onMounted 必须自己按当前视图拉一次数据，否则页面永远是空的。
+  const blocks = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1])
+  const code = blocks.reduce((a, b) => (b.length > a.length ? b : a), '')
+
+  const mounted = []
+  const fetched = []
+  const noop = () => {}
+  let localCtx = null
+
+  globalThis.Vue = {
+    createApp: (o) => ({ mount() { localCtx = o.setup ? o.setup() : {} } }),
+    ref: (v) => ({ value: v }),
+    computed: (fn) => ({ get value() { try { return fn() } catch { return undefined } } }),
+    watch: noop,
+    onMounted: (fn) => mounted.push(fn),
+    onUnmounted: noop, reactive: (v) => v, watchEffect: noop, nextTick: async () => {},
+  }
+  globalThis.location = { hash: '#emulators' }
+  globalThis.history = { replaceState: noop }
+  globalThis.fetch = async (url) => {
+    fetched.push(String(url))
+    return { json: async () => ({ ok: true, label: '鸿蒙', items: [], platform: 'harmony' }) }
+  }
+
+  try {
+    new Function(code)()
+    for (const fn of mounted) fn()
+  } catch (e) {
+    check('执行挂载没有抛错', false, e.message)
+  }
+  check('以 #emulators 进入时请求了模拟器接口', fetched.some((u) => u.includes('/api/emulators')), fetched.join(', '))
+  check('ctx 拿到了', !!localCtx)
+}
+
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
