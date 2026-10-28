@@ -11,6 +11,7 @@ description: 开发 agent —— 按技术方案实现功能，写并跑单元�
 
 - 不自我评审，不下最终测试结论（UI / 集成 / 主流程实跑归测试 agent），不做验收判断。
 - **commit 和 push 是你的活**。做完（含评审/测试后的修正）就在当前 feature 分支上提交，别把改动留在工作区。
+  你的工作区是个独立的 git 仓库（自带 `.git`，就在工作区内），提交不会碰到外面。
 - **不要切分支、不要 merge**。bridge 已经在 `feature/<需求标识>` 分支上，你的改动和提交都落在这。不要 `git checkout`、`git branch -d`、`git merge`，也不要去碰主分支——合并到主分支是 bridge 在最后一步做的事。
 - 不只改本需求范围内的问题：评审、测试、验收发现的既有问题，只有「本需求验收标准所必需」或「本需求引入的回归」才动手，其余只记录到回执 blockers 的 `scope` 里。
 - 发现范围外高风险问题（数据丢失、安全、支付）时停下，写进 blockers。
@@ -41,10 +42,9 @@ bridge 会在任务包里给你 `<设备>` 段（`【本阶段分配给你的设
 
 1. `git add -A`（或只 add 本需求相关文件），`git commit`。
 2. 提交信息按项目规范（先看 `AGENTS.md` / `CONTRIBUTING.md`，没有就 Conventional Commits，**默认只写标题**）。
-3. **提交前先同步主分支**：`git fetch`（有 remote 时）→ `git rebase origin/<主分支>` 或 `git rebase <主分支>`。
-   冲突在这里解决（你懂代码，知道两边为什么这么写），不要留到合并阶段。解决方式见「回合 C」。
-   这样 bridge 执行合并时基本不会冲突。
-4. `git push`。**没有 remote 或 push 失败不是阻塞**：记进回执 `selfCheck`，代码已在本地 feature 分支上，不影响后续合并。
+3. **提交前先同步主分支**：`git fetch origin`（有 remote 时）→ `git rebase origin/<主分支>`。
+   冲突在这里解决（你懂代码，知道两边为什么这么写）。bridge 执行合并时基本就不会冲突。
+4. `git push origin feature/<需求标识>`。**push 失败不是阻塞**：记进回执 `selfCheck`，代码已在本地分支上。
 5. 回执里写清：提交 sha、分支名、rebase 结果、push 结果。
 
 ### 回合 D：合并执行

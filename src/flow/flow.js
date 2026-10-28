@@ -140,7 +140,9 @@ export const CHECKPOINTS = [
   },
   {
     id: 'merge',
-    role: 'dev',
+    // 合并由 bridge 执行：要跨两个工作区操作（开发工作区 fetch 到合并工作区），
+    // 这是桥的职责，agent 只在自己工作区里。
+    role: null,
     label: '合并',
     input: ['技术方案.md', '<mergeInfo>'],
     output: [],
@@ -148,8 +150,9 @@ export const CHECKPOINTS = [
     verify: 'none',
     deliverable: null,
     next: 'wrapup',
-    // 不单独确认：用户「通过」验收就等于同意合并。合并要跑编译验证，
-    // 所以交给开发 agent 做，bridge 不做（它没有执行能力）。
+    // 不单独确认：用户「通过」验收就等于同意合并。
+    // 合并不跑编译——编译验证在开发阶段已经做过，合并只是搬运已验证的提交，
+    // 而合并是全局串行的，跑一次编译会挡住其他需求。
   },
   {
     id: 'wrapup',

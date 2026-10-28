@@ -181,7 +181,7 @@ console.log('\n== 修正 → 复审 → 放行 ==')
 console.log('\n== bridge 自己执行的 checkpoint 不派 agent ==')
 {
   const merge = { ...start(), current: 'merge' }
-  check('merge 需要 agent（要跑编译）', needsAgent(currentCheckpoint(merge)))
+  check('merge 由 bridge 执行', !needsAgent(currentCheckpoint(merge)))
   const r = advance({ ...start(), current: 'wrapup' }, null, { ok: true })
 
 

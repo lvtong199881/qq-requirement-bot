@@ -10,7 +10,7 @@
  *   3. HEAD 指向 clone 时的那个分支，不一定是主分支
  * 所以改用 `git init --bare` + 显式配置。
  */
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { gitRun } from './git.js'
 
@@ -106,12 +106,42 @@ export function createWorktree({ repoDir, worktreeRoot, reqId, mainBranch }) {
 
   // 分支已存在（返工/续跑）就复用，否则新建
   const branchExists = gitRun(repoDir, ['rev-parse', '--verify', '--quiet', branch]).ok
-  const args = branchExists
-    ? ['worktree', 'add', path, branch]
-    : ['worktree', 'add', path, '-b', branch, base]
 
-  const r = gitRun(repoDir, args)
-  if (!r.ok) return { ok: false, error: r.error }
+  // 不用 git worktree：它的 git 元数据在主仓里（~/.qq-bot/repo.git，工作区之外），
+  // 在 worktree 里跑的 agent 一做 git add/commit 就被沙箱拒绝。
+  //
+  // 改成「工作区自带 .git」：init 一个新仓库，从主仓 fetch 起点提交，
+  // 对象层用 alternates 只读引用主仓（实测 .git 只有 88 KB）。
+  // 这样 agent 的 commit / merge / push 全部落在工作区内。
+  mkdirSync(path, { recursive: true })
+  const init = gitRun(path, ['init', '-q'])
+  if (!init.ok) return { ok: false, error: `初始化工作区失败：${init.error}` }
+
+  // 对象从这里读，只读
+  mkdirSync(join(path, '.git', 'objects', 'info'), { recursive: true })
+  writeFileSync(
+    join(path, '.git', 'objects', 'info', 'alternates'),
+    join(repoDir, 'objects') + '\n',
+  )
+
+  // 起点提交：主仓是裸仓库，它的分支在 refs/remotes/origin/* 下
+  const pulled = gitRun(path, ['fetch', '--no-tags', repoDir, base])
+  if (!pulled.ok) return { ok: false, error: `拉取起点失败：${pulled.error}` }
+
+  const co = branchExists
+    ? gitRun(path, ['checkout', '-q', '-b', branch, `refs/remotes/origin/${branch}`])
+    : gitRun(path, ['checkout', '-q', '-b', branch, 'FETCH_HEAD'])
+  if (!co.ok) {
+    // 复用已有分支时 refs/remotes/origin/<branch> 可能不在，退回本地同名分支
+    const alt = gitRun(path, ['checkout', '-q', branch])
+    if (!alt.ok) return { ok: false, error: `检出分支失败：${co.error}` }
+  }
+
+  // origin 指向真正的远端：主仓只当 clone 源，push 要推到真仓库，
+  // 否则 push 会写主仓 —— 又跑到工作区外面去了。
+  const remoteUrl = gitRun(repoDir, ['remote', 'get-url', 'origin']).out?.trim()
+  if (remoteUrl) gitRun(path, ['remote', 'add', 'origin', remoteUrl])
+
   return { ok: true, path, branch, existed: false, stale, reusedBranch: branchExists }
 }
 
@@ -122,8 +152,12 @@ export function createWorktree({ repoDir, worktreeRoot, reqId, mainBranch }) {
 export function removeWorktree({ repoDir, path, branch }) {
   const notes = []
   if (existsSync(path)) {
-    const r = gitRun(repoDir, ['worktree', 'remove', '--force', path])
-    if (!r.ok) notes.push(`移除工作区失败：${r.error}`)
+    // clone 出来的是普通目录（不是 worktree），直接删，不经过主仓
+    try {
+      rmSync(path, { recursive: true, force: true })
+    } catch (err) {
+      notes.push(`移除工作区失败：${err.message}`)
+    }
   }
   if (branch) {
     const r = gitRun(repoDir, ['branch', '-D', branch])
@@ -133,8 +167,25 @@ export function removeWorktree({ repoDir, path, branch }) {
   return { ok: notes.length === 0, notes }
 }
 
-/** 列出该仓库登记的所有 worktree（含主工作区，裸仓库没有主工作区） */
-export function listWorktrees(repoDir) {
+/**
+ * 列出所有需求工作区。
+ *
+ * 工作区已经是独立的 clone（自带 .git），不再登记在主仓里，
+ * 所以不能再靠 `git worktree list`——扫目录即可。
+ */
+export function listWorktrees(repoDir, worktreeRoot = join(repoDir, '..', 'worktrees')) {
+  try {
+    if (!existsSync(worktreeRoot)) return []
+    return readdirSync(worktreeRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(worktreeRoot, d.name, '.git')))
+      .map((d) => ({ path: join(worktreeRoot, d.name), branch: `feature/${d.name}` }))
+  } catch {
+    return []
+  }
+}
+
+/** 旧实现（基于 git worktree 登记表），保留给还需要读老工作区的场景 */
+function listWorktreesLegacy(repoDir) {
   const r = gitRun(repoDir, ['worktree', 'list', '--porcelain'])
   if (!r.ok) return []
   const out = []
@@ -171,7 +222,7 @@ export function findOrphanWorktrees(repoDir, worktreeRoot, activeReqIds) {
   const orphans = []
   // macOS 上 /var 会解析成 /private/var，直接比字符串会漏，统一走 realpath
   const rootReal = safeRealpath(worktreeRoot)
-  for (const wt of listWorktrees(repoDir)) {
+  for (const wt of listWorktrees(repoDir, worktreeRoot)) {
     const pathReal = safeRealpath(wt.path)
     const rel = relative(rootReal, pathReal)
     // 不在工作区根目录下的（比如别的仓库的 worktree）跳过
@@ -204,8 +255,24 @@ export function ensureMergeWorktree({ repoDir, worktreeRoot, mainBranch }) {
   } catch (err) {
     return { ok: false, error: `创建工作区根目录失败：${err.message}` }
   }
-  const r = gitRun(repoDir, ['worktree', 'add', '--detach', path, `origin/${mainBranch}`])
-  return r.ok ? { ok: true, path } : { ok: false, error: r.error }
+  // 和需求工作区一样：自带 .git，不受主仓路径限制
+  mkdirSync(path, { recursive: true })
+  const init = gitRun(path, ['init', '-q'])
+  if (!init.ok) return { ok: false, error: init.error }
+
+  mkdirSync(join(path, '.git', 'objects', 'info'), { recursive: true })
+  writeFileSync(join(path, '.git', 'objects', 'info', 'alternates'), join(repoDir, 'objects') + '\n')
+
+  const pulled = gitRun(path, ['fetch', '--no-tags', repoDir, `origin/${mainBranch}`])
+  if (!pulled.ok) return { ok: false, error: `拉取主分支失败：${pulled.error}` }
+
+  const co = gitRun(path, ['checkout', '-q', '-b', mainBranch, 'FETCH_HEAD'])
+  if (!co.ok) return { ok: false, error: `检出主分支失败：${co.error}` }
+
+  const remoteUrl = gitRun(repoDir, ['remote', 'get-url', 'origin']).out?.trim()
+  if (remoteUrl) gitRun(path, ['remote', 'add', 'origin', remoteUrl])
+
+  return { ok: true, path }
 }
 
 /** 需求数据目录（文档所在，不在 git 里） */

@@ -463,7 +463,9 @@ export function createFlowBridge(deps) {
           // 合并时直接提交。搬完删暂存区，避免同一份文档出现两个来源。
           const scratchDir = st.flow.dataDir
           const wtDocs = join(wt.path, 'docs/requirements', st.flow.reqId)
-          if (scratchDir && existsSync(scratchDir)) {
+          // 重跑时 dataDir 已经指向工作区了，src 和 dest 是同一个目录，不用搬
+          const needMove = scratchDir && existsSync(scratchDir) && scratchDir !== wtDocs
+          if (needMove) {
             try {
               mkdirSync(wtDocs, { recursive: true })
               cpSync(scratchDir, wtDocs, { recursive: true, force: true })
@@ -678,7 +680,90 @@ export function createFlowBridge(deps) {
   }
 
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
+
+/**
+ * 真正执行合并：把开发工作区的 feature 分支并进主分支。
+ *
+ * 为什么由 bridge 做：git 的元数据（索引、refs）在各个工作区自己的 .git 里，
+ * 但工作区之间的互通要靠 bridge。agent 在沙箱里只能改自己工作区的文件。
+ *
+ * 步骤：
+ *   1. 开发工作区：把 agent 留下的改动提交（用回执里的 commitMessage）
+ *   2. 合并工作区：fetch 开发工作区的分支 → merge --no-ff → push
+ * 冲突不自动解决：直接中止并报出来，人工介入比瞎猜安全。
+ */
+async function doMerge({ groupId, flow, st, log, config }) {
+  const notes = []
+  const devDir = flow.workDir
+  const branch = `feature/${flow.reqId}`
+  const mainBranch = flow.vars?.mainBranch ?? config.mainBranch ?? 'main'
+
+  if (!devDir || !existsSync(devDir)) return { ok: false, error: `开发工作区不存在：${devDir}` }
+
+  // 1. 提交开发工作区的改动
+  const dirty = gitRun(devDir, ['status', '--porcelain'])
+  if (dirty.out?.trim()) {
+    const receipt = readReceipt(join(devDir, 'docs/requirements', flow.reqId), 'dev') ?? {}
+    const msg = receipt.commitMessage || `feat(${flow.reqId}): ${flow.name ?? '需求实现'}`
+    for (const args of [['add', '-A'], ['-c', 'user.name=qq-bot', '-c', 'user.email=bot@local', 'commit', '-q', '-m', msg]]) {
+      const r = gitRun(devDir, args)
+      if (!r.ok) return { ok: false, error: `提交失败：${r.error}` }
+    }
+    notes.push('已提交开发工作区的改动')
+  }
+
+  // 2. 合并工作区
+  const merge = ensureMergeWorktree({
+    repoDir: config.repoDir,
+    worktreeRoot: config.worktreeRoot,
+    mainBranch,
+  })
+  if (!merge.ok) return { ok: false, error: `准备合并工作区失败：${merge.error}` }
+
+  // 从开发工作区直接 fetch：两个工作区都是独立仓库，靠路径互通
+  const pulled = gitRun(merge.path, ['fetch', '--no-tags', devDir, branch])
+  if (!pulled.ok) return { ok: false, error: `拉取 ${branch} 失败：${pulled.error}` }
+
+  const merged = gitRun(merge.path, [
+    '-c', 'user.name=qq-bot', '-c', 'user.email=bot@local',
+    'merge', '--no-ff', '-m', `merge: ${flow.name ?? flow.reqId}`, 'FETCH_HEAD',
+  ])
+  if (!merged.ok) {
+    // 冲突：中止，把冲突文件报出来，让人决定
+    const conflicted = gitRun(merge.path, ['diff', '--name-only', '--diff-filter=U']).out?.trim()
+    gitRun(merge.path, ['merge', '--abort'])
+    return { ok: false, error: `合并冲突（已中止）：${conflicted || merged.error}` }
+  }
+  notes.push(`已合并 ${branch}`)
+
+  // 3. push
+  const pushed = gitRun(merge.path, ['push', '-q', 'origin', mainBranch])
+  if (pushed.ok) {
+    notes.push('已推送到远端')
+  } else {
+    // 推不上去不是阻塞：本地合并已完成，下次能推再推
+    notes.push(`push 失败（本地已合并）：${pushed.error}`)
+  }
+
+  // 4. 让主仓也知道最新 main，下次建工作区才有新起点
+  gitRun(config.repoDir, ['fetch', '-q', merge.path, `${mainBranch}:refs/remotes/origin/${mainBranch}`])
+
+  return { ok: true, notes }
+}
+
   async function bridgeAction({ groupId, cp, flow, st, replyTo }) {
+    // 合并由 bridge 做：git 元数据在工作区外的裸仓库里，agent 碰不了。
+    // 顺序：开发工作区的改动先提交 → 合并工作区 fetch 并合并 → push。
+    if (cp.id === 'merge') {
+      const result = await doMerge({ groupId, flow, st, log, config })
+      if (!result.ok) {
+        await sendPlain(groupId, `合并失败：${result.error}`, { replyTo }).catch(() => {})
+        throw new Error(result.error)
+      }
+      if (result.notes?.length) log(`[${groupId}] 合并：${result.notes.join('；')}`)
+      return
+    }
+
     if (cp.id === 'wrapup') {
       const reqDir = reqDirOf(flow)
       const missing = checkFinalArtifacts(reqDir)
