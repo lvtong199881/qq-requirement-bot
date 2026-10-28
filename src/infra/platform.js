@@ -18,8 +18,7 @@ export const PLACEHOLDERS = ['{artifactId}', '{deviceId}', '{artifact}', '{sdkHo
  *   artifactExt        安装包后缀（找产物用）
  *   sdkEnv             需要导出的 SDK 环境变量名（没有就 null）
  *   build / test       { cmd, args, timeoutMs }  ← test 是本地单测
- *   instrumentedTest   上设备跑的测试（Android 的 connectedAndroidTest、
- *                      鸿蒙的 ohosTest）；没有就 null
+ *                      （上设备的验证属于测试/验收阶段，不在 dev 阶段做）
  *   install / uninstall{ cmd, args }
  *   locateArtifact     (root) => 相对路径数组（按最可能的位置排）
  *   notes              平台特有的坑，原样写进任务包
@@ -39,12 +38,6 @@ export const PLATFORMS = {
       cmd: 'node "$OHOS_TOOLCHAIN/node_modules/@ohos/hvigor/bin/hvigor.js"',
       args: ['--mode', 'module', '-p', 'module=entry@default', 'test', '--no-daemon'],
       timeoutMs: 15 * 60 * 1000,
-    },
-    instrumentedTest: {
-      cmd: 'node "$OHOS_TOOLCHAIN/node_modules/@ohos/hvigor/bin/hvigor.js"',
-      args: ['--mode', 'module', '-p', 'module=entry@ohosTest', 'assembleHap', '--no-daemon'],
-      timeoutMs: 20 * 60 * 1000,
-      note: '鸿蒙的 ohosTest 是上设备的测试，需要先租到设备',
     },
     install: { cmd: 'hdc', args: ['-t', '{deviceId}', 'install', '-r', '{artifact}'] },
     uninstall: { cmd: 'hdc', args: ['-t', '{deviceId}', 'uninstall', '{artifactId}'] },
@@ -66,12 +59,6 @@ export const PLATFORMS = {
     sdkEnv: 'ANDROID_HOME',
     build: { cmd: './gradlew', args: ['assembleDebug', '--console=plain'], timeoutMs: 20 * 60 * 1000 },
     test: { cmd: './gradlew', args: ['testDebugUnitTest', '--console=plain'], timeoutMs: 20 * 60 * 1000 },
-    instrumentedTest: {
-      cmd: './gradlew',
-      args: ['connectedDebugAndroidTest', '--console=plain'],
-      timeoutMs: 30 * 60 * 1000,
-      note: '仪器测试要真机或模拟器，运行前确认设备已连上',
-    },
     install: { cmd: 'adb', args: ['-s', '{deviceId}', 'install', '-r', '-t', '{artifact}'] },
     uninstall: { cmd: 'adb', args: ['-s', '{deviceId}', 'uninstall', '{artifactId}'] },
     locateArtifact: [
@@ -92,12 +79,6 @@ export const PLATFORMS = {
     sdkEnv: 'DEVELOPER_DIR',
     build: { cmd: 'xcodebuild', args: ['-scheme', 'App', '-configuration', 'Debug', 'build'], timeoutMs: 20 * 60 * 1000 },
     test: { cmd: 'xcodebuild', args: ['test', '-scheme', 'App', '-destination', 'platform=iOS Simulator,id={deviceId}'], timeoutMs: 20 * 60 * 1000 },
-    instrumentedTest: {
-      cmd: 'xcodebuild',
-      args: ['test', '-scheme', 'App', '-destination', 'platform=iOS Simulator,id={deviceId}'],
-      timeoutMs: 30 * 60 * 1000,
-      note: 'iOS 的 test 本身就是上模拟器跑的',
-    },
     install: { cmd: 'xcrun', args: ['simctl', 'install', '{deviceId}', '{artifact}'] },
     uninstall: { cmd: 'xcrun', args: ['simctl', 'uninstall', '{deviceId}', '{artifactId}'] },
     locateArtifact: ['build/Build/Products/Debug-iphonesimulator/*.app'],

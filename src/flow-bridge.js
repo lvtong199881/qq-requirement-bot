@@ -743,10 +743,6 @@ function buildPlatformBlock(platform, vars) {
   const lines = ['【平台命令】' + platform.label]
   lines.push(`- 构建：${renderCommand(platform.build, vars)}`)
   lines.push(`- 单测：${renderCommand(platform.test, vars)}`)
-  if (platform.instrumentedTest) {
-    lines.push(`- 仪器测试（要上设备）：${renderCommand(platform.instrumentedTest, vars)}`)
-    if (platform.instrumentedTest.note) lines.push(`  ${platform.instrumentedTest.note}`)
-  }
   lines.push(`- 装包：${renderCommand(platform.install, vars)}`)
   lines.push(`- 安装包后缀：${platform.artifactExt}`)
   if (platform.sdkEnv) lines.push(`- 需要导出的环境变量：${platform.sdkEnv}`)
