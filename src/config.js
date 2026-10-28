@@ -103,6 +103,24 @@ function readModelLabel(profile) {
   }
 }
 
+/**
+ * 就地刷新配置对象：面板改完 bot.config.json 后调它，
+ * 不用重启进程——引用不变，内容换成新的。
+ *
+ * 就地改而不是返回新对象，是因为 bridge 创建时把 config 解构进了闭包，
+ * 换引用它看不到；改内容能立刻生效。
+ */
+export function reloadConfigInto(target, configPath) {
+  const fresh = loadConfig(configPath)
+  const keep = target.configPath
+  for (const k of Object.keys(target)) {
+    if (!(k in fresh)) delete target[k]
+  }
+  Object.assign(target, fresh)
+  target.configPath = fresh.configPath ?? keep
+  return target
+}
+
 export function loadConfig(configPath) {
   const path = configPath
     ? resolve(expandHome(configPath))
@@ -131,10 +149,13 @@ export function loadConfig(configPath) {
     )
   }
 
+  const PLATFORM_IDS = ['harmony', 'android', 'ios']
   const repos = raw.repos.map((r, i) => ({
     id: String(r.id ?? `repo${i}`),
     path: resolve(expandHome(r.path ?? '')),
     primary: r.primary === true || i === 0,
+    // 平台是仓库属性，不是全局属性：同一个团队里鸿蒙、安卓仓库并存很正常
+    platform: PLATFORM_IDS.includes(r.platform) ? r.platform : (raw.platform ?? 'harmony'),
   }))
   if (repos.filter((r) => r.primary).length > 1) {
     throw new Error('repos 里只能有一个 primary')
@@ -280,6 +301,7 @@ export function loadConfig(configPath) {
     // ── 设备（模拟器/真机）──
     // 开发、测试、验收都要往设备上装包，设备是独占资源，按台分配。
     // platform 决定怎么发现设备，devices 为空时按平台自动探测。
+    // 默认平台：仓库自己没写 platform 时用它；各仓库以自己的为准
     platform: ['harmony', 'android', 'ios'].includes(raw.platform) ? raw.platform : 'harmony',
     devices: Array.isArray(raw.devices) ? raw.devices : [],
     tools: {

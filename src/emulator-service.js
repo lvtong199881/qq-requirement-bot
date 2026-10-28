@@ -79,7 +79,14 @@ function json(res, code, body) {
  */
 export function startEmulatorService({ port = DEFAULT_PORT, config, log = console.log } = {}) {
   const cfg = config ?? loadConfig()
-  const mgr = createEmulatorManager(cfg)
+  // 默认看主仓库的平台；面板可以指定 ?repo=<id> 查另一个仓库的模拟器
+  const managerFor = (repoId) => {
+    const repo = repoId
+      ? (cfg.repos ?? []).find((r) => r.id === repoId)
+      : cfg.primaryRepo
+    return createEmulatorManager({ ...cfg, platform: repo?.platform ?? cfg.platform })
+  }
+  const mgr = managerFor()
 
   /**
    * 设备租约：deviceId → { reqId, stage, at }
@@ -122,8 +129,10 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
 
       // ── 列表 ──
       if (req.method === 'GET' && path === '/api/emulators') {
-        const list = mgr.list()
-        return json(res, 200, { ...list, items: leaseableView() })
+        const repoId = url.searchParams.get('repo') ?? undefined
+        const m = repoId ? managerFor(repoId) : mgr
+        const list = m.list()
+        return json(res, 200, { ...list, repo: repoId ?? cfg.primaryRepo?.id, items: leaseableView() })
       }
 
       // ── 启停与清理 ──

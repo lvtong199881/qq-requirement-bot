@@ -89,9 +89,12 @@ export const PLATFORMS = {
   },
 }
 
-/** 取平台适配器；不认识就退回鸿蒙（和 config 的默认值一致） */
-export function platformOf(config) {
-  return PLATFORMS[config?.platform] ?? PLATFORMS.harmony
+/**
+ * 取平台适配器。参数可以是仓库对象（{platform}）或配置对象。
+ * 平台是仓库属性——主仓库决定这个需求用哪套构建和装包命令。
+ */
+export function platformOf(repoOrConfig) {
+  return PLATFORMS[repoOrConfig?.platform] ?? PLATFORMS.harmony
 }
 
 /** 填占位符 */

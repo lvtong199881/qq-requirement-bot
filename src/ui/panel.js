@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InstanceRegistry } from '../instances.js'
 import { createEmulatorClient } from '../infra/emulator-client.js'
+import { reloadConfigInto } from '../config.js'
 import { MESSAGE_TEMPLATES, MESSAGE_VARS, validateAllMessages } from './messages.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -371,6 +372,64 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         const pushed = await pushSettings(registry.list(), patch, token)
         const fresh = readSettings(repoRoot)
         return json(res, 200, { ok: true, ...fresh, hotReloaded: pushed })
+      }
+
+      // 项目（仓库）配置：面板直接读写 bot.config.json，不经过 bridge
+      if (path === '/api/projects' && req.method === 'GET') {
+        return json(res, 200, { ok: true, repos: config.repos ?? [], platform: config.platform })
+      }
+
+      if (path === '/api/projects/save' && req.method === 'POST') {
+        const body = await readJsonBody(req)
+        if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
+
+        const repos = Array.isArray(body.repos) ? body.repos : null
+        if (!repos) return json(res, 400, { ok: false, error: '缺少 repos' })
+
+        // 校验：id 唯一、path 存在、平台合法、primary 唯一
+        const ids = new Set()
+        let primaries = 0
+        for (const r of repos) {
+          const id = String(r.id ?? '').trim()
+          if (!id) return json(res, 400, { ok: false, error: '每个项目都要有 id' })
+          if (ids.has(id)) return json(res, 400, { ok: false, error: `id 重复：${id}` })
+          ids.add(id)
+
+          const p = String(r.path ?? '').trim()
+          if (!p) return json(res, 400, { ok: false, error: `${id} 缺少路径` })
+          const full = p.startsWith('~') ? p.replace('~', process.env.HOME ?? '') : p
+          if (!existsSync(full)) return json(res, 400, { ok: false, error: `${id} 的路径不存在：${full}` })
+
+          const plat = String(r.platform ?? 'harmony')
+          if (!['harmony', 'android', 'ios'].includes(plat)) {
+            return json(res, 400, { ok: false, error: `${id} 的平台不认识：${plat}` })
+          }
+          if (r.primary === true) primaries++
+        }
+        if (primaries > 1) return json(res, 400, { ok: false, error: '只能有一个主项目' })
+        if (repos.length === 0) return json(res, 400, { ok: false, error: '至少保留一个项目' })
+
+        try {
+          const cfgPath = config.configPath
+          const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'))
+          onDisk.repos = repos.map((r, i) => ({
+            id: String(r.id).trim(),
+            path: String(r.path).trim(),
+            platform: String(r.platform ?? 'harmony'),
+            ...(r.primary === true || (primaries === 0 && i === 0) ? { primary: true } : {}),
+          }))
+          writeFileSync(cfgPath, JSON.stringify(onDisk, null, 2) + '\n')
+
+          // 就地刷新内存，下一次请求就是新配置
+          reloadConfigInto(config, cfgPath)
+          console.log(`[项目] 已更新：${config.repos.map((r) => `${r.id}(${r.platform})`).join('、')}`)
+
+          // 让 bridge 也跟着刷新（它们各自有一份 config 引用）
+          await pushSettings(registry.list(), { repos: onDisk.repos }, token)
+          return json(res, 200, { ok: true, repos: config.repos })
+        } catch (err) {
+          return json(res, 500, { ok: false, error: `保存失败：${err.message}` })
+        }
       }
 
       // 模拟器：列出来（含未启动的）和各类操作。

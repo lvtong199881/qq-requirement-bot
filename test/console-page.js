@@ -155,6 +155,7 @@ console.log('\n== 路径路由映射 ==')
   check('/console/ 也 → 大盘', (await viewFor('/console/')) === 'board')
   check('/console/emulators → 模拟器', (await viewFor('/console/emulators')) === 'emulators')
   check('/console/settings → 设置', (await viewFor('/console/settings')) === 'settings')
+  check('/console/projects → 项目', (await viewFor('/console/projects')) === 'projects')
   check('未知路径退回大盘', (await viewFor('/console/nonsense')) === 'board')
 }
 

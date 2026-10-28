@@ -6,7 +6,7 @@
  *   QQ 群 → NapCat → WebSocket → 这里 → spawn dsh → 解析 NDJSON
  *   → 分条推送回群 → 检测 [[WAITING]] → 保存 sessionId 等下一次 @
  */
-import { loadConfig, resolveModelEnv } from './config.js'
+import { loadConfig, reloadConfigInto, resolveModelEnv } from './config.js'
 import { OneBot } from './transport/onebot.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
@@ -19,7 +19,7 @@ import { InstanceRegistry } from './instances.js'
 import { createBridgeServer } from './ui/server.js'
 import { join as pathJoin } from 'node:path'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const isDryRun = process.argv.includes('--dry-run')
@@ -655,6 +655,28 @@ function startApi() {
       if (Array.isArray(patch?.adminUsers)) {
         config.adminUsers = patch.adminUsers.map((x) => String(x))
         runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)
+      }
+      // 项目（仓库）增删改：写回配置文件，再就地刷新内存里的 config，
+      // 不用重启 bridge。新建/改名后模拟器服务那边要重新问一次能力。
+      if (Array.isArray(patch?.repos) || patch?.platform !== undefined) {
+        try {
+          const onDisk = JSON.parse(readFileSync(config.configPath, 'utf8'))
+          if (Array.isArray(patch.repos)) {
+            onDisk.repos = patch.repos
+            config.repos = patch.repos
+          }
+          if (patch.platform !== undefined) {
+            onDisk.platform = patch.platform
+            config.platform = patch.platform
+          }
+          writeFileSync(config.configPath, JSON.stringify(onDisk, null, 2) + '\n')
+          reloadConfigInto(config)
+          runtime.info(
+            `[面板] 项目配置已更新：${config.repos.map((r) => `${r.id}(${r.platform})`).join('、')}`,
+          )
+        } catch (err) {
+          return { ok: false, error: `保存项目配置失败：${err.message}` }
+        }
       }
       return { ok: true }
     },

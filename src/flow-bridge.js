@@ -91,7 +91,8 @@ export function createFlowBridge(deps) {
   // 设备归模拟器服务管：编排层只申请/释放，不碰具体设备也不读平台配置。
   // 允许注入，测试就不必真的起一个服务。
   const emulator = deps.emulator ?? createEmulatorClient(config)
-  const platform = platformOf(config)
+  // 平台跟着主仓库走：主仓库是鸿蒙就按鸿蒙的构建和装包命令来
+  const platform = platformOf(config.primaryRepo)
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
