@@ -238,17 +238,20 @@
 
   /* ── 模拟器：筛选区（独立卡片） ── */
   .emu-filter-panel { margin-bottom: 0; }
-  .emu-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; }
-  .ff { display: flex; flex-direction: column; gap: 5px; min-width: 150px; }
-  .ff .fl { color: var(--dim); font-size: 12px; }
+
+  /* 筛选项横向排一行；按钮靠 flex-basis:100% 强制换到下一行 */
+  .emu-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+  .ff { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+  .ff .fl { color: var(--dim); font-size: 13px; white-space: nowrap; }
   .ff select {
     padding: 6px 10px; font-size: 13px; border-radius: 6px;
     border: 1px solid var(--line); background: var(--card); color: var(--text);
     outline: none; cursor: pointer; min-width: 150px;
   }
   .ff select:focus { border-color: var(--blue); }
-  .ff-actions { display: flex; gap: 8px; margin-left: auto; }
-  .ff-actions .menu-btn { padding: 6px 16px; font-size: 13px; }
+
+  .ff-actions { flex-basis: 100%; display: flex; gap: 8px; }
+  .ff-actions .menu-btn { padding: 6px 18px; font-size: 13px; }
   .ff-actions .menu-btn.primary {
     background: var(--blue); border-color: var(--blue); color: #fff;
   }
