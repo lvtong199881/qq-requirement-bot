@@ -158,12 +158,18 @@ export function loadConfig(configPath) {
     excludeGroups: (raw.excludeGroups ?? []).map((x) => String(x)),
     // 顶层 approval 是 auto 模式下所有群的默认批准方式
     approval: raw.approval === 'auto' ? 'auto' : 'manual',
+    // 所有限流/并发上限收在这一个对象里。
+    // 以前有人复制出第二个 limits 定义，后一个把前一个整个覆盖掉，
+    // 结果 maxMessagesPerMinute 变成 undefined —— 每条群消息都白等 60 秒。
     limits: {
       maxMessagesPerMinute: raw.limits?.maxMessagesPerMinute ?? 10,
       // QQ 单条消息的实际上限约 4500 字（含转义余量），
       // 超出才拆条；正常情况下一条发完，别让用户收到 N 条。
       chunkChars: raw.limits?.chunkChars ?? 3000,
       maxChunksPerTurn: raw.limits?.maxChunksPerTurn ?? 4,
+      // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
+      maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),
+      maxWorktrees: posInt(raw.limits?.maxWorktrees, 12),
     },
     // 静默心跳：多久没动静才在群里报一次进展
     heartbeat: {
@@ -244,10 +250,6 @@ export function loadConfig(configPath) {
     },
 
     // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
-    limits: {
-      maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),
-      maxWorktrees: posInt(raw.limits?.maxWorktrees, 12),
-    },
 
     // 管理面板 / 本地 HTTP API
     panel: {
