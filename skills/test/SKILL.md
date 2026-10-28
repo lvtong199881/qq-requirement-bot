@@ -53,11 +53,17 @@ description: 测试 agent —— 黑盒 QA。只拿 debug 包和完整 PRD，真
 
 ## 回执
 
+**产物位置以【产物位置】为准**：prompt 里会给出文档目录的绝对路径（`~/.qq-bot/data/<reqId>/`）。
+写文件、写回执都用那个绝对路径，不要自己拼 `docs/requirements/<id>/` 这种相对路径——
+那样会写到项目目录里，编排层按 reqId 校验找不到，会判定「没产出」然后无限重跑同一阶段。
+回执 `artifacts[].path` 也写绝对路径，或在【产物位置】给的目录下的相对文件名。
+
+
 ```json
 {
   "status": "done",
   "summary": "用例 N 条，通过 N，失败 N，未覆盖 N",
-  "artifacts": [{ "path": "docs/requirements/<id>/测试报告.md", "action": "created" }],
+  "artifacts": [{ "path": "<产物目录>/测试报告.md", "action": "created" }],
   "selfCheck": "准出清单逐项结论",
   "decisions": [],
   "blockers": [{ "reason": "缺陷：点开列表闪退（P1）", "severity": "blocker" }]

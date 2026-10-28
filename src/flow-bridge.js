@@ -213,9 +213,12 @@ export function createFlowBridge(deps) {
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
     // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
     const reqId = makeReqId()
-    const data = ensureDataDir(config.dataRoot, reqId)
-    if (!data.ok) {
-      await sendPlain(groupId, `创建需求目录失败：${data.error}`, { replyTo })
+    // 目录建在项目内的 docs/requirements/<reqId>/，子进程沙箱才允许写
+    const dataDir = join(st.projectDir, 'docs/requirements', reqId)
+    try {
+      mkdirSync(dataDir, { recursive: true })
+    } catch (err) {
+      await sendPlain(groupId, `创建需求目录失败：${err.message}`, { replyTo })
       return
     }
 
@@ -224,8 +227,9 @@ export function createFlowBridge(deps) {
         reqId,
         name: makeReqName(text),
         projectDir: st.projectDir,
-        // 文档从第一刻起就写在这里，不进 git —— 100 个需求同时澄清也不会互相踩
-        dataDir: data.dir,
+        // 产物落在项目内的 docs/requirements/<reqId>/：dsh 子进程的沙箱限制在工作区，
+        // 写到外面会被拒绝（见 reqDirOf 的注释）。
+        dataDir,
         repoDir: config.repoDir,
       }),
       requestText: text,
@@ -910,8 +914,13 @@ function detectRepoMainBranch(projectDir) {
  * 这样历史需求还能继续跑完，不会被一次性切断。
  */
 export function reqDirOf(flow) {
-  if (flow?.dataDir) return flow.dataDir
-  return join(flow.projectDir, 'docs/requirements', flow.reqId)
+  // 产物必须落在会话工作区内：dsh 子进程跑在 workspace-write 沙箱里，
+  // 写到工作区外（比如 ~/.qq-bot/data）会被直接拒绝，agent 只能写回工作区，
+  // 编排层按 reqId 校验找不到就判定「没产出」，于是无限重跑同一阶段。
+  //
+  // 有工作区就用工作区（dev 之后），没有就用主项目（dev 之前）。
+  const base = flow?.workDir || flow?.projectDir
+  return join(base, 'docs/requirements', flow.reqId)
 }
 
 /**
