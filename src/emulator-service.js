@@ -185,8 +185,16 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
         const picked = candidates[0]
         const info = { reqId, stage, at: Date.now() }
         leases.set(picked.name, info)
-        log(`[emulator] 租出 ${picked.name} → ${reqId}（${stage}）`)
-        return json(res, 200, { ok: true, deviceId: picked.name, lease: info })
+        // deviceId 是「装包时该用的那个标识」：鸿蒙就是设备名，
+        // Android 是 emulator-5554（AVD 名没法直接 adb -s）
+        const target = picked.deviceId ?? picked.name
+        log(`[emulator] 租出 ${picked.name} → ${reqId}（${stage}）${target !== picked.name ? `，adb 设备 ${target}` : ''}`)
+        return json(res, 200, {
+          ok: true,
+          deviceId: target,
+          avdName: picked.name !== target ? picked.name : undefined,
+          lease: info,
+        })
       }
 
       const release = path.match(/^\/api\/lease\/(.+)$/)

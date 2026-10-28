@@ -369,7 +369,7 @@ export function createFlowBridge(deps) {
         // 平台命令块：构建/测试/装包怎么跑，由适配器决定
         platformBlock: buildPlatformBlock(platform, {
           deviceId: flow.vars?.deviceId ?? '<设备ID>',
-          artifactId: flow.vars?.artifactId ?? '<应用ID>',
+          artifactId: flow.vars?.artifactId ?? guessArtifactId(st.projectDir),
         }),
         dataDir: reqDirOf(flow),
         // 目录树给对地方：dev 之后看工作区，之前看主仓库
@@ -716,11 +716,37 @@ export function createFlowBridge(deps) {
 
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
 
+/**
+ * 猜应用 ID（装包/卸载时用）：鸿蒙读 AppScope/app.json5 的 bundleName，
+ * Android 读 build.gradle 的 applicationId。猜不到就留占位符——
+ * 猜错比留空更糟，会让 agent 照着错的 ID 去卸载别人的包。
+ */
+function guessArtifactId(projectDir) {
+  const tries = [
+    ['AppScope/app.json5', /"?bundleName"?\s*:\s*"([^"]+)"/],
+    ['app/build.gradle', /applicationId\s*=?\s*["']([^"']+)["']/],
+    ['app/build.gradle.kts', /applicationId\s*=\s*"([^"]+)"/],
+  ]
+  for (const [rel, re] of tries) {
+    try {
+      const m = readFileSync(join(projectDir, rel), 'utf8').match(re)
+      if (m?.[1]) return m[1]
+    } catch {
+      /* 文件不存在就试下一个 */
+    }
+  }
+  return '<应用ID>'
+}
+
 /** 把平台适配器渲染成任务包里的一段命令说明 */
 function buildPlatformBlock(platform, vars) {
   const lines = ['【平台命令】' + platform.label]
   lines.push(`- 构建：${renderCommand(platform.build, vars)}`)
   lines.push(`- 单测：${renderCommand(platform.test, vars)}`)
+  if (platform.instrumentedTest) {
+    lines.push(`- 仪器测试（要上设备）：${renderCommand(platform.instrumentedTest, vars)}`)
+    if (platform.instrumentedTest.note) lines.push(`  ${platform.instrumentedTest.note}`)
+  }
   lines.push(`- 装包：${renderCommand(platform.install, vars)}`)
   lines.push(`- 安装包后缀：${platform.artifactExt}`)
   if (platform.sdkEnv) lines.push(`- 需要导出的环境变量：${platform.sdkEnv}`)

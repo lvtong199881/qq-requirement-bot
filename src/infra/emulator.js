@@ -104,18 +104,34 @@ const harmonyAdapter = {
 const androidAdapter = {
   label: 'Android',
 
+  /**
+   * 列出 AVD 并标出哪些在跑。
+   *
+   * 难点是「AVD 名」和「adb 设备名」对不上：AVD 叫 Pixel_7_API_34，
+   * adb 那边是 emulator-5554。之前只判断「有设备在线就算在跑」，
+   * 多台模拟器时全都会被标成运行中。
+   * 现在反过来问：adb 设备自己知道它跑的是哪个 AVD（`adb -s <id> emu avd name`）。
+   */
   list(cfg) {
     const bin = cfg.bin ?? DEFAULT_BIN.android
-    const r = run(bin, ['-list-avds'])
-    if (!r.ok) return { ok: false, error: r.error, items: [] }
-    const names = r.out.split('\n').map((l) => l.trim()).filter(Boolean)
+    const avds = run(bin, ['-list-avds'])
+    if (!avds.ok) return { ok: false, error: avds.error, items: [] }
+    const names = avds.out.split('\n').map((l) => l.trim()).filter(Boolean)
 
+    // 在线设备 → 它跑的 AVD 名
+    const runningByAvd = new Map()
     const adb = run(cfg.adb ?? 'adb', ['devices'])
-    const online = new Set()
     if (adb.ok) {
       for (const line of adb.out.split('\n').slice(1)) {
         const [id, state] = line.trim().split(/\s+/)
-        if (id && state === 'device') online.add(id)
+        if (!id || state !== 'device') continue
+        // 只有模拟器能反查 AVD 名，真机查不到（也不该算进 AVD 列表）
+        if (!/^emulator-\d+$/.test(id)) continue
+        const name = run(cfg.adb ?? 'adb', ['-s', id, 'emu', 'avd', 'name'])
+        if (name.ok) {
+          const avd = name.out.split('\n')[0].trim().replace(/^OK\s*/, '')
+          if (avd) runningByAvd.set(avd, id)
+        }
       }
     }
 
@@ -126,8 +142,9 @@ const androidAdapter = {
         type: 'phone',
         model: null,
         os: null,
-        // AVD 名和 adb 设备名对不上，只能粗判：有设备在线就认为有 AVD 在跑
-        running: online.size > 0,
+        running: runningByAvd.has(name),
+        // 记录 adb 设备名，装包时必须用它（-s emulator-5554）
+        deviceId: runningByAvd.get(name) ?? null,
         path: null,
         platform: 'android',
       })),
@@ -138,6 +155,7 @@ const androidAdapter = {
     const bin = cfg.bin ?? DEFAULT_BIN.android
     const args = ['-avd', name]
     if (noWindow) args.push('-no-window')
+    // 清除数据用 -wipe-data，从干净状态起
     if (reset) args.push('-wipe-data')
     // 和鸿蒙一样：emulator 启动后也是长驻进程
     try {
@@ -150,13 +168,21 @@ const androidAdapter = {
   },
 
   stop(cfg, name) {
-    const adb = run(cfg.adb ?? 'adb', ['emu', 'kill'], { timeout: 20_000 })
-    return adb.ok ? { ok: true } : { ok: false, error: adb.error }
+    // 停止要指定设备：先找出它对应的 adb 设备名，再用 emu kill
+    const adbBin = cfg.adb ?? 'adb'
+    const list = androidAdapter.list(cfg)
+    const target = list.items?.find((x) => x.name === name)
+    if (!target?.deviceId) {
+      return { ok: false, error: `${name} 没有在运行（找不到对应的 adb 设备）` }
+    }
+    const r = run(adbBin, ['-s', target.deviceId, 'emu', 'kill'], { timeout: 30_000 })
+    return r.ok ? { ok: true } : { ok: false, error: r.error }
   },
 
   remove(cfg, name) {
-    const bin = cfg.bin ?? DEFAULT_BIN.android
-    const r = run(bin, ['-avd', name, '-delete'], { timeout: 30_000 })
+    // 删 AVD 用 avdmanager，不是 emulator 自己的参数
+    const mgr = cfg.avdmanager ?? 'avdmanager'
+    const r = run(mgr, ['delete', 'avd', '-n', name], { timeout: 60_000 })
     return r.ok ? { ok: true } : { ok: false, error: r.error }
   },
 }
