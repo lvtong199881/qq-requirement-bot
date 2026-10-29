@@ -458,14 +458,15 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
 
         const client = createEmulatorClient(config)
         const action = emuAction[1]
+        const platform = body.platform ?? undefined
         const result =
           action === 'start'
-            ? await client.start(name, { reset: body.reset === true })
+            ? await client.start(name, { reset: body.reset === true, platform })
             : action === 'stop'
-              ? await client.stop(name)
+              ? await client.stop(name, { platform })
               : action === 'wipe'
-                ? await client.wipe(name)
-                : await client.remove(name)
+                ? await client.wipe(name, { platform })
+                : await client.remove(name, { platform })
 
         console.log(`[模拟器] ${action} ${name}${result.ok ? '' : ' 失败：' + result.error}`)
         return json(res, result.ok ? 200 : 400, result)

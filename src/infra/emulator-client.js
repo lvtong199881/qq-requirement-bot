@@ -63,20 +63,22 @@ export class EmulatorClient {
     return this.#req('GET', `/api/emulators${qs ? '?' + qs : ''}`)
   }
 
-  start(name, { reset = false } = {}) {
-    return this.#req('POST', '/api/emulators/start', { name, reset })
+  // 每个动作都带 platform：服务端靠它选对管理器，
+  // 不然安卓的管理器去启鸿蒙设备只会回「没有这个模拟器」。
+  start(name, { reset = false, platform } = {}) {
+    return this.#req('POST', '/api/emulators/start', { name, reset, platform })
   }
 
-  stop(name) {
-    return this.#req('POST', '/api/emulators/stop', { name })
+  stop(name, { platform } = {}) {
+    return this.#req('POST', '/api/emulators/stop', { name, platform })
   }
 
-  wipe(name) {
-    return this.#req('POST', '/api/emulators/wipe', { name })
+  wipe(name, { platform } = {}) {
+    return this.#req('POST', '/api/emulators/wipe', { name, platform })
   }
 
-  remove(name) {
-    return this.#req('POST', '/api/emulators/delete', { name })
+  remove(name, { platform } = {}) {
+    return this.#req('POST', '/api/emulators/delete', { name, platform })
   }
 
   /**

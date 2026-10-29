@@ -162,14 +162,17 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
           })
         }
 
+        // 必须按平台取管理器：用全局 mgr 的话，安卓的 manager 去启鸿蒙设备
+        // 只会回一句「没有这个模拟器」，看着像设备丢了。
+        const actMgr = managerFor({ platform: body.platform, repoId: body.repoId })
         const result =
           action[1] === 'start'
-            ? await mgr.start(name, { reset: body.reset === true })
+            ? await actMgr.start(name, { reset: body.reset === true })
             : action[1] === 'stop'
-              ? await mgr.stop(name)
+              ? await actMgr.stop(name)
               : action[1] === 'wipe'
-                ? await mgr.wipe(name)
-                : await mgr.remove(name)
+                ? await actMgr.wipe(name)
+                : await actMgr.remove(name)
 
         log(`[emulator] ${action[1]} ${name}${result.ok ? '' : ' 失败：' + result.error}`)
         return json(res, result.ok ? 200 : 400, result)

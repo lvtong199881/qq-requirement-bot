@@ -78,6 +78,33 @@ const harmonyAdapter = {
    *   coldboot（默认，带已有数据启动）
    *   reset    （带数据重置启动 = 清除数据）
    */
+  /**
+   * 清数据：删掉写时复制层，下次启动就是干净的。
+   *
+   * 鸿蒙没有「不启动也能清」的命令（-bootMode reset 是「以重置模式启动」），
+   * 但用户数据其实就在实例目录的 userdata.img.qcow2 / cache.img.qcow2 里。
+   * 直接删这两层，效果等同恢复出厂，而且不用等启动（几十秒 → 毫秒）。
+   * system / vendor / sys_prod 那几层不动：它们基本没改动，删了反而可能起不来。
+   */
+  wipeData(cfg, name, instancePath) {
+    const dir = instancePath ?? join(process.env.HOME ?? '', '.Huawei/Emulator/deployed', name)
+    const targets = ['userdata.img.qcow2', 'cache.img.qcow2', 'userdata.img', 'cache.img']
+    const removed = []
+    for (const f of targets) {
+      const full = join(dir, f)
+      if (!existsSync(full)) continue
+      try {
+        rmSync(full, { force: true })
+        removed.push(f)
+      } catch (err) {
+        return { ok: false, error: `删除 ${f} 失败：${err.message}` }
+      }
+    }
+    return removed.length
+      ? { ok: true, removed }
+      : { ok: false, error: '没找到可清除的数据文件（可能实例目录不对）' }
+  },
+
   start(cfg, name, { reset = false, noWindow = true } = {}) {
     const bin = cfg.bin ?? DEFAULT_BIN.harmony
     const args = ['-start', name]
@@ -197,6 +224,39 @@ const androidAdapter = {
         }
       }),
     }
+  },
+
+  /**
+   * 清数据：删掉 userdata-qemu.img 和快照，等于恢复出厂。
+   * 和鸿蒙同理——比 -wipe-data 启动一次快得多。
+   */
+  wipeData(cfg, name) {
+    const dir = join(process.env.HOME ?? '', '.android', 'avd', `${name}.avd`)
+    const targets = ['userdata-qemu.img', 'userdata-qemu.img.qcow2', 'cache.img', 'cache.img.qcow2']
+    const removed = []
+    for (const f of targets) {
+      const full = join(dir, f)
+      if (!existsSync(full)) continue
+      try {
+        rmSync(full, { force: true })
+        removed.push(f)
+      } catch (err) {
+        return { ok: false, error: `删除 ${f} 失败：${err.message}` }
+      }
+    }
+    // 快照里的旧状态也要清，否则下次会被快照覆盖回来
+    const snap = join(dir, 'snapshots')
+    if (existsSync(snap)) {
+      try {
+        rmSync(snap, { recursive: true, force: true })
+        removed.push('snapshots/')
+      } catch (err) {
+        return { ok: false, error: `删除快照失败：${err.message}` }
+      }
+    }
+    return removed.length
+      ? { ok: true, removed }
+      : { ok: false, error: '没找到可清除的数据文件' }
   },
 
   start(cfg, name, { reset = false, noWindow = true } = {}) {
@@ -347,23 +407,29 @@ export class EmulatorManager {
     return r.ok ? { ok: true, name } : { ok: false, error: r.error }
   }
 
-  /** 清除数据：重置启动一次再关掉，保留模拟器本身 */
+  /**
+   * 清除数据（不启动）。
+   *
+   * 之前的实现是「重置启动一次再关掉」——要等模拟器完全上线，几十秒，
+   * 而且用户要的只是清数据，不是启动。现在直接删数据层，毫秒级完成。
+   * 运行中的话先停：带着运行实例删数据文件会写坏。
+   */
   async wipe(name) {
     const item = this.list().items.find((x) => x.name === name)
     if (!item) return { ok: false, error: `没有这个模拟器：${name}` }
 
-    // 先停，避免带着旧数据启动
-    await this.stop(name)
-    await new Promise((res) => setTimeout(res, 2000))
+    if (item.running) {
+      const stopped = await this.stop(name)
+      if (!stopped.ok) return { ok: false, error: `先关闭失败：${stopped.error}` }
+      // 等进程真的退出，否则句柄还开着
+      await new Promise((res) => setTimeout(res, 3000))
+    }
 
-    const r = this.adapter.start(this.tools, name, { reset: true, noWindow: true })
-    if (!r.ok) return { ok: false, error: r.error }
-
-    const up = await this.#waitRunning(name, true)
-    if (!up) return { ok: false, error: '清除数据后模拟器没有启动起来' }
-    // 数据已重置，关掉交还给调用方
-    await this.stop(name)
-    return { ok: true, name }
+    if (!this.adapter.wipeData) {
+      return { ok: false, error: `${this.adapter.label} 不支持直接清数据` }
+    }
+    const r = this.adapter.wipeData(this.tools, name, item.path)
+    return r.ok ? { ok: true, name, removed: r.removed } : { ok: false, error: r.error }
   }
 
   /** 完全删除 */

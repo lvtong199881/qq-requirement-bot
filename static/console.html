@@ -564,7 +564,7 @@
             <div class="emu-actions">
               <button v-if="!e.running" class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e)">启动</button>
               <button v-else class="menu-btn" :disabled="emuBusy" @click="emuAct('stop', e)">关闭</button>
-              <button class="menu-btn" :disabled="emuBusy" @click="emuAct('start', e, true)">清数据启动</button>
+              <button class="menu-btn" :disabled="emuBusy" @click="emuAct('wipe', e)">清数据</button>
               <button class="menu-btn danger" :disabled="emuBusy" @click="emuAct('delete', e)">删除</button>
             </div>
           </div>
@@ -1301,11 +1301,11 @@ createApp({
       }
     }
 
-    async function emuAct(action, emu, reset = false) {
-      const verbs = { start: reset ? '启动并清除数据' : '启动', stop: '关闭', delete: '删除' }
+    async function emuAct(action, emu) {
+      const verbs = { start: '启动', stop: '关闭', wipe: '清数据', delete: '删除' }
       const verb = verbs[action] || action
 
-      // 破坏性操作先过通用确认：删除不可恢复，清数据会重置应用
+      // 破坏性操作先过通用确认
       if (action === 'delete') {
         askConfirm({
           title: '删除模拟器',
@@ -1313,33 +1313,34 @@ createApp({
           detail: '模拟器本身会被移除，不可恢复。',
           confirmText: '确认删除',
           danger: true,
-          onConfirm: () => emuRun(action, emu, reset, verb),
+          onConfirm: () => emuRun(action, emu, verb),
         })
         return
       }
-      if (reset) {
+      if (action === 'wipe') {
         askConfirm({
-          title: '清除数据并启动',
-          message: `清除「${emu.name}」的数据并启动？`,
-          detail: '应用数据会被重置到出厂状态，模拟器本身保留。',
+          title: '清除数据',
+          message: `清除「${emu.name}」的数据？`,
+          detail: '应用数据重置到出厂状态，模拟器保留。运行中会先关闭。',
           confirmText: '确认清除',
           danger: true,
-          onConfirm: () => emuRun(action, emu, reset, verb),
+          onConfirm: () => emuRun(action, emu, verb),
         })
         return
       }
-      return emuRun(action, emu, reset, verb)
+      return emuRun(action, emu, verb)
     }
 
     /** 真正发请求的那一步（确认之后才走到这里） */
-    async function emuRun(action, emu, reset, verb) {
+    async function emuRun(action, emu, verb) {
       emuBusy.value = true
       emuError.value = ''
       try {
         const r = await fetch('/api/emulators/' + action, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: emu.name, reset }),
+          // 带平台：服务端要靠它选对管理器，否则安卓的管理器去启鸿蒙设备
+          body: JSON.stringify({ name: emu.name, platform: emuPlatformQuery.value }),
         })
         const d = await r.json()
         if (!d.ok) emuError.value = verb + '失败：' + (d.error || '未知原因')
