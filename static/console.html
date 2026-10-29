@@ -260,16 +260,44 @@
   /* 展示区：无外框，直接铺卡片 */
   .emu-section { margin-top: 16px; }
 
-  /* ── 项目卡片的输入框 ── */
-  .proj-id, .proj-path, .proj-plat {
-    font-size: 12px; padding: 4px 8px; border-radius: 5px;
-    border: 1px solid var(--line); background: var(--bg, transparent); color: var(--text);
-    outline: none; width: 100%;
+  /* ── 项目管理 ── */
+  .proj-name {
+    font-size: 14px; font-weight: 600; padding: 3px 6px; border-radius: 5px;
+    border: 1px solid transparent; background: transparent; color: var(--text);
+    outline: none; width: 100%; min-width: 0;
   }
-  .proj-id { font-weight: 600; }
-  .proj-plat { width: auto; }
-  .proj-id:focus, .proj-path:focus, .proj-plat:focus { border-color: var(--blue); }
-  .proj-primary { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; }
+  .proj-name:hover { border-color: var(--line); }
+  .proj-name:focus { border-color: var(--blue); background: var(--bg, transparent); }
+  .proj-url {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%; display: block;
+  }
+  .proj-badge {
+    font-size: 11px; padding: 2px 9px; border-radius: 999px;
+    color: var(--blue); background: rgba(56,139,253,.12); font-weight: 500;
+  }
+  /* 弹窗 */
+  .modal-mask {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+  }
+  .proj-modal {
+    background: var(--card); border-radius: 12px; padding: 20px 22px;
+    width: min(440px, 92vw); box-shadow: 0 12px 40px rgba(0,0,0,.25);
+  }
+  .proj-modal h3 { margin: 0 0 16px; font-size: 16px; }
+  .proj-form { display: flex; flex-direction: column; gap: 12px; }
+  .proj-form label { display: flex; flex-direction: column; gap: 5px; }
+  .proj-form .fl { font-size: 12px; color: var(--dim); }
+  .proj-form input:not([type=checkbox]), .proj-form select {
+    padding: 7px 10px; font-size: 13px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg, transparent); color: var(--text);
+    outline: none;
+  }
+  .proj-form input:focus, .proj-form select:focus { border-color: var(--blue); }
+  .proj-check { flex-direction: row !important; align-items: center; gap: 6px !important;
+                font-size: 13px; color: var(--dim); cursor: pointer; }
+  .proj-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 
   /* ── 模拟器：卡片网格 ── */
   .emu-grid {
@@ -347,7 +375,7 @@
              stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
         </svg>
-        <span class="label" v-show="!collapsed">项目</span>
+        <span class="label" v-show="!collapsed">项目管理</span>
       </button>
 
       <button :class="{ active: view === 'emulators' }" @click="switchView('emulators')">
@@ -396,53 +424,105 @@
 
   <!-- 右侧内容 -->
   <main class="content">
-    <!-- ===== 项目 ===== -->
+    <!-- ===== 项目管理 ===== -->
     <template v-if="view === 'projects'">
+      <!-- 顶部：筛选 + 新增 -->
       <div class="panel emu-filter-panel">
         <div class="card">
-          <p class="desc">
-            一个项目就是一个仓库。平台是仓库属性——同一个团队里鸿蒙和安卓仓库并存是正常的。<br>
-            改完立刻生效，不用重启 bridge。
-          </p>
-          <div v-if="projError" class="emu-error">{{ projError }}</div>
-          <div class="ff-actions" style="margin-left:0">
-            <button class="menu-btn" @click="projAdd">添加项目</button>
-            <button class="menu-btn primary" :disabled="projBusy" @click="projSave">保存</button>
-            <button class="menu-btn" :disabled="projBusy" @click="loadProjects">重新读取</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="emu-section">
-        <div class="emu-grid">
-          <div class="emu-card" v-for="(r, i) in projects" :key="i">
-            <div class="emu-head">
-              <input class="proj-id" v-model="r.id" placeholder="id（如 app）"
-                     @input="r.idLocked = true" />
-              <span class="emu-type">{{ r.platform }}</span>
-            </div>
-            <div class="emu-meta">
-              <span class="mk">仓库</span>
-              <input class="proj-path" v-model="r.url" placeholder="git@github.com:org/repo.git"
-                     @input="projOnUrl(r)" />
-            </div>
-            <div class="emu-meta">
-              <span class="mk">平台</span>
-              <select v-model="r.platform" class="proj-plat">
+          <div class="emu-filters">
+            <label class="ff">
+              <span class="fl">平台</span>
+              <select v-model="projPlatformFilter">
+                <option value="">全部</option>
                 <option value="harmony">鸿蒙</option>
                 <option value="android">Android</option>
                 <option value="ios">iOS</option>
               </select>
+            </label>
+            <div class="ff-actions">
+              <button class="menu-btn primary" :disabled="projBusy" @click="projOpenAdd">新增项目</button>
+            </div>
+          </div>
+          <div v-if="projError" class="emu-error">{{ projError }}</div>
+        </div>
+      </div>
+
+      <!-- 项目卡片：只读，只有 name 能改 -->
+      <div class="emu-section">
+        <div v-if="filteredProjects.length" class="emu-grid">
+          <div class="emu-card" v-for="r in filteredProjects" :key="r.id">
+            <div class="emu-head">
+              <input
+                class="proj-name"
+                :value="r.name"
+                @change="projRename(r, $event.target.value)"
+                @blur="projRename(r, $event.target.value)"
+                title="点这里改名字"
+              />
+              <span class="emu-type">{{ platformLabel(r.platform) }}</span>
+            </div>
+            <div class="emu-meta">
+              <span class="mk">仓库</span>
+              <span class="mv proj-url">{{ r.url || '（本地仓库）' }}</span>
+            </div>
+            <div class="emu-meta">
+              <span class="mk">ID</span>
+              <span class="mv"><code>{{ r.id }}</code></span>
             </div>
             <div class="emu-actions">
-              <label class="proj-primary">
-                <input type="radio" :checked="r.primary" @change="projSetPrimary(i)" /> 主项目
-              </label>
-              <button class="menu-btn danger" :disabled="projBusy || projects.length <= 1" @click="projDel(i)">删除</button>
+              <span v-if="r.primary" class="proj-badge">主项目</span>
+              <button
+                v-else
+                class="menu-btn"
+                :disabled="projBusy"
+                @click="projSetPrimaryById(r.id)"
+              >设为主项目</button>
+              <button
+                class="menu-btn danger"
+                :disabled="projBusy || projects.length <= 1"
+                @click="projDel(r.id)"
+              >删除</button>
             </div>
           </div>
         </div>
-        <p v-if="!projects.length" class="desc">还没有项目。点「添加项目」加一个。</p>
+        <p v-else class="desc">
+          {{ projects.length ? '没有符合筛选条件的项目。' : '还没有项目。点「新增项目」加一个。' }}
+        </p>
+      </div>
+
+      <!-- 新增弹窗 -->
+      <div v-if="projModal.open" class="modal-mask" @click.self="projCloseAdd">
+        <div class="modal-card proj-modal">
+          <h3>新增项目</h3>
+          <div class="proj-form">
+            <label>
+              <span class="fl">仓库地址</span>
+              <input v-model="projModal.url" placeholder="git@github.com:org/repo.git" />
+            </label>
+            <label>
+              <span class="fl">项目名</span>
+              <input v-model="projModal.name" placeholder="留空则从仓库名取" />
+            </label>
+            <label>
+              <span class="fl">平台</span>
+              <select v-model="projModal.platform">
+                <option value="harmony">鸿蒙</option>
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
+              </select>
+            </label>
+            <label class="proj-check">
+              <input type="checkbox" v-model="projModal.primary" /> 设为主项目
+            </label>
+          </div>
+          <div v-if="projModal.error" class="emu-error">{{ projModal.error }}</div>
+          <div class="proj-modal-actions">
+            <button class="menu-btn" :disabled="projBusy" @click="projCloseAdd">取消</button>
+            <button class="menu-btn primary" :disabled="projBusy" @click="projSubmitAdd">
+              {{ projBusy ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -974,10 +1054,26 @@ createApp({
       instances.value.reduce((n, i) => n + (i.groups?.length || 0), 0))
 
     /** 需求大盘的行：/api/board 已经按群维度摊平，前端不再自己展平 */
-    // ── 项目（仓库）配置 ──
+    // ── 项目管理 ──
     const projects = ref([])
     const projError = ref('')
     const projBusy = ref(false)
+    const projPlatformFilter = ref('')
+    const projModal = ref({ open: false, url: '', name: '', platform: 'harmony', primary: false, error: '' })
+
+    const filteredProjects = computed(() =>
+      projects.value.filter((r) => !projPlatformFilter.value || r.platform === projPlatformFilter.value),
+    )
+
+    function platformLabel(p) {
+      return { harmony: '鸿蒙', android: 'Android', ios: 'iOS' }[p] ?? p
+    }
+
+    /** 从 git 链接里取仓库名：https://.../Instanto.git → Instanto */
+    function repoNameFromUrl(url) {
+      const t = String(url || '').trim().replace(/\/+$/, '').replace(/\.git$/, '')
+      return t.split(/[/:]/).filter(Boolean).pop() ?? ''
+    }
 
     async function loadProjects() {
       try {
@@ -987,8 +1083,8 @@ createApp({
         projError.value = ''
         projects.value = (d.repos || []).map((x, i) => ({
           id: x.id,
-          // 有 url 就显示 url；纯本地路径的老配置显示路径
-          url: x.url || x.path || '',
+          name: x.name || x.id,
+          url: x.url || '',
           platform: x.platform || 'harmony',
           primary: x.primary === true || i === 0,
         }))
@@ -997,55 +1093,88 @@ createApp({
       }
     }
 
-    /** 从 git 链接里取仓库名：https://.../Instanto.git → Instanto */
-    function repoNameFromUrl(url) {
-      const s = String(url || '').trim().replace(/\/+$/, '').replace(/\.git$/, '')
-      const last = s.split(/[/:]/).filter(Boolean).pop() ?? ''
-      return last
-    }
-
-    /** 输入链接时自动填 id，但只在用户没手动改过的时候覆盖 */
-    function projOnUrl(r) {
-      if (r.idLocked) return
-      r.id = repoNameFromUrl(r.url)
-    }
-
-    function projAdd() {
-      // 第一个项目自动当主项目
-      projects.value.push({
-        id: '',
-        url: '',
+    function projOpenAdd() {
+      projModal.value = {
+        open: true, url: '', name: '',
         platform: 'harmony',
+        // 第一个项目自动当主项目
         primary: projects.value.length === 0,
-      })
+        error: '',
+      }
     }
 
-    function projDel(i) {
+    function projCloseAdd() {
+      projModal.value = { ...projModal.value, open: false, error: '' }
+    }
+
+    async function projSubmitAdd() {
+      const m = projModal.value
+      const url = String(m.url || '').trim()
+      if (!url) { projModal.value = { ...m, error: '填一下仓库地址' }; return }
+      // name 留空就从链接里取
+      const name = String(m.name || '').trim() || repoNameFromUrl(url)
+
+      projBusy.value = true
+      try {
+        const next = [
+          ...projects.value.map((r) => ({
+            id: r.id, name: r.name, url: r.url, platform: r.platform,
+            primary: m.primary ? false : r.primary,
+          })),
+          { name, url, platform: m.platform, primary: m.primary || projects.value.length === 0 },
+        ]
+        const r = await fetch('/api/projects/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repos: next }),
+        })
+        const d = await r.json()
+        if (!d.ok) { projModal.value = { ...projModal.value, error: d.error || '保存失败' }; return }
+        projModal.value = { ...projModal.value, open: false, error: '' }
+        await loadProjects()
+      } catch (e) {
+        projModal.value = { ...projModal.value, error: '保存失败：' + e.message }
+      } finally {
+        projBusy.value = false
+      }
+    }
+
+    /** 改名：id 不动，只改 name */
+    async function projRename(r, value) {
+      const name = String(value || '').trim()
+      if (!name || name === r.name) return
+      const next = projects.value.map((x) => ({
+        id: x.id, name: x.id === r.id ? name : x.name, url: x.url,
+        platform: x.platform, primary: x.primary,
+      }))
+      await projSaveAll(next)
+    }
+
+    async function projSetPrimaryById(id) {
+      const next = projects.value.map((x) => ({
+        id: x.id, name: x.name, url: x.url,
+        platform: x.platform, primary: x.id === id,
+      }))
+      await projSaveAll(next)
+    }
+
+    async function projDel(id) {
       if (projects.value.length <= 1) return
-      const wasPrimary = projects.value[i].primary
-      projects.value.splice(i, 1)
-      // 删掉的如果是主项目，顺位给第一个
-      if (wasPrimary && projects.value.length) projects.value[0].primary = true
+      const wasPrimary = projects.value.find((x) => x.id === id)?.primary
+      let next = projects.value.filter((x) => x.id !== id)
+      // 删掉的是主项目就把第一个顶上
+      if (wasPrimary && next.length) next = next.map((x, i) => ({ ...x, primary: i === 0 }))
+      await projSaveAll(next)
     }
 
-    function projSetPrimary(i) {
-      projects.value.forEach((r, j) => { r.primary = j === i })
-    }
-
-    async function projSave() {
+    async function projSaveAll(list) {
       projError.value = ''
-      // 提交前先自查一遍，省得等服务端报错
-      const ids = projects.value.map((r) => r.id.trim())
-      if (ids.some((x) => !x)) { projError.value = '每个项目都要填 id'; return }
-      if (new Set(ids).size !== ids.length) { projError.value = 'id 不能重复'; return }
-      if (projects.value.some((r) => !r.url.trim())) { projError.value = '每个项目都要填 git 链接'; return }
-
       projBusy.value = true
       try {
         const r = await fetch('/api/projects/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ repos: projects.value }),
+          body: JSON.stringify({ repos: list }),
         })
         const d = await r.json()
         if (!d.ok) { projError.value = d.error || '保存失败'; return }
@@ -1525,7 +1654,9 @@ createApp({
     return {
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
-      projects, projError, projBusy, loadProjects, projAdd, projDel, projSetPrimary, projSave, projOnUrl,
+      projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
+      loadProjects, projOpenAdd, projCloseAdd, projSubmitAdd, projRename,
+      projSetPrimaryById, projDel, platformLabel,
       emulators, emuPlatform, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,

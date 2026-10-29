@@ -164,7 +164,10 @@ export function loadConfig(configPath) {
   const PLATFORM_IDS = ['harmony', 'android', 'ios']
   const checkoutRoot = expandHome(raw.checkoutRoot?.trim?.() || '~/.qq-bot/checkouts')
   const repos = raw.repos.map((r, i) => {
-    const id = String(r.id ?? `repo${i}`)
+    // id 是内部标识，建出来就不再变（路径都按它派生）；name 才是给人看的，
+    // 可以随时改。id 缺省时生成一个随机的。
+    const id = String(r.id ?? `r${Math.random().toString(36).slice(2, 10)}`)
+    const name = String(r.name ?? r.id ?? `项目${i + 1}`)
     // 配 git 链接就够了：本地目录由 bot 克隆出来，不要求每台机器先手动 clone。
     // path 仍然认（老配置、或指向一个已有的本地仓库），两者都没有就报错。
     const url = typeof r.url === 'string' && r.url.trim() ? r.url.trim() : null
@@ -172,6 +175,7 @@ export function loadConfig(configPath) {
     if (!path) throw new Error(`repos 里的 ${id} 既没有 url 也没有 path`)
     return {
       id,
+      name,
       url,
       path,
       primary: r.primary === true || i === 0,

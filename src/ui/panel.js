@@ -390,21 +390,24 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         const ids = new Set()
         let primaries = 0
         for (const r of repos) {
+          // id 可以空（新增的项目），name 和 url 必须有
           const id = String(r.id ?? '').trim()
-          if (!id) return json(res, 400, { ok: false, error: '每个项目都要有 id' })
-          if (ids.has(id)) return json(res, 400, { ok: false, error: `id 重复：${id}` })
-          ids.add(id)
+          if (id) {
+            if (ids.has(id)) return json(res, 400, { ok: false, error: `id 重复：${id}` })
+            ids.add(id)
+          }
+          const label = String(r.name ?? id ?? '新项目')
 
           // 只认 git 链接：本地目录由 bot 克隆，不要求用户先在每台机器上 clone
           const url = String(r.url ?? r.path ?? '').trim()
-          if (!url) return json(res, 400, { ok: false, error: `${id} 缺少 git 链接` })
+          if (!url) return json(res, 400, { ok: false, error: `${label} 缺少 git 链接` })
           if (!/^(https?:\/\/|git@|ssh:\/\/)/.test(url)) {
-            return json(res, 400, { ok: false, error: `${id} 的链接不像 git 地址：${url}` })
+            return json(res, 400, { ok: false, error: `${label} 的链接不像 git 地址：${url}` })
           }
 
           const plat = String(r.platform ?? 'harmony')
           if (!['harmony', 'android', 'ios'].includes(plat)) {
-            return json(res, 400, { ok: false, error: `${id} 的平台不认识：${plat}` })
+            return json(res, 400, { ok: false, error: `${label} 的平台不认识：${plat}` })
           }
           if (r.primary === true) primaries++
         }
@@ -414,12 +417,18 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         try {
           const cfgPath = config.configPath
           const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'))
-          onDisk.repos = repos.map((r, i) => ({
-            id: String(r.id).trim(),
-            url: String(r.url ?? r.path ?? '').trim(),
-            platform: String(r.platform ?? 'harmony'),
-            ...(r.primary === true || (primaries === 0 && i === 0) ? { primary: true } : {}),
-          }))
+          onDisk.repos = repos.map((r, i) => {
+            // id 建出来就不改；新增的（没带 id）在这里生成一个随机的
+            const id = String(r.id ?? '').trim() || `r${Math.random().toString(36).slice(2, 10)}`
+            const name = String(r.name ?? '').trim() || id
+            return {
+              id,
+              name,
+              url: String(r.url ?? r.path ?? '').trim(),
+              platform: String(r.platform ?? 'harmony'),
+              ...(r.primary === true || (primaries === 0 && i === 0) ? { primary: true } : {}),
+            }
+          })
           writeFileSync(cfgPath, JSON.stringify(onDisk, null, 2) + '\n')
 
           // 就地刷新内存，下一次请求就是新配置
