@@ -77,7 +77,14 @@ function posInt(v, fallback) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }
 
-export function expandHome(p) {
+export function pick(...vals) {
+  for (const v of vals) if (typeof v === 'string' && v.trim()) return expandHome(v.trim())
+  // 最后一个参数如果不是字符串，就是默认值
+  const last = vals[vals.length - 1]
+  return typeof last === 'string' ? last : null
+}
+
+function expandHome(p) {
   if (p === '~') return homedir()
   if (p.startsWith('~/')) return join(homedir(), p.slice(2))
   return p
@@ -110,6 +117,11 @@ function readModelLabel(profile) {
  * 就地改而不是返回新对象，是因为 bridge 创建时把 config 解构进了闭包，
  * 换引用它看不到；改内容能立刻生效。
  */
+/** 取某个平台的工具配置 */
+export function toolsFor(config, platform) {
+  return config.tools?.[platform] ?? {}
+}
+
 export function reloadConfigInto(target, configPath) {
   const fresh = loadConfig(configPath)
   const keep = target.configPath
@@ -321,10 +333,21 @@ export function loadConfig(configPath) {
     // 默认平台：仓库自己没写 platform 时用它；各仓库以自己的为准
     platform: ['harmony', 'android', 'ios'].includes(raw.platform) ? raw.platform : 'harmony',
     devices: Array.isArray(raw.devices) ? raw.devices : [],
+    // 工具按平台分组：同一个团队鸿蒙、安卓并存时，两套工具路径不一样。
+    // 老的扁平写法（tools.hdc）自动归到 harmony，不破坏已有配置。
     tools: {
-      hdc: typeof raw.tools?.hdc === 'string' ? raw.tools.hdc : 'hdc',
-      adb: typeof raw.tools?.adb === 'string' ? raw.tools.adb : 'adb',
-      xcrun: typeof raw.tools?.xcrun === 'string' ? raw.tools.xcrun : 'xcrun',
+      harmony: {
+        hdc: pick(raw.tools?.harmony?.hdc, raw.tools?.hdc, 'hdc'),
+      },
+      android: {
+        adb: pick(raw.tools?.android?.adb, raw.tools?.adb, 'adb'),
+        bin: pick(raw.tools?.android?.bin, raw.tools?.emulator, 'emulator'),
+        avdmanager: pick(raw.tools?.android?.avdmanager, raw.tools?.avdmanager, 'avdmanager'),
+        sdkHome: pick(raw.tools?.android?.sdkHome, raw.tools?.sdkHome, null),
+      },
+      ios: {
+        xcrun: pick(raw.tools?.ios?.xcrun, raw.tools?.xcrun, 'xcrun'),
+      },
     },
 
     // 模拟器服务地址：设备发现、启停、租约都在那个服务里，编排层只调接口

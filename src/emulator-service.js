@@ -84,7 +84,9 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
     const repo = repoId
       ? (cfg.repos ?? []).find((r) => r.id === repoId)
       : cfg.primaryRepo
-    return createEmulatorManager({ ...cfg, platform: repo?.platform ?? cfg.platform })
+    const plat = repo?.platform ?? cfg.platform
+    // 工具是按平台配的：鸿蒙有 hdc，Android 有 adb/emulator/avdmanager
+    return createEmulatorManager({ platform: plat, tools: cfg.tools?.[plat] ?? {}, bootWaitMs: cfg.bootWaitMs })
   }
   const mgr = managerFor()
 

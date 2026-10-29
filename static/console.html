@@ -417,12 +417,14 @@
         <div class="emu-grid">
           <div class="emu-card" v-for="(r, i) in projects" :key="i">
             <div class="emu-head">
-              <input class="proj-id" v-model="r.id" placeholder="id（如 app）" />
+              <input class="proj-id" v-model="r.id" placeholder="id（如 app）"
+                     @input="r.idLocked = true" />
               <span class="emu-type">{{ r.platform }}</span>
             </div>
             <div class="emu-meta">
               <span class="mk">仓库</span>
-              <input class="proj-path" v-model="r.url" placeholder="git@github.com:org/repo.git" />
+              <input class="proj-path" v-model="r.url" placeholder="git@github.com:org/repo.git"
+                     @input="projOnUrl(r)" />
             </div>
             <div class="emu-meta">
               <span class="mk">平台</span>
@@ -995,6 +997,19 @@ createApp({
       }
     }
 
+    /** 从 git 链接里取仓库名：https://.../Instanto.git → Instanto */
+    function repoNameFromUrl(url) {
+      const s = String(url || '').trim().replace(/\/+$/, '').replace(/\.git$/, '')
+      const last = s.split(/[/:]/).filter(Boolean).pop() ?? ''
+      return last
+    }
+
+    /** 输入链接时自动填 id，但只在用户没手动改过的时候覆盖 */
+    function projOnUrl(r) {
+      if (r.idLocked) return
+      r.id = repoNameFromUrl(r.url)
+    }
+
     function projAdd() {
       // 第一个项目自动当主项目
       projects.value.push({
@@ -1510,7 +1525,7 @@ createApp({
     return {
       view, collapsed, instances, loading, menu, modal, toast, confirmModal,
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
-      projects, projError, projBusy, loadProjects, projAdd, projDel, projSetPrimary, projSave,
+      projects, projError, projBusy, loadProjects, projAdd, projDel, projSetPrimary, projSave, projOnUrl,
       emulators, emuPlatform, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,

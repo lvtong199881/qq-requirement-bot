@@ -91,7 +91,9 @@ export function listDevices(config) {
     return { ok: true, platform, label: adapter.label, devices, source: 'config' }
   }
 
-  const devices = adapter.list(config.tools ?? {})
+  // 工具按平台分组；兼容老的扁平写法
+  const tools = config.tools?.[config.platform] ?? config.tools ?? {}
+  const devices = adapter.list(tools)
   return {
     ok: true,
     platform,
