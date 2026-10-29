@@ -222,22 +222,6 @@
   .chip{background:var(--surface3);border-radius:6px;padding:3px 9px;font-size:11.5px;
     font-family:ui-monospace,Menlo,monospace;color:var(--dim)}
 
-  /* ── 并发闸门总览 ── */
-  .pool-strip {
-    display: flex; flex-wrap: wrap; gap: 10px 22px;
-    padding: 10px 14px; margin-bottom: 12px;
-    background: var(--surface2, var(--card2)); border: 1px solid var(--line); border-radius: 8px;
-    font-size: 13px;
-  }
-  .pool-item { display: flex; align-items: center; gap: 6px; }
-  .pool-item .pk { color: var(--dim); }
-  .pool-item .pv b { font-variant-numeric: tabular-nums; }
-  .pool-item .pv b.warn { color: var(--red); }
-  .pool-item .pq { color: var(--yellow); font-size: 12px; }
-  .pool-item .pmuted { color: var(--dim); font-size: 12px; }
-  .ws-cell { font-size: 12px; }
-  .ws-cell .ws { color: var(--blue); font-size: 12px; }
-
   /* ── 模拟器：筛选区（独立卡片） ── */
   .emu-filter-panel { margin-bottom: 0; }
 
@@ -582,63 +566,24 @@
         </div>
       </div>
 
-      <!-- 并发闸门总览：直接回答「还能再并行几个需求」 -->
-      <div v-if="poolRows.length" class="pool-strip">
-        <div class="pool-item" v-for="p in poolRows" :key="'wt' + p.pid">
-          <span class="pk">工作区</span>
-          <span class="pv">
-            <b :class="{ warn: p.worktree.used >= p.worktree.max }">{{ p.worktree.used }}</b>/{{ p.worktree.max }}
-          </span>
-          <span v-if="p.pendingWorktrees" class="pq">排队 {{ p.pendingWorktrees }}</span>
-          <span v-if="poolRows.length > 1" class="pmuted">PID {{ p.pid }}</span>
-        </div>
-        <div class="pool-item" v-for="p in poolRows" :key="'tk' + p.pid">
-          <span class="pk">执行槽</span>
-          <span class="pv">
-            <b :class="{ warn: p.turns.used >= p.turns.max }">{{ p.turns.used }}</b>/{{ p.turns.max }}
-          </span>
-          <span v-if="p.pendingTurns" class="pq">排队 {{ p.pendingTurns }}</span>
-          <span v-if="poolRows.length > 1" class="pmuted">PID {{ p.pid }}</span>
-        </div>
-        <div class="pool-item" v-for="p in poolRows" :key="'dv' + p.pid">
-          <span class="pk">{{ p.devices?.label || '设备' }}</span>
-          <span class="pv">
-            <b :class="{ warn: p.devices?.available === 0 && p.devices?.total > 0 }">
-              {{ p.devices?.available ?? 0 }}</b>/{{ p.devices?.total ?? 0 }}
-          </span>
-          <span v-if="!p.devices?.total" class="pq">无在线设备</span>
-          <span
-            v-for="d in (p.devices?.items || []).filter((x) => x.busy)"
-            :key="d.id"
-            class="pq"
-            :title="d.id"
-          >占用 {{ d.holder || d.id }}</span>
-        </div>
-      </div>
-
       <div v-if="groupRows.length" class="inst">
         <table>
           <thead>
             <tr>
-              <th style="width:90px">PID</th>
               <th style="width:200px">需求名</th>
               <th style="width:180px">QQ 群</th>
               <th style="width:160px">发起人</th>
               <th>当前阶段</th>
-              <th style="width:200px">工作区</th>
               <th style="width:70px"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="row in groupRows" :key="row.pid + ':' + row.groupId">
               <td>
-                <span class="pid-cell" :title="row.unreachable ? '实例不可达' : ''">
-                  <span class="dot" :style="{background: row.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
-                  {{ row.pid ?? '?' }}
-                </span>
-              </td>
-              <td>
-                <div class="req clamp2" :title="row.reqId || '（未绑定需求）'">{{ row.reqId || '（未绑定需求）' }}</div>
+                <div class="req clamp2" :title="row.reqId || '（未绑定需求）'">
+                  <span v-if="row.unreachable" class="dot" style="background:var(--red);margin-right:5px"></span>
+                  {{ row.reqId || '（未绑定需求）' }}
+                </div>
               </td>
               <td>
                 <div class="clamp2" :title="row.groupName || '未知群'">{{ row.groupName || '未知群' }}</div>
@@ -655,13 +600,6 @@
                     <span class="bdur">{{ badgeOf(row).dur }}</span>
                   </template>
                 </span>
-              </td>
-              <td class="ws-cell">
-                <template v-if="row.workDir">
-                  <code class="ws" :title="row.workDir">{{ shortPath(row.workDir) }}</code>
-                  <span v-if="row.featureBranch" class="muted"> · {{ row.featureBranch }}</span>
-                </template>
-                <span v-else class="muted">—</span>
               </td>
               <td style="text-align:right">
                 <button class="menu-btn" @click.stop="openMenu($event, row)">⋯</button>
@@ -1353,28 +1291,7 @@ createApp({
     }
 
     const groupRows = computed(() => board.value.rows || [])
-    const poolRows = computed(() => board.value.pools || [])
-
-    /** 长路径只显示最后两段，完整值放 title */
-    function shortPath(p) {
-      if (!p) return '—'
-      const parts = String(p).split('/').filter(Boolean)
-      return parts.length <= 2 ? p : '…/' + parts.slice(-2).join('/')
-    }
     const alertCount = computed(() => board.value.alerts || 0)
-
-    // ── 两套数据：大盘按群、实例页按进程，各拉各的接口 ──
-    async function loadBoard() {
-      loading.value = true
-      try {
-        const r = await fetch('/api/board')
-        board.value = await r.json()
-      } catch {
-        /* 面板自身异常时不打扰用户 */
-      } finally {
-        loading.value = false
-      }
-    }
 
     async function loadInstances() {
       try {
@@ -1712,7 +1629,7 @@ createApp({
 
     return {
       view, collapsed, instances, loading, menu, modal, toast, confirmDialog, askConfirm, confirmRun, askTaskAction,
-      instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
+      instanceCount, groupCount, alertCount, groupRows,
       projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
       loadProjects, projOpenAdd, projOpenEdit, projCloseAdd, projSubmit,
       projAskDelete, platformLabel,
