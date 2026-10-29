@@ -91,6 +91,36 @@ console.log('\n== 模板引用的函数都有定义 ==')
   check('事件处理函数都已导出', missing.length === 0, missing.join(', '))
 }
 
+console.log('\n== 页面内部调用的函数都有定义 ==')
+{
+  // 删代码时把 loadBoard 的定义删了，但三处调用还在——模板检查抓不到，
+  // 因为它不在模板里，结果整个页面白屏。
+  const scriptStart = html.lastIndexOf('<script>')
+  const script = html.slice(scriptStart)
+  const defined = new Set()
+  for (const m of script.matchAll(/(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) defined.add(m[1])
+  for (const m of script.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) defined.add(m[1])
+  for (const m of script.matchAll(/^\s{4}([A-Za-z_$][\w$]*)\s*,?\s*$/gm)) defined.add(m[1])
+
+  // 关键字、语言内置、Vue/浏览器全局都不算「未定义」
+  const SKIP = new Set([
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'function', 'await', 'new',
+    'async', 'Number', 'String', 'Boolean', 'Array', 'Object', 'JSON', 'Math', 'Date', 'Promise',
+    'Set', 'Map', 'parseInt', 'parseFloat', 'isNaN', 'encodeURIComponent', 'decodeURIComponent',
+    'setTimeout', 'setInterval', 'clearInterval', 'clearTimeout', 'fetch', 'confirm', 'alert',
+    // Vue 与浏览器全局
+    'createApp', 'setup', 'ref', 'reactive', 'computed', 'watch', 'watchEffect',
+    'onMounted', 'onUnmounted', 'nextTick', 'requestAnimationFrame', 'cancelAnimationFrame',
+    'document', 'window', 'console', 'localStorage', 'URLSearchParams', 'Blob', 'URL',
+  ])
+  const called = new Set()
+  for (const m of script.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    if (!SKIP.has(m[2])) called.add(m[2])
+  }
+  const undef = [...called].filter((n) => !defined.has(n))
+  check('内部调用的函数都已定义', undef.length === 0, undef.join(' '))
+}
+
 console.log('\n== 直接访问非大盘视图（/console/xxx）会加载数据 ==')
 {
   // 用 hash=#emulators 进入时，watch(view) 不会触发（view 没有「变化」），

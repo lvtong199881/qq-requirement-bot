@@ -1293,6 +1293,18 @@ createApp({
     const groupRows = computed(() => board.value.rows || [])
     const alertCount = computed(() => board.value.alerts || 0)
 
+    async function loadBoard() {
+      loading.value = true
+      try {
+        const r = await fetch('/api/board')
+        board.value = await r.json()
+      } catch {
+        /* 面板自身异常时不打扰用户 */
+      } finally {
+        loading.value = false
+      }
+    }
+
     async function loadInstances() {
       try {
         const r = await fetch('/api/instances')
