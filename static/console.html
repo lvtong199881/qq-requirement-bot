@@ -264,7 +264,7 @@
   .proj-name {
     font-size: 14px; font-weight: 600; padding: 3px 6px; border-radius: 5px;
     border: 1px solid transparent; background: transparent; color: var(--text);
-    outline: none; width: 100%; min-width: 0;
+    outline: none; flex: 1 1 auto; min-width: 0; width: auto;
   }
   .proj-name:hover { border-color: var(--line); }
   .proj-name:focus { border-color: var(--blue); background: var(--bg, transparent); }
@@ -311,7 +311,7 @@
     transition: border-color .12s, box-shadow .12s;
   }
   .emu-card:hover { border-color: var(--blue); box-shadow: 0 2px 10px rgba(0,0,0,.07); }
-  .emu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .emu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
   .emu-badge {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500;
@@ -324,6 +324,7 @@
   .emu-type {
     font-size: 11px; color: var(--dim);
     padding: 1px 7px; border: 1px solid var(--line); border-radius: 4px;
+    flex: 0 0 auto; white-space: nowrap;
   }
   .emu-name {
     font-size: 14px; font-weight: 600; line-height: 1.35; word-break: break-all;
