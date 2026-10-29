@@ -52,16 +52,24 @@ const harmonyAdapter = {
     }
     return {
       ok: true,
-      items: arr.map((x) => ({
-        name: x.name,
-        type: x.deviceType ?? 'unknown',
-        model: x.productModel ?? null,
-        os: x['os.osVersion'] ?? null,
-        running: String(x.isRunning) === 'true',
-        path: x.instancePath ?? null,
-        platform: 'harmony',
-        raw: x,
-      })),
+      items: arr.map((x) => {
+        // 分辨率：单屏的 width/height，没有就退回物理尺寸
+        const w = Number(x['hw.lcd.single.width'] ?? 0)
+        const h = Number(x['hw.lcd.single.height'] ?? 0)
+        const density = Number(x['hw.lcd.density'] ?? 0)
+        return {
+          name: x.name,
+          type: x.deviceType ?? 'unknown',
+          model: x.productModel ?? null,
+          os: x['os.osVersion'] ?? null,
+          resolution: w && h ? `${w}×${h}` : null,
+          density: density || null,
+          running: String(x.isRunning) === 'true',
+          path: x.instancePath ?? null,
+          platform: 'harmony',
+          raw: x,
+        }
+      }),
     }
   },
 
@@ -121,8 +129,16 @@ function avdOsInfo(avdName) {
     const text = readFileSync(ini, 'utf8')
     const sysdir = text.match(/^image\.sysdir\.\d+=(.+)$/m)?.[1]?.trim() ?? ''
     const api = Number(sysdir.match(/android-(\d+)/)?.[1] ?? 0)
-    if (!api) return null
-    return { api, label: ANDROID_VERSIONS[api] ?? `Android API ${api}` }
+    const w = Number(text.match(/^hw\.lcd\.width\s*=\s*(\d+)/m)?.[1] ?? 0)
+    const h = Number(text.match(/^hw\.lcd\.height\s*=\s*(\d+)/m)?.[1] ?? 0)
+    const density = Number(text.match(/^hw\.lcd\.density\s*=\s*(\d+)/m)?.[1] ?? 0)
+    if (!api && !w) return null
+    return {
+      api: api || null,
+      label: api ? (ANDROID_VERSIONS[api] ?? `Android API ${api}`) : null,
+      resolution: w && h ? `${w}×${h}` : null,
+      density: density || null,
+    }
   } catch {
     return null
   }
@@ -171,6 +187,8 @@ const androidAdapter = {
         type: 'phone',
         model: null,
         os: osInfo?.label ?? null,
+        resolution: osInfo?.resolution ?? null,
+        density: osInfo?.density ?? null,
         running: runningByAvd.has(name),
         // 记录 adb 设备名，装包时必须用它（-s emulator-5554）
         deviceId: runningByAvd.get(name) ?? null,

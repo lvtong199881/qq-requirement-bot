@@ -326,6 +326,7 @@
   }
   .emu-meta { display: flex; gap: 8px; font-size: 12px; }
   .emu-meta .mk { color: var(--dim); min-width: 30px; }
+  .emu-dim { color: var(--dim); font-size: 11px; }
   .emu-meta .mv { color: var(--text); word-break: break-all; }
   .emu-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; }
   .emu-actions .menu-btn { padding: 3px 10px; font-size: 12px; }
@@ -550,6 +551,12 @@
             <div class="emu-name" :title="e.name">{{ e.name }}</div>
             <div class="emu-meta">
               <span class="mk">OS</span><span class="mv">{{ e.os || '—' }}</span>
+            </div>
+            <div class="emu-meta" v-if="e.resolution">
+              <span class="mk">分辨率</span>
+              <span class="mv">
+                {{ e.resolution }}<span v-if="e.density" class="emu-dim"> · {{ e.density }} dpi</span>
+              </span>
             </div>
             <div class="emu-meta" v-if="emuPlatformOptions.length > 1">
               <span class="mk">平台</span><span class="mv">{{ emuPlatformLabel(e.platform) }}</span>
