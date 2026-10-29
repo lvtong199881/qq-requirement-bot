@@ -477,25 +477,6 @@
         </p>
       </div>
 
-      <!-- 删除确认 -->
-      <div v-if="projPendingDelete" class="modal-mask" @click.self="projPendingDelete = null">
-        <div class="modal-card proj-modal">
-          <h3 style="color:var(--red)">删除项目</h3>
-          <p style="margin:0 0 4px;font-size:13px;line-height:1.7">
-            删除「{{ projPendingDelete.name }}」？
-          </p>
-          <p style="margin:0;font-size:12px;color:var(--dim);line-height:1.7">
-            配置会从 bot.config.json 里移除，本地克隆的副本还在磁盘上，需要手动清。
-          </p>
-          <div class="proj-modal-actions">
-            <button class="menu-btn" :disabled="projBusy" @click="projPendingDelete = null">取消</button>
-            <button class="menu-btn danger" :disabled="projBusy" @click="projConfirmDelete">
-              {{ projBusy ? '删除中…' : '确认删除' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
       <!-- 新增弹窗 -->
       <div v-if="projModal.open" class="modal-mask" @click.self="projCloseAdd">
         <div class="modal-card proj-modal">
@@ -871,40 +852,36 @@
 
     <!-- 行内菜单 -->
     <div v-if="menu" class="menu" :style="{left: menu.x + 'px', top: menu.y + 'px'}" @click.stop>
-      <button class="danger" @click="askConfirm('stop')">终止</button>
-      <button @click="askConfirm('restart')">重启</button>
+      <button class="danger" @click="askTaskAction('stop')">终止</button>
+      <button @click="askTaskAction('restart')">重启</button>
       <hr>
       <button @click="detail()">详细信息</button>
     </div>
 
     <!-- 操作确认 -->
-    <div v-if="confirmModal" class="mask" @click.self="confirmModal = null">
+    <!-- 通用确认弹窗：所有需要二次确认的操作都走这里 -->
+    <div v-if="confirmDialog" class="mask" @click.self="confirmDialog = null">
       <div class="modal" style="max-width:440px">
         <div class="modal-head">
-          <h2 :style="{color: confirmModal.kind === 'stop' ? 'var(--red)' : 'var(--blue)'}">
-            {{ confirmModal.kind === 'stop' ? '终止任务' : '重启任务' }}
+          <h2 :style="{color: confirmDialog.danger ? 'var(--red)' : 'var(--blue)'}">
+            {{ confirmDialog.title }}
           </h2>
-          <button class="x" @click="confirmModal = null">×</button>
+          <button class="x" @click="confirmDialog = null">×</button>
         </div>
         <div class="modal-body">
-          <p style="margin:0 0 10px;font-size:13px;line-height:1.7">
-            {{ confirmModal.kind === 'stop'
-               ? '正在运行的任务会被立即打断，本回合的产出可能丢失。'
-               : '当前回合会先被中断，然后用「继续」重新起一轮。' }}
+          <p style="margin:0;font-size:13px;line-height:1.7">{{ confirmDialog.message }}</p>
+          <p v-if="confirmDialog.detail"
+             style="margin:8px 0 0;font-size:12px;color:var(--dim);line-height:1.7">
+            {{ confirmDialog.detail }}
           </p>
-          <dl class="kv" style="margin:0">
-            <dt>需求</dt><dd>{{ confirmModal.row.reqId || '（未绑定）' }}</dd>
-            <dt>QQ 群</dt><dd>{{ confirmModal.row.groupName || confirmModal.row.groupId }}</dd>
-            <template v-if="confirmModal.row.activeTurn">
-              <dt>当前回合</dt><dd>已运行 {{ fmtDur(confirmModal.row.activeTurn.elapsedMs) }}</dd>
-            </template>
-          </dl>
           <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:22px">
-            <button class="menu-btn" @click="confirmModal = null">取消</button>
+            <button class="menu-btn" @click="confirmDialog = null">
+              {{ confirmDialog.cancelText || '取消' }}
+            </button>
             <button class="menu-btn"
-                    :class="{ 'btn-danger': confirmModal.kind === 'stop', 'btn-primary': confirmModal.kind === 'restart' }"
-                    @click="doConfirm()">
-              {{ confirmModal.kind === 'stop' ? '确认终止' : '确认重启' }}
+                    :class="{ 'btn-danger': confirmDialog.danger, 'btn-primary': !confirmDialog.danger }"
+                    @click="confirmRun()">
+              {{ confirmDialog.confirmText || '确认' }}
             </button>
           </div>
         </div>
@@ -1020,7 +997,22 @@ createApp({
     const menu = ref(null)
     const modal = ref(null)
     const toast = ref(null)
-    const confirmModal = ref(null)
+    // 通用确认弹窗：{ title, message, detail?, confirmText?, cancelText?, danger?, onConfirm }
+    const confirmDialog = ref(null)
+
+    function askConfirm(opts) {
+      confirmDialog.value = opts
+    }
+
+    async function confirmRun() {
+      const d = confirmDialog.value
+      confirmDialog.value = null
+      try {
+        await d?.onConfirm?.()
+      } catch {
+        /* 各操作自己已经处理过错误提示 */
+      }
+    }
 
     // 设置页
     const adminInput = ref('')
@@ -1065,7 +1057,6 @@ createApp({
     const projBusy = ref(false)
     const projPlatformFilter = ref('')
     const projModal = ref({ open: false, mode: 'add', editingId: null, url: '', name: '', platform: 'harmony', error: '' })
-    const projPendingDelete = ref(null)
 
     const filteredProjects = computed(() =>
       projects.value.filter((r) => !projPlatformFilter.value || r.platform === projPlatformFilter.value),
@@ -1182,15 +1173,17 @@ createApp({
     /** 点删除只弹确认，不直接删 */
     function projAskDelete(r) {
       if (projects.value.length <= 1) return
-      projPendingDelete.value = { id: r.id, name: r.name }
-    }
-
-    async function projConfirmDelete() {
-      const target = projPendingDelete.value
-      if (!target) return
-      const next = projects.value.filter((x) => x.id !== target.id)
-      await projSaveAll(next)
-      projPendingDelete.value = null
+      askConfirm({
+        title: '删除项目',
+        message: `删除「${r.name}」？`,
+        detail: '配置会从 bot.config.json 里移除，本地克隆的副本还在磁盘上，需要手动清。',
+        confirmText: '确认删除',
+        danger: true,
+        onConfirm: async () => {
+          const next = projects.value.filter((x) => x.id !== r.id)
+          await projSaveAll(next)
+        },
+      })
     }
 
     async function projSaveAll(list) {
@@ -1607,16 +1600,24 @@ createApp({
       const r = ev.target.getBoundingClientRect()
       menu.value = { x: Math.min(r.left - 90, window.innerWidth - 160), y: r.bottom + 6, row }
     }
-    function askConfirm(kind) {
+    /** 任务行的「终止/重启」入口 */
+    function askTaskAction(kind) {
       const { row } = menu.value
       menu.value = null
-      confirmModal.value = { kind, row }
+      // 任务的终止/重启也走通用确认
+      const isStop = kind === 'stop'
+      askConfirm({
+        title: isStop ? '终止任务' : '重启任务',
+        message: isStop
+          ? '正在运行的任务会被立即打断，本回合的产出可能丢失。'
+          : '当前回合会先被中断，然后用「继续」重新起一轮。',
+        detail: `需求：${row.reqId || '（未绑定）'}　QQ 群：${row.groupName || row.groupId}`,
+        confirmText: isStop ? '确认终止' : '确认重启',
+        danger: isStop,
+        onConfirm: () => act(kind, row),
+      })
     }
-    async function doConfirm() {
-      const { kind, row } = confirmModal.value
-      confirmModal.value = null
-      await act(kind, row)
-    }
+
     async function act(kind, row) {
       try {
         const r = await fetch('/api/groups/' + kind, {
@@ -1680,11 +1681,11 @@ createApp({
     })
 
     return {
-      view, collapsed, instances, loading, menu, modal, toast, confirmModal,
+      view, collapsed, instances, loading, menu, modal, toast, confirmDialog, askConfirm, confirmRun, askTaskAction,
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
       projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
       loadProjects, projOpenAdd, projOpenEdit, projCloseAdd, projSubmit,
-      projAskDelete, projConfirmDelete, projPendingDelete, platformLabel,
+      projAskDelete, platformLabel,
       emulators, emuPlatform, emuPlatformQuery, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,
@@ -1694,7 +1695,7 @@ createApp({
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
       switchView, loadSettings, saveSettings,
       stageTimeouts, timeoutOptions, timeoutFields, saveTimeouts,
-      badgeOf, fmtDur, fmtTime, fmtClock, openMenu, askConfirm, doConfirm, detail,
+      badgeOf, fmtDur, fmtTime, fmtClock, openMenu, detail,
     }
   },
 }).mount('#app')
