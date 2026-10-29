@@ -295,6 +295,7 @@
   .proj-check { flex-direction: row !important; align-items: center; gap: 6px !important;
                 font-size: 13px; color: var(--dim); cursor: pointer; }
   .proj-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .proj-modal-actions .menu-btn.danger { color: var(--red); border-color: var(--red); }
 
   /* ── 模拟器：卡片网格 ── */
   .emu-grid {
@@ -466,7 +467,7 @@
               <button
                 class="menu-btn danger"
                 :disabled="projBusy || projects.length <= 1"
-                @click="projDel(r.id)"
+                @click="projAskDelete(r)"
               >删除</button>
             </div>
           </div>
@@ -474,6 +475,25 @@
         <p v-else class="desc">
           {{ projects.length ? '没有符合筛选条件的项目。' : '还没有项目。点「新增项目」加一个。' }}
         </p>
+      </div>
+
+      <!-- 删除确认 -->
+      <div v-if="projPendingDelete" class="modal-mask" @click.self="projPendingDelete = null">
+        <div class="modal-card proj-modal">
+          <h3 style="color:var(--red)">删除项目</h3>
+          <p style="margin:0 0 4px;font-size:13px;line-height:1.7">
+            删除「{{ projPendingDelete.name }}」？
+          </p>
+          <p style="margin:0;font-size:12px;color:var(--dim);line-height:1.7">
+            配置会从 bot.config.json 里移除，本地克隆的副本还在磁盘上，需要手动清。
+          </p>
+          <div class="proj-modal-actions">
+            <button class="menu-btn" :disabled="projBusy" @click="projPendingDelete = null">取消</button>
+            <button class="menu-btn danger" :disabled="projBusy" @click="projConfirmDelete">
+              {{ projBusy ? '删除中…' : '确认删除' }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- 新增弹窗 -->
@@ -1045,6 +1065,7 @@ createApp({
     const projBusy = ref(false)
     const projPlatformFilter = ref('')
     const projModal = ref({ open: false, mode: 'add', editingId: null, url: '', name: '', platform: 'harmony', error: '' })
+    const projPendingDelete = ref(null)
 
     const filteredProjects = computed(() =>
       projects.value.filter((r) => !projPlatformFilter.value || r.platform === projPlatformFilter.value),
@@ -1158,10 +1179,18 @@ createApp({
       }
     }
 
-    async function projDel(id) {
+    /** 点删除只弹确认，不直接删 */
+    function projAskDelete(r) {
       if (projects.value.length <= 1) return
-      const next = projects.value.filter((x) => x.id !== id)
+      projPendingDelete.value = { id: r.id, name: r.name }
+    }
+
+    async function projConfirmDelete() {
+      const target = projPendingDelete.value
+      if (!target) return
+      const next = projects.value.filter((x) => x.id !== target.id)
       await projSaveAll(next)
+      projPendingDelete.value = null
     }
 
     async function projSaveAll(list) {
@@ -1655,7 +1684,7 @@ createApp({
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
       projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
       loadProjects, projOpenAdd, projOpenEdit, projCloseAdd, projSubmit,
-      projDel, platformLabel,
+      projAskDelete, projConfirmDelete, projPendingDelete, platformLabel,
       emulators, emuPlatform, emuPlatformQuery, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,
