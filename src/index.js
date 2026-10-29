@@ -701,11 +701,18 @@ function startApi() {
   })
   const tryListen = (port, attempt = 0) => {
     server.once('error', (err) => {
-      if (err.code === 'EADDRINUSE' && attempt < 20) {
-        tryListen(port + 1, attempt + 1)
-      } else {
-        runtime.error(`HTTP API 启动失败：${err.message}`)
+      // 端口被占就直接报错退出，不要自动换端口。
+      // 换端口的结果是：旧进程没死、新进程在 7881 悄悄跑起来，
+      // 两个实例都在连 QQ，都在回消息，而且面板只看得到其中一个。
+      if (err.code === 'EADDRINUSE') {
+        runtime.error(
+          `端口 ${port} 已被占用——多半是上一个实例没退干净。` +
+            `先 pkill -f 'src/index.js' 再启动，不要让它自己换端口。`,
+        )
+        process.exit(1)
       }
+      runtime.error(`HTTP API 启动失败：${err.message}`)
+      if (attempt < 20) tryListen(port + 1, attempt + 1)
     })
     server.listen(port, '127.0.0.1', () => {
       apiPort = server.address().port
