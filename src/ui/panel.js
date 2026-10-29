@@ -447,7 +447,9 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
       // 这是机器级资源，不分实例，所以放在面板这一层统一管理。
       // 模拟器是独立服务，面板只做转发——不重复实现一遍设备管理
       if (path === '/api/emulators' && req.method === 'GET') {
-        const r = await createEmulatorClient(config).list()
+        const platform = url.searchParams.get('platform') ?? undefined
+        const repoId = url.searchParams.get('repo') ?? undefined
+        const r = await createEmulatorClient(config).list({ platform, repoId })
         return json(res, 200, r)
       }
 

@@ -80,11 +80,14 @@ function json(res, code, body) {
 export function startEmulatorService({ port = DEFAULT_PORT, config, log = console.log } = {}) {
   const cfg = config ?? loadConfig()
   // 默认看主仓库的平台；面板可以指定 ?repo=<id> 查另一个仓库的模拟器
-  const managerFor = (repoId) => {
-    const repo = repoId
-      ? (cfg.repos ?? []).find((r) => r.id === repoId)
-      : cfg.primaryRepo
-    const plat = repo?.platform ?? cfg.platform
+  /**
+   * 按平台或仓库取管理器。
+   * 只给 platform 时直接按平台查（面板要看「安卓有哪些模拟器」不需要先有安卓仓库）；
+   * 给 repoId 时按那个仓库的平台查。
+   */
+  const managerFor = ({ repoId, platform } = {}) => {
+    const repo = repoId ? (cfg.repos ?? []).find((r) => r.id === repoId) : null
+    const plat = platform || repo?.platform || cfg.primaryRepo?.platform || cfg.platform
     // 工具是按平台配的：鸿蒙有 hdc，Android 有 adb/emulator/avdmanager
     return createEmulatorManager({ platform: plat, tools: cfg.tools?.[plat] ?? {}, bootWaitMs: cfg.bootWaitMs })
   }
@@ -97,9 +100,9 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
    */
   const leases = new Map()
 
-  /** 有效设备 = 运行中 且 没被别人租走 */
-  function leaseableView() {
-    return mgr.list().items.map((e) => ({
+  /** 有效设备 = 运行中 且 没被别人租走（用传进来的管理器，别用全局那个） */
+  function leaseableView(m = mgr) {
+    return m.list().items.map((e) => ({
       ...e,
       leased: leases.has(e.name),
       lease: leases.get(e.name) ?? null,
@@ -132,9 +135,14 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
       // ── 列表 ──
       if (req.method === 'GET' && path === '/api/emulators') {
         const repoId = url.searchParams.get('repo') ?? undefined
-        const m = repoId ? managerFor(repoId) : mgr
+        const platform = url.searchParams.get('platform') ?? undefined
+        const m = repoId || platform ? managerFor({ repoId, platform }) : mgr
         const list = m.list()
-        return json(res, 200, { ...list, repo: repoId ?? cfg.primaryRepo?.id, items: leaseableView() })
+        return json(res, 200, {
+          ...list,
+          repo: repoId ?? cfg.primaryRepo?.id,
+          items: leaseableView(m),
+        })
       }
 
       // ── 启停与清理 ──
@@ -176,6 +184,9 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
         const stage = String(body.stage ?? '')
         if (!reqId) return json(res, 400, { ok: false, error: '缺少 reqId' })
 
+        // 按平台/仓库挑设备：安卓需求不该拿到鸿蒙模拟器
+        const leaseMgr = managerFor({ platform: body.platform, repoId: body.repoId })
+
         // 同一个需求重复申请：还回原来那台，不要多占
         for (const [deviceId, info] of leases) {
           if (info.reqId === reqId) {
@@ -183,9 +194,9 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
           }
         }
 
-        const candidates = mgr.list().items.filter((e) => e.running && !leases.has(e.name))
+        const candidates = leaseMgr.list().items.filter((e) => e.running && !leases.has(e.name))
         if (!candidates.length) {
-          const running = mgr.list().items.filter((e) => e.running).length
+          const running = leaseMgr.list().items.filter((e) => e.running).length
           return json(res, 409, {
             ok: false,
             error: running ? `${running} 台设备都在忙` : '没有运行中的设备',

@@ -54,9 +54,13 @@ export class EmulatorClient {
     return this.#req('GET', '/api/capabilities')
   }
 
-  /** 全部模拟器（含运行状态和租约） */
-  list() {
-    return this.#req('GET', '/api/emulators')
+  /** 全部模拟器（含运行状态和租约）。可按平台或仓库过滤 */
+  list({ platform, repoId } = {}) {
+    const q = new URLSearchParams()
+    if (platform) q.set('platform', platform)
+    if (repoId) q.set('repo', repoId)
+    const qs = q.toString()
+    return this.#req('GET', `/api/emulators${qs ? '?' + qs : ''}`)
   }
 
   start(name, { reset = false } = {}) {
@@ -79,8 +83,8 @@ export class EmulatorClient {
    * 申请一台可用设备。
    * 返回 { ok:true, deviceId } 或 { ok:false, error }（没有可用设备时 status=409）。
    */
-  lease({ reqId, stage }) {
-    return this.#req('POST', '/api/lease', { reqId, stage })
+  lease({ reqId, stage, platform, repoId }) {
+    return this.#req('POST', '/api/lease', { reqId, stage, platform, repoId })
   }
 
   release(deviceId) {

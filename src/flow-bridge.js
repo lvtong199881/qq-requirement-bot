@@ -397,7 +397,12 @@ export function createFlowBridge(deps) {
         // 两个回合同时往同一台设备装包，会出现「包被覆盖」「测试跑到别人的版本上」
         // 这类极难排查的问题，而且完全没有报错。
         if (cp.needsDevice && !deviceSlots.has(groupId)) {
-          const granted = await emulator.lease({ reqId: st.flow.reqId, stage: cp.id })
+          // 带平台：安卓需求不该拿到鸿蒙模拟器
+          const granted = await emulator.lease({
+            reqId: st.flow.reqId,
+            stage: cp.id,
+            platform: platform.id,
+          })
           if (!granted.ok) {
             throw new Error(
               `「${cp.label}」需要设备，但模拟器服务没给：${granted.error}` +

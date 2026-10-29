@@ -534,9 +534,10 @@
           <div class="emu-filters">
             <label class="ff">
               <span class="fl">平台</span>
-              <select v-model="emuPlatformDraft">
-                <option value="">全部</option>
-                <option v-for="pf in emuPlatformOptions" :key="pf.value" :value="pf.value">{{ pf.label }}</option>
+              <select v-model="emuPlatformQuery" @change="loadEmulators">
+                <option value="harmony">鸿蒙</option>
+                <option value="android">Android</option>
+                <option value="ios">iOS</option>
               </select>
             </label>
             <label class="ff">
@@ -1189,6 +1190,8 @@ createApp({
     // ── 模拟器 ──
     const emulators = ref([])
     const emuPlatform = ref('鸿蒙')
+    // 模拟器页只看一个平台：不同平台的模拟器管理方式差得远
+    const emuPlatformQuery = ref('harmony')
     const emuError = ref('')
     const emuBusy = ref(false)
     const runningEmuCount = computed(() => emulators.value.filter((e) => e.running).length)
@@ -1250,7 +1253,7 @@ createApp({
 
     async function loadEmulators() {
       try {
-        const r = await fetch('/api/emulators')
+        const r = await fetch('/api/emulators?platform=' + encodeURIComponent(emuPlatformQuery.value))
         const d = await r.json()
         if (d.ok === false) {
           emuError.value = d.error || '读取模拟器失败'
@@ -1657,7 +1660,7 @@ createApp({
       projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
       loadProjects, projOpenAdd, projCloseAdd, projSubmitAdd, projRename,
       projSetPrimaryById, projDel, platformLabel,
-      emulators, emuPlatform, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
+      emulators, emuPlatform, emuPlatformQuery, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,
       emuApplyFilter, emuClearFilter, emuPlatformLabel,
