@@ -265,7 +265,6 @@
     font-size: 14px; font-weight: 600; flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .proj-hint { font-size: 11px; color: var(--dim); opacity: .75; }
   .proj-url {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     max-width: 100%; display: block;
@@ -486,7 +485,6 @@
               <span class="fl">仓库地址</span>
               <input v-model="projModal.url" :disabled="projModal.mode === 'edit'"
                      placeholder="git@github.com:org/repo.git" />
-              <span v-if="projModal.mode === 'edit'" class="proj-hint">仓库地址建好就不能改了，改了本地副本要重下</span>
             </label>
             <label>
               <span class="fl">项目名</span>
