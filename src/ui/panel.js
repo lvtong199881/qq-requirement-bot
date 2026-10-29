@@ -395,10 +395,12 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           if (ids.has(id)) return json(res, 400, { ok: false, error: `id 重复：${id}` })
           ids.add(id)
 
-          const p = String(r.path ?? '').trim()
-          if (!p) return json(res, 400, { ok: false, error: `${id} 缺少路径` })
-          const full = p.startsWith('~') ? p.replace('~', process.env.HOME ?? '') : p
-          if (!existsSync(full)) return json(res, 400, { ok: false, error: `${id} 的路径不存在：${full}` })
+          // 只认 git 链接：本地目录由 bot 克隆，不要求用户先在每台机器上 clone
+          const url = String(r.url ?? r.path ?? '').trim()
+          if (!url) return json(res, 400, { ok: false, error: `${id} 缺少 git 链接` })
+          if (!/^(https?:\/\/|git@|ssh:\/\/)/.test(url)) {
+            return json(res, 400, { ok: false, error: `${id} 的链接不像 git 地址：${url}` })
+          }
 
           const plat = String(r.platform ?? 'harmony')
           if (!['harmony', 'android', 'ios'].includes(plat)) {
@@ -414,7 +416,7 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           const onDisk = JSON.parse(readFileSync(cfgPath, 'utf8'))
           onDisk.repos = repos.map((r, i) => ({
             id: String(r.id).trim(),
-            path: String(r.path).trim(),
+            url: String(r.url ?? r.path ?? '').trim(),
             platform: String(r.platform ?? 'harmony'),
             ...(r.primary === true || (primaries === 0 && i === 0) ? { primary: true } : {}),
           }))

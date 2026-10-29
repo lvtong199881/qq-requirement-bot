@@ -11,7 +11,7 @@
  * 所以改用 `git init --bare` + 显式配置。
  */
 import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { gitRun } from './git.js'
 
 /** 裸仓库是否已初始化（看 HEAD 在不在） */
@@ -175,6 +175,61 @@ function isUsableWorkspace(path) {
   if (!existsSync(path)) return false
   if (!existsSync(join(path, '.git', 'HEAD'))) return false
   return gitRun(path, ['rev-parse', '--verify', '--quiet', 'HEAD']).ok
+}
+
+
+/**
+ * 确保本地有一份仓库的「参考检出」，用来读代码、检测主分支、找构建产物。
+ *
+ * 配置里只给 git 链接就够了——不该要求每台机器先手动 clone 一遍。
+ * 有这个函数之后，接入新项目就是「填个 URL」，剩下的 bot 自己干。
+ *
+ * 不是工作区：工作区是每个需求一份（createWorktree），这里每个仓库一份，
+ * 只读用途，可以随时 fetch 更新。
+ */
+export function ensureCheckout({ checkoutDir, url, mainBranch }) {
+  if (existsSync(join(checkoutDir, '.git'))) {
+    // 已经有了：拉一下最新，拉不到就用本地的（离线时不该阻塞整个流程）
+    const branch = mainBranch ?? detectMainBranch(checkoutDir) ?? 'main'
+    const fetched = gitRun(checkoutDir, ['fetch', '--quiet', 'origin', branch])
+    if (fetched.ok) {
+      gitRun(checkoutDir, ['reset', '--hard', `origin/${branch}`])
+      return { ok: true, updated: true, dir: checkoutDir, mainBranch: branch }
+    }
+    return { ok: true, updated: false, dir: checkoutDir, mainBranch: branch, note: '远端不可达，用本地副本' }
+  }
+
+  try {
+    mkdirSync(dirname(checkoutDir), { recursive: true })
+  } catch (err) {
+    return { ok: false, error: `创建目录失败：${err.message}` }
+  }
+
+  let r = gitRun(dirname(checkoutDir), ['clone', '--quiet', url, checkoutDir])
+  if (!r.ok && /proxy|SSL|connect|timeout|resolve host/i.test(r.error ?? '')) {
+    // 本机 git 配了代理但代理不通，是最常见的克隆失败原因。
+    // 直连再试一次，能通就不用管用户的代理设置。
+    const direct = gitRun(dirname(checkoutDir), ['-c', 'http.proxy=', '-c', 'https.proxy=', 'clone', '--quiet', url, checkoutDir])
+    if (direct.ok) {
+      return {
+        ok: true,
+        created: true,
+        dir: checkoutDir,
+        mainBranch,
+        note: '本机 git 代理不可用，已改用直连',
+      }
+    }
+    r = direct
+  }
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: `克隆失败：${r.error}（如果是网络问题，检查本机 git 的 http.proxy 设置）`,
+    }
+  }
+
+  const branch = mainBranch ?? detectMainBranch(checkoutDir) ?? 'main'
+  return { ok: true, created: true, dir: checkoutDir, mainBranch: branch }
 }
 
 /**

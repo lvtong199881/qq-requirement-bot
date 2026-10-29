@@ -150,18 +150,31 @@ export function loadConfig(configPath) {
   }
 
   const PLATFORM_IDS = ['harmony', 'android', 'ios']
-  const repos = raw.repos.map((r, i) => ({
-    id: String(r.id ?? `repo${i}`),
-    path: resolve(expandHome(r.path ?? '')),
-    primary: r.primary === true || i === 0,
-    // 平台是仓库属性，不是全局属性：同一个团队里鸿蒙、安卓仓库并存很正常
-    platform: PLATFORM_IDS.includes(r.platform) ? r.platform : (raw.platform ?? 'harmony'),
-  }))
+  const checkoutRoot = expandHome(raw.checkoutRoot?.trim?.() || '~/.qq-bot/checkouts')
+  const repos = raw.repos.map((r, i) => {
+    const id = String(r.id ?? `repo${i}`)
+    // 配 git 链接就够了：本地目录由 bot 克隆出来，不要求每台机器先手动 clone。
+    // path 仍然认（老配置、或指向一个已有的本地仓库），两者都没有就报错。
+    const url = typeof r.url === 'string' && r.url.trim() ? r.url.trim() : null
+    const path = r.path ? resolve(expandHome(r.path)) : url ? join(checkoutRoot, id) : null
+    if (!path) throw new Error(`repos 里的 ${id} 既没有 url 也没有 path`)
+    return {
+      id,
+      url,
+      path,
+      primary: r.primary === true || i === 0,
+      // 平台是仓库属性，不是全局属性：同一个团队里鸿蒙、安卓仓库并存很正常
+      platform: PLATFORM_IDS.includes(r.platform) ? r.platform : (raw.platform ?? 'harmony'),
+    }
+  })
   if (repos.filter((r) => r.primary).length > 1) {
     throw new Error('repos 里只能有一个 primary')
   }
   for (const r of repos) {
-    if (!r.path || !existsSync(r.path)) throw new Error(`repos 里的 ${r.id} 路径不存在：${r.path}`)
+    // 配了 url 的还没克隆也算合法；只有纯本地路径才要求必须存在
+    if (!r.url && (!r.path || !existsSync(r.path))) {
+      throw new Error(`repos 里的 ${r.id} 路径不存在：${r.path}`)
+    }
   }
 
   const primaryRepo = repos.find((r) => r.primary) ?? repos[0]
@@ -181,7 +194,10 @@ export function loadConfig(configPath) {
     r.repoDir = single ? repoBase : join(reposRoot, `${r.id}.git`)
     r.worktreeRoot = single ? wtBase : join(wtRoot, `${r.id}`)
   }
-  if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
+  // 主仓库还没克隆时不做目录校验（第一次用到会 clone）；配了 url 就合法
+  if (primaryRepo.url && !existsSync(projectDir)) {
+    // 交给 ensureCheckout
+  } else if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
     throw new Error(`主仓库路径不存在或不是目录：${projectDir}`)
   }
 
@@ -192,6 +208,7 @@ export function loadConfig(configPath) {
     projectDir,
     repos,
     primaryRepo,
+    checkoutRoot,
     skillDir: resolveSkillDir(raw.skillDir),
     dshBin: raw.dshBin || 'dsh',
     profile: raw.profile || 'qqbot',

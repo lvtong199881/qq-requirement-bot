@@ -608,6 +608,22 @@ async function restartGroup(groupId) {
   return { ok: true, message: '已重启' }
 }
 
+/**
+ * 配了 git 链接但本地还没 clone 的仓库，启动时补上。
+ * 失败不阻塞启动——用户可能只是暂时没网，或者那个仓库还没建。
+ */
+async function ensureCheckouts() {
+  const { ensureCheckout } = await import('./infra/repo.js')
+  for (const repo of config.repos ?? []) {
+    if (!repo.url) continue
+    if (existsSync(repo.path)) continue
+    runtime.info(`[仓库] 首次克隆 ${repo.id}：${repo.url}`)
+    const r = ensureCheckout({ checkoutDir: repo.path, url: repo.url })
+    if (r.ok) runtime.info(`[仓库] ${repo.id} 就绪（${r.created ? '新克隆' : '已更新'}）`)
+    else runtime.warn(`[仓库] ${repo.id} 克隆失败：${r.error}（用到时再试）`)
+  }
+}
+
 // 实例注册 + HTTP 服务
 const registry = new InstanceRegistry(config.repoRoot)
 let apiPort = 0
@@ -715,6 +731,7 @@ function startApi() {
 
 startApi()
 
+await ensureCheckouts()
 bot.connect()
 
 const shutdown = () => {

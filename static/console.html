@@ -421,8 +421,8 @@
               <span class="emu-type">{{ r.platform }}</span>
             </div>
             <div class="emu-meta">
-              <span class="mk">路径</span>
-              <input class="proj-path" v-model="r.path" placeholder="/path/to/repo" />
+              <span class="mk">仓库</span>
+              <input class="proj-path" v-model="r.url" placeholder="git@github.com:org/repo.git" />
             </div>
             <div class="emu-meta">
               <span class="mk">平台</span>
@@ -985,7 +985,8 @@ createApp({
         projError.value = ''
         projects.value = (d.repos || []).map((x, i) => ({
           id: x.id,
-          path: x.path,
+          // 有 url 就显示 url；纯本地路径的老配置显示路径
+          url: x.url || x.path || '',
           platform: x.platform || 'harmony',
           primary: x.primary === true || i === 0,
         }))
@@ -998,7 +999,7 @@ createApp({
       // 第一个项目自动当主项目
       projects.value.push({
         id: '',
-        path: '',
+        url: '',
         platform: 'harmony',
         primary: projects.value.length === 0,
       })
@@ -1022,7 +1023,7 @@ createApp({
       const ids = projects.value.map((r) => r.id.trim())
       if (ids.some((x) => !x)) { projError.value = '每个项目都要填 id'; return }
       if (new Set(ids).size !== ids.length) { projError.value = 'id 不能重复'; return }
-      if (projects.value.some((r) => !r.path.trim())) { projError.value = '每个项目都要填路径'; return }
+      if (projects.value.some((r) => !r.url.trim())) { projError.value = '每个项目都要填 git 链接'; return }
 
       projBusy.value = true
       try {
