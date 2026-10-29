@@ -130,6 +130,42 @@ console.log('\n== 跨文件调用必须先 import ==')
   }
 }
 
+console.log('\n== Node 内置模块的具名导入 ==')
+{
+  // readFileSync 这种「忘了从 node:fs 里导进来」的错误，跨文件检查抓不到——
+  // 它不是别处导出的函数。这里反向核对：文件里用到的内置 API，
+  // 必须在某个 import { ... } 里出现过。
+  // 只查「一眼就是内置」的那些：resolve / join / spawn 太通用
+  // （resolve 常作 Promise 回调参数、spawn 可能是局部函数），放进来全是误报。
+  const BUILTIN_APIS = [
+    'readFileSync', 'writeFileSync', 'existsSync', 'mkdirSync', 'readdirSync', 'statSync',
+    'rmSync', 'cpSync', 'unlinkSync', 'renameSync', 'appendFileSync', 'createReadStream', 'createWriteStream',
+    'execSync', 'execFileSync', 'createHash', 'randomUUID',
+  ]
+  const missing = []
+  for (const file of files) {
+    const src = readFileSync(file, 'utf8')
+    const rel = file.slice(root.length + 1)
+    // 收集所有 import 出来的名字
+    const imported = new Set()
+    for (const m of src.matchAll(/\bimport\s*\{([^}]+)\}\s*from/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/).pop().trim()
+        if (name) imported.add(name)
+      }
+    }
+    for (const m of src.matchAll(/\bimport\s+\{([^}]+)\}\s*=\s*require/g)) {
+      for (const part of m[1].split(',')) imported.add(part.trim())
+    }
+    for (const api of BUILTIN_APIS) {
+      // 用到了（后面跟左括号）但没在 import 里
+      const used = new RegExp(`(^|[^.\\w$])${api}\\s*\\(`, 'm').test(src)
+      if (used && !imported.has(api)) missing.push(`${rel}: ${api}`)
+    }
+  }
+  check('内置 API 都已导入', missing.length === 0, missing.join(' | '))
+}
+
 console.log('\n== 关键模块能被导入 ==')
 {
   const mods = [

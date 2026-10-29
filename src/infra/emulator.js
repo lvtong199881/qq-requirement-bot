@@ -9,7 +9,7 @@
  * iOS 走 xcrun simctl。上层只认 { name, type, running, platform } 这套统一结构。
  */
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const DEFAULT_BIN = {
@@ -101,6 +101,33 @@ const harmonyAdapter = {
 }
 
 /** Android：emulator -list-avds + adb 判在线 */
+/** API level → 对外叫法，取常见的；没收录的退回 API n */
+const ANDROID_VERSIONS = {
+  21: 'Android 5.0', 22: 'Android 5.1', 23: 'Android 6.0', 24: 'Android 7.0',
+  25: 'Android 7.1', 26: 'Android 8.0', 27: 'Android 8.1', 28: 'Android 9',
+  29: 'Android 10', 30: 'Android 11', 31: 'Android 12', 32: 'Android 12L',
+  33: 'Android 13', 34: 'Android 14', 35: 'Android 15', 36: 'Android 16',
+}
+
+/**
+ * 从 AVD 的 config.ini 里读系统版本。
+ * image.sysdir.1=system-images/android-33/google_apis/arm64-v8a/ → API 33
+ */
+function avdOsInfo(avdName) {
+  try {
+    const home = process.env.HOME || ''
+    const ini = join(home, '.android', 'avd', `${avdName}.avd`, 'config.ini')
+    if (!existsSync(ini)) return null
+    const text = readFileSync(ini, 'utf8')
+    const sysdir = text.match(/^image\.sysdir\.\d+=(.+)$/m)?.[1]?.trim() ?? ''
+    const api = Number(sysdir.match(/android-(\d+)/)?.[1] ?? 0)
+    if (!api) return null
+    return { api, label: ANDROID_VERSIONS[api] ?? `Android API ${api}` }
+  } catch {
+    return null
+  }
+}
+
 const androidAdapter = {
   label: 'Android',
 
@@ -137,17 +164,20 @@ const androidAdapter = {
 
     return {
       ok: true,
-      items: names.map((name) => ({
+      items: names.map((name) => {
+        const osInfo = avdOsInfo(name)
+        return {
         name,
         type: 'phone',
         model: null,
-        os: null,
+        os: osInfo?.label ?? null,
         running: runningByAvd.has(name),
         // 记录 adb 设备名，装包时必须用它（-s emulator-5554）
         deviceId: runningByAvd.get(name) ?? null,
         path: null,
         platform: 'android',
-      })),
+        }
+      }),
     }
   },
 
