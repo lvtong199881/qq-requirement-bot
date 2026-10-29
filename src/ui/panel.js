@@ -388,7 +388,6 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
 
         // 校验：id 唯一、path 存在、平台合法、primary 唯一
         const ids = new Set()
-        let primaries = 0
         for (const r of repos) {
           // id 可以空（新增的项目），name 和 url 必须有
           const id = String(r.id ?? '').trim()
@@ -409,9 +408,7 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           if (!['harmony', 'android', 'ios'].includes(plat)) {
             return json(res, 400, { ok: false, error: `${label} 的平台不认识：${plat}` })
           }
-          if (r.primary === true) primaries++
         }
-        if (primaries > 1) return json(res, 400, { ok: false, error: '只能有一个主项目' })
         if (repos.length === 0) return json(res, 400, { ok: false, error: '至少保留一个项目' })
 
         try {
@@ -426,7 +423,6 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
               name,
               url: String(r.url ?? r.path ?? '').trim(),
               platform: String(r.platform ?? 'harmony'),
-              ...(r.primary === true || (primaries === 0 && i === 0) ? { primary: true } : {}),
             }
           })
           writeFileSync(cfgPath, JSON.stringify(onDisk, null, 2) + '\n')

@@ -143,6 +143,29 @@ export function createFlowBridge(deps) {
       return
     }
 
+    // 上一条消息因为「没说清是哪个项目」被拦下了：这条是选择
+    if (st.pendingRepoChoice) {
+      const pending = st.pendingRepoChoice
+      const repos = (config.repos ?? []).filter((r) => pending.candidates.includes(r.id))
+      const raw = String(text ?? '').trim()
+      const byIndex = /^\d+$/.test(raw) ? repos[Number(raw) - 1] : null
+      const byName = repos.find((r) => r.name && r.name.toLowerCase() === raw.toLowerCase())
+      const chosen = byIndex ?? byName
+
+      if (!chosen) {
+        await sendPlain(
+          groupId,
+          `没认出「${raw}」。回复序号或项目名：\n` +
+            repos.map((r, i) => `${i + 1}. ${r.name}`).join('\n'),
+          { replyTo },
+        )
+        return
+      }
+      delete st.pendingRepoChoice
+      store.save(groupId, st)
+      return startNewRequirement({ groupId, text: pending.text, replyTo, st, initiator })
+    }
+
     const flow = st.flow ?? null
 
     // 没绑需求：这条就是需求描述
@@ -214,9 +237,56 @@ export function createFlowBridge(deps) {
     }
   }
 
+  /**
+   * 这条需求该落在哪个仓库？
+   *
+   * 不设「默认项目」——改哪个 app 由需求内容决定。按项目名匹配需求文本，
+   * 匹配不到、又配了多个项目时问用户，绝不猜：猜错了整条需求会跑在错的仓库上，
+   * 等发现时已经烧掉几十分钟。
+   *
+   * @returns {{ok:true, repo:object} | {ok:false, reason:string, candidates:object[]}}
+   */
+  function pickRepoFor(text) {
+    const repos = config.repos ?? []
+    if (!repos.length) return { ok: false, reason: '没有配置任何项目', candidates: [] }
+    if (repos.length === 1) return { ok: true, repo: repos[0] }
+
+    const lower = String(text ?? '').toLowerCase()
+    // 项目名出现在需求里就算命中；多个命中取名字最长的（更具体）
+    const hits = repos
+      .filter((r) => r.name && lower.includes(String(r.name).toLowerCase()))
+      .sort((a, b) => b.name.length - a.name.length)
+    if (hits.length) return { ok: true, repo: hits[0], matchedBy: 'name' }
+
+    return { ok: false, reason: '需求里没提是哪个项目', candidates: repos }
+  }
+
   async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
     // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
     const reqId = makeReqId()
+
+    const picked = pickRepoFor(text)
+    if (!picked.ok) {
+      // 多个项目又没提到具体哪个：给用户选，别自己猜
+      const list = picked.candidates
+        .map((r, i) => `${i + 1}. ${r.name}（${platformOf(r).label}）`)
+        .join('\n')
+      await sendPlain(
+        groupId,
+        `${picked.reason}。这条需求属于哪个项目？回复序号或项目名：\n${list}`,
+        { replyTo },
+      )
+      // 记下来：下一条消息用来选项目，不当成新需求
+      st.pendingRepoChoice = {
+        reqId,
+        text,
+        candidates: picked.candidates.map((r) => r.id),
+        at: Date.now(),
+      }
+      store.save(groupId, st)
+      return
+    }
+    st.projectDir = picked.repo.path
     // 暂存区建在项目内：子进程沙箱只能写会话工作区。
     // 用本地 exclude 忽略它，接入方不需要改 .gitignore。
     ensureScratchIgnored(st.projectDir)

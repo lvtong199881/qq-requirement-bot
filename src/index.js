@@ -546,7 +546,8 @@ async function buildSnapshot({ full = true } = {}) {
       profile: config.profile,
       botQQ: config.bot.qq,
       botName: config.bot.name,
-      projectDir: config.projectDir,
+      // 群不再绑死项目：改哪个仓库由每条需求的内容决定（见 pickRepoFor）
+      projectDir: null,
       // 团队化改造后新增的三处路径与并发上限，面板要能看到实际用的是哪
       repoDir: config.repoDir,
       worktreeRoot: config.worktreeRoot,
@@ -712,6 +713,7 @@ function startApi() {
         pid: process.pid,
         port: apiPort,
         profile: config.profile,
+        // 注册用主仓库路径：这是「实例在哪跑」的标识，和需求落哪个仓库无关
         projectDir: config.projectDir,
         logFile: pathJoin(config.repoRoot, '.logs'),
         gitCommit: process.env.GIT_COMMIT ?? null,

@@ -470,13 +470,6 @@
               <span class="mv"><code>{{ r.id }}</code></span>
             </div>
             <div class="emu-actions">
-              <span v-if="r.primary" class="proj-badge">主项目</span>
-              <button
-                v-else
-                class="menu-btn"
-                :disabled="projBusy"
-                @click="projSetPrimaryById(r.id)"
-              >设为主项目</button>
               <button
                 class="menu-btn danger"
                 :disabled="projBusy || projects.length <= 1"
@@ -510,9 +503,6 @@
                 <option value="android">Android</option>
                 <option value="ios">iOS</option>
               </select>
-            </label>
-            <label class="proj-check">
-              <input type="checkbox" v-model="projModal.primary" /> 设为主项目
             </label>
           </div>
           <div v-if="projModal.error" class="emu-error">{{ projModal.error }}</div>
@@ -1098,8 +1088,7 @@ createApp({
       projModal.value = {
         open: true, url: '', name: '',
         platform: 'harmony',
-        // 第一个项目自动当主项目
-        primary: projects.value.length === 0,
+  
         error: '',
       }
     }
@@ -1122,7 +1111,7 @@ createApp({
             id: r.id, name: r.name, url: r.url, platform: r.platform,
             primary: m.primary ? false : r.primary,
           })),
-          { name, url, platform: m.platform, primary: m.primary || projects.value.length === 0 },
+          { name, url, platform: m.platform, primary: projects.value.length === 0 },
         ]
         const r = await fetch('/api/projects/save', {
           method: 'POST',
@@ -1147,14 +1136,6 @@ createApp({
       const next = projects.value.map((x) => ({
         id: x.id, name: x.id === r.id ? name : x.name, url: x.url,
         platform: x.platform, primary: x.primary,
-      }))
-      await projSaveAll(next)
-    }
-
-    async function projSetPrimaryById(id) {
-      const next = projects.value.map((x) => ({
-        id: x.id, name: x.name, url: x.url,
-        platform: x.platform, primary: x.id === id,
       }))
       await projSaveAll(next)
     }
@@ -1659,7 +1640,7 @@ createApp({
       instanceCount, groupCount, alertCount, groupRows, poolRows, shortPath,
       projects, projError, projBusy, projPlatformFilter, projModal, filteredProjects,
       loadProjects, projOpenAdd, projCloseAdd, projSubmitAdd, projRename,
-      projSetPrimaryById, projDel, platformLabel,
+      projDel, platformLabel,
       emulators, emuPlatform, emuPlatformQuery, emuError, emuBusy, runningEmuCount, emuAct, loadEmulators,
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,

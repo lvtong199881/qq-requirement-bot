@@ -178,14 +178,13 @@ export function loadConfig(configPath) {
       name,
       url,
       path,
-      primary: r.primary === true || i === 0,
+      // 兼容旧字段；真正的项目选择由需求内容决定，这里只是列表顺序
+      primary: i === 0,
       // 平台是仓库属性，不是全局属性：同一个团队里鸿蒙、安卓仓库并存很正常
       platform: PLATFORM_IDS.includes(r.platform) ? r.platform : (raw.platform ?? 'harmony'),
     }
   })
-  if (repos.filter((r) => r.primary).length > 1) {
-    throw new Error('repos 里只能有一个 primary')
-  }
+
   for (const r of repos) {
     // 配了 url 的还没克隆也算合法；只有纯本地路径才要求必须存在
     if (!r.url && (!r.path || !existsSync(r.path))) {
@@ -193,7 +192,8 @@ export function loadConfig(configPath) {
     }
   }
 
-  const primaryRepo = repos.find((r) => r.primary) ?? repos[0]
+  // 第一个仓库只用于兜底（实例标识、日志），不再代表「默认项目」
+  const primaryRepo = repos[0]
   // projectDir 是从 repos 派生的，不是独立配置项：下游大量代码按单仓库写，
   // 主仓库的路径就继续叫这个名，省得全项目改一遍。
   const projectDir = primaryRepo.path
