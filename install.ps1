@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Windows 一键安装：环境检查、dsh profile、bot.config.json、自检。
