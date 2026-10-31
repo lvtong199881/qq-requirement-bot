@@ -85,10 +85,12 @@ function Ask($m, $default) {
 }
 
 # 上下键选择列表，Enter 确认。返回序号，Esc/取消返回 -1。
-# 非交互环境（输入被重定向）自动降级成数字选择，避免 ReadKey 直接崩。
+# 每帧整屏重绘：SetCursorPosition 在窗口底部会越界（输出多了之后光标已经贴底），
+# 而且选项数量不固定，整屏重绘最省心。
 function Select-Item($title, $items, $defaultIndex = 0) {
   if (-not $items -or $items.Count -eq 0) { return -1 }
 
+  # 非交互环境（输入被重定向）降级成数字选择，避免 ReadKey 直接崩
   if ([Console]::IsInputRedirected) {
     Write-Host "  $title"
     for ($i = 0; $i -lt $items.Count; $i++) {
@@ -103,31 +105,31 @@ function Select-Item($title, $items, $defaultIndex = 0) {
   }
 
   $idx = [Math]::Min([Math]::Max($defaultIndex, 0), $items.Count - 1)
-  $top = [Console]::CursorTop
-  Write-Host "  $title" -ForegroundColor DarkGray
-
   while ($true) {
+    Clear-Host
+    Write-Host ''
+    Write-Host "  $title" -ForegroundColor DarkGray
+    Write-Host ''
     for ($i = 0; $i -lt $items.Count; $i++) {
-      [Console]::SetCursorPosition(0, $top + 1 + $i)
-      $prefix = if ($i -eq $idx) { '  > ' } else { '    ' }
-      $line = $prefix + $items[$i]
-      $pad = [Math]::Max(0, [Console]::WindowWidth - 1 - $line.Length)
       if ($i -eq $idx) {
-        Write-Host ($line + (' ' * $pad)) -ForegroundColor Cyan -NoNewline
+        Write-Host ("  > " + $items[$i]) -ForegroundColor Cyan
       } else {
-        Write-Host ($line + (' ' * $pad)) -ForegroundColor Gray -NoNewline
+        Write-Host ("    " + $items[$i]) -ForegroundColor Gray
       }
     }
+    Write-Host ''
+    Write-Host '  ↑/↓ 选择，Enter 确认，Esc 取消' -ForegroundColor DarkGray
+
     $key = [Console]::ReadKey($true)
     if ($key.Key -eq [ConsoleKey]::UpArrow) {
       $idx = ($idx - 1 + $items.Count) % $items.Count
     } elseif ($key.Key -eq [ConsoleKey]::DownArrow) {
       $idx = ($idx + 1) % $items.Count
     } elseif ($key.Key -eq [ConsoleKey]::Enter) {
-      [Console]::SetCursorPosition(0, $top + 1 + $items.Count)
+      Clear-Host
       return $idx
     } elseif ($key.Key -eq [ConsoleKey]::Escape) {
-      [Console]::SetCursorPosition(0, $top + 1 + $items.Count)
+      Clear-Host
       return -1
     }
   }
