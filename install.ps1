@@ -264,7 +264,6 @@ if (Test-Path $profileDst) {
 Step '4/5 bot.config.json'
 
 # 模型配置：预置供应商 + 上下键选择。
-# DeepSeek 有官方 /models 接口，动态拉；opencode-go 的目录在 dsh 内置配置里，用固定列表。
 # 两家都是 OpenAI 兼容接口，模型列表统一走 GET {baseUrl}/models。
 $providerInfo = @{
   'deepseek' = @{
