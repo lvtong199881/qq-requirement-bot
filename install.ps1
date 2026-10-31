@@ -13,6 +13,9 @@
 .PARAMETER Qq
   你的 QQ 号，写进 superAdmin。
 
+.PARAMETER DshPath
+  dsh 可执行文件的完整路径。不填则自动从 PATH 和 DeepSeek Harness 安装目录里找。
+
 .PARAMETER PanelPort
   面板端口，默认 7878。
 
@@ -35,6 +38,7 @@
 param(
   [string]$Repo = '',
   [string]$Qq = '',
+  [string]$DshPath = '',
   [int]$PanelPort = 7878,
   [switch]$SkipDoctor,
   [switch]$Yes,
@@ -85,14 +89,30 @@ if (-not $gitCmd) {
 }
 Ok ((& git --version).Trim())
 
-$dshCmd = Get-Command dsh -ErrorAction SilentlyContinue
-if ($dshCmd) {
-  $dshPath = $dshCmd.Source
-  Ok "dsh：$dshPath"
+# dsh 是 DeepSeek Harness 桌面应用自带的 CLI，不是 npm 包，没有公开下载地址。
+# 优先用 -DshPath，其次 PATH，最后探常见安装目录。
+if (-not $DshPath) {
+  $dshCmd = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($dshCmd) { $DshPath = $dshCmd.Source }
+}
+if (-not $DshPath) {
+  $candidates = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.exe'),
+    (Join-Path $env:ProgramFiles 'DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'),
+    (Join-Path $env:ProgramFiles 'DeepSeek Harness\resources\runtime\cli\bin\dsh.exe')
+  )
+  foreach ($c in $candidates) {
+    if (Test-Path $c) { $DshPath = $c; break }
+  }
+}
+if ($DshPath) {
+  $dshBin = $DshPath
+  Ok "dsh：$DshPath"
 } else {
-  # 找不到也继续：用户可能稍后才装，或要手写完整路径
-  $dshPath = 'dsh'
-  Warn 'PATH 里找不到 dsh。装好后把完整路径写进 bot.config.json 的 dshBin'
+  $dshBin = 'dsh'
+  Warn '找不到 dsh。装 DeepSeek Harness Windows 版后重跑本脚本会自动识别；'
+  Warn '也可以手动指定：.\install.ps1 -DshPath "C:\...\dsh.cmd"'
 }
 
 # ── 2/5 仓库 ─────────────────────────────────────────────
@@ -150,7 +170,7 @@ if (Test-Path $cfgPath) {
   $cfg = [ordered]@{
     repos        = @([ordered]@{ id = 'app'; name = $repoName; path = $Repo })
     skillDir     = ''
-    dshBin       = $dshPath
+    dshBin       = $dshBin
     profile      = 'qqbot'
     bot          = [ordered]@{ qq = $Qq; name = '产品同学' }
     onebot       = [ordered]@{ ws = 'ws://127.0.0.1:3001'; token = '' }
