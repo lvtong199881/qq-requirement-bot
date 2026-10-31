@@ -294,7 +294,9 @@ if ($Provider) {
 
     if (-not $ApiKey -and -not $Yes) {
       Write-Host "  $Provider 的 key 环境变量：$ApiKeyEnv" -ForegroundColor DarkGray
-      $ApiKey = Read-Host '  粘贴 API key（sk-...，可留空稍后自己设）'
+      $ApiKey = Read-Host '  粘贴 API key（可留空稍后自己设）'
+      # 从文件/聊天里复制常带引号或首尾空格，不清掉会 401
+      if ($ApiKey) { $ApiKey = $ApiKey.Trim().Trim('"').Trim("'").Trim() }
     }
 
     $models = @()
@@ -306,7 +308,11 @@ if ($Provider) {
         $models = @($resp.data | ForEach-Object { $_.id } | Where-Object { $_ })
         if ($models.Count) { Ok "已从 $Provider 拉到 $($models.Count) 个模型" }
       } catch {
-        Warn "拉取模型列表失败：$($_.Exception.Message)"
+        $msg = $_.Exception.Message
+        Warn "拉取模型列表失败：$msg"
+        if ($msg -match '401|未经授权|Unauthorized') {
+          Warn "  401 = key 不对。确认复制的是 $ApiKeyEnv 的值（不带引号/空格），不要复制整行"
+        }
       }
     }
 
