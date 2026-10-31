@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   Windows 一键安装：环境检查、dsh profile、bot.config.json、自检。
@@ -99,7 +99,8 @@ if ($dshCmd) {
 Step '2/5 项目仓库'
 
 if (-not $Repo) {
-  $Repo = Ask '需求要落到的项目仓库路径（本地目录；不存在会自动建）' (Join-Path $env:USERPROFILE 'qq-bot-test')
+  $defaultRepo = Join-Path $env:USERPROFILE 'qq-bot-test'
+  $Repo = Ask "项目仓库路径（需求要落到哪个业务代码仓库；直接回车 = 先用空目录 $defaultRepo 跑通，稍后再改）" $defaultRepo
 }
 if (-not $Repo) {
   Bad '没有仓库路径'
