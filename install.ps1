@@ -371,7 +371,7 @@ if (Test-Path $cfgPath) {
   # 省得用户为了一个字段删配置重来。
   if ($dshBin -ne 'dsh' -and -not $DryRun) {
     try {
-      $existing = Get-Content $cfgPath -Raw | ConvertFrom-Json
+      $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
       if (-not $existing.dshBin -or $existing.dshBin -eq 'dsh') {
         $existing.dshBin = $dshBin
         $json = $existing | ConvertTo-Json -Depth 10
@@ -384,9 +384,9 @@ if (Test-Path $cfgPath) {
   }
 
   # 模型配置同理：已有配置也要能通过重跑补上/改掉
-  if ($Provider -and -not $DryRun) {
+  if ($Provider -and $Model -and -not $DryRun) {
     try {
-      $existing = Get-Content $cfgPath -Raw | ConvertFrom-Json
+      $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
       # ConvertFrom-Json 返回 PSCustomObject，直接赋新属性会抛
       # 「找不到属性 model」；必须 Add-Member 才加得上
       $modelValue = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
@@ -434,7 +434,7 @@ if (Test-Path $cfgPath) {
     superAdmin   = $admins
   }
 
-  if ($Provider) {
+  if ($Provider -and $Model) {
     $cfg.model = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
   }
 
