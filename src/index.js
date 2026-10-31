@@ -37,12 +37,13 @@ try {
 
 // 模型凭证：dsh 的 llm-pi-ai 按 provider 的 apiKeyEnv 读环境变量，
 // 所以启动时把所有可能用到的 key 一并备好，缺哪个由 provider 自己报错。
-const modelEnv = resolveModelEnv()
+const modelEnv = resolveModelEnv(config)
 if (!Object.keys(modelEnv).length) {
+  const wanted = config.model?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
   console.error(
     '[启动失败] 找不到任何模型凭证。\n' +
-      '请在 ~/.dsh/.credentials.yaml 的 refs 段写 DEEPSEEK_API_KEY 或 OPENCODE_GO_API_KEY，\n' +
-      '或直接 export 对应环境变量。',
+      `请在 ~/.dsh/.credentials.yaml 的 refs 段写 ${wanted}，\n` +
+      '或直接 export 对应环境变量（也认 DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY）。',
   )
   process.exit(1)
 }
@@ -75,6 +76,9 @@ const flowBridge = createFlowBridge({
 })
 
 log('编排：状态机驱动')
+if (config.model?.provider) {
+  log(`模型：${config.model.provider}/${config.model.model ?? '默认'}`)
+}
 log(`项目目录：${config.projectDir}`)
 log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
 

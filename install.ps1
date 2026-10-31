@@ -16,6 +16,18 @@
 .PARAMETER DshPath
   dsh 可执行文件的完整路径。不填则自动从 PATH 和 DeepSeek Harness 安装目录里找。
 
+.PARAMETER Provider
+  模型供应商，如 opencode-go。留空则沿用 dsh profile 的默认行为（deepseek）。
+
+.PARAMETER Model
+  模型名，如 deepseek-v4.1-flash。
+
+.PARAMETER ApiKeyEnv
+  供应商读 API key 的环境变量名，如 OPENCODE_GO_API_KEY。
+
+.PARAMETER ApiKey
+  API key 值。填了会写进当前用户环境变量（ApiKeyEnv）。
+
 .PARAMETER SkipDshInstall
   找不到 dsh 时不要自动下载安装。
 
@@ -42,6 +54,10 @@ param(
   [string]$Repo = '',
   [string]$Qq = '',
   [string]$DshPath = '',
+  [string]$Provider = '',
+  [string]$Model = '',
+  [string]$ApiKeyEnv = '',
+  [string]$ApiKey = '',
   [int]$PanelPort = 7878,
   [switch]$SkipDoctor,
   [switch]$SkipDshInstall,
@@ -198,6 +214,43 @@ if (Test-Path $profileDst) {
 # ── 4/5 配置 ─────────────────────────────────────────────
 Step '4/5 bot.config.json'
 
+# 模型供应商由用户自己填：不替用户选，也不硬编码某一家。
+if (-not $Provider -and -not $Yes) {
+  $Provider = Ask '模型供应商 provider（如 opencode-go；直接回车 = 用 dsh 默认 deepseek）' ''
+}
+if ($Provider) {
+  if (-not $Model) { $Model = Ask '模型名（如 deepseek-v4.1-flash）' '' }
+  if (-not $ApiKeyEnv) { $ApiKeyEnv = Ask 'API key 环境变量名（如 OPENCODE_GO_API_KEY）' '' }
+  if (-not $ApiKey -and -not $Yes) { $ApiKey = Ask 'API key 值（可留空，稍后自己设）' '' }
+}
+
+# 把选择写进 dsh profile 的 patch 层，dsh 启动时按它选 provider。
+if ($Provider -and $Model) {
+  $patchPath = Join-Path $profileDst 'cordis.patch.yml'
+  $patch = @"
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: $Provider
+    model: $Model
+"@
+  if ($DryRun) {
+    Ok "[dry-run] 会写入模型配置 $Provider/$Model"
+  } else {
+    [System.IO.File]::WriteAllText($patchPath, $patch, (New-Object System.Text.UTF8Encoding($false)))
+    Ok "模型已指向 $Provider/$Model"
+  }
+}
+
+if ($ApiKey -and $ApiKeyEnv) {
+  if ($DryRun) {
+    Ok "[dry-run] 会设置用户环境变量 $ApiKeyEnv"
+  } else {
+    [Environment]::SetEnvironmentVariable($ApiKeyEnv, $ApiKey, 'User')
+    Ok "已写入用户环境变量 $ApiKeyEnv（重开窗口生效）"
+  }
+}
+
 $cfgPath = Join-Path $Root 'bot.config.json'
 if (Test-Path $cfgPath) {
   Ok 'bot.config.json 已存在，跳过'
@@ -214,6 +267,19 @@ if (Test-Path $cfgPath) {
       }
     } catch {
       Warn "更新 dshBin 失败：$($_.Exception.Message)"
+    }
+  }
+
+  # 模型配置同理：已有配置也要能通过重跑补上/改掉
+  if ($Provider -and -not $DryRun) {
+    try {
+      $existing = Get-Content $cfgPath -Raw | ConvertFrom-Json
+      $existing.model = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
+      $json = $existing | ConvertTo-Json -Depth 10
+      [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+      Ok "已更新 bot.config.json 的 model → $Provider/$Model"
+    } catch {
+      Warn "更新 model 失败：$($_.Exception.Message)"
     }
   }
 } else {
@@ -250,6 +316,10 @@ if (Test-Path $cfgPath) {
       token      = ''
     }
     superAdmin   = $admins
+  }
+
+  if ($Provider) {
+    $cfg.model = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
   }
 
   $json = $cfg | ConvertTo-Json -Depth 10

@@ -168,6 +168,16 @@ export function loadConfig(configPath) {
     checkoutRoot,
     dshBin: raw.dshBin || 'dsh',
     profile: raw.profile || 'qqbot',
+    // 模型供应商由用户自己填（provider / model / apiKeyEnv）。
+    // 留空则完全沿用 dsh profile 的默认行为，不在这里替用户选供应商。
+    model:
+      raw.model && typeof raw.model === 'object'
+        ? {
+            provider: typeof raw.model.provider === 'string' ? raw.model.provider : null,
+            model: typeof raw.model.model === 'string' ? raw.model.model : null,
+            apiKeyEnv: typeof raw.model.apiKeyEnv === 'string' ? raw.model.apiKeyEnv : null,
+          }
+        : null,
     bot: {
       qq: String(raw.bot?.qq ?? ''),
       name: raw.bot?.name || '产品同学',
@@ -349,9 +359,11 @@ export function resolveApiKey(name = 'DEEPSEEK_API_KEY') {
 /**
  * 本机模型 provider 需要的全部凭证环境变量。
  * dsh 的 llm-pi-ai 按 apiKeyEnv 读对应变量，所以这里一次备齐。
+ * config.model.apiKeyEnv 是用户自己填的供应商变量名，优先级最高。
  */
-export function resolveModelEnv() {
-  const names = ['DEEPSEEK_API_KEY', 'OPENCODE_GO_API_KEY']
+export function resolveModelEnv(config) {
+  const names = new Set(['DEEPSEEK_API_KEY', 'OPENCODE_GO_API_KEY'])
+  if (config?.model?.apiKeyEnv) names.add(config.model.apiKeyEnv)
   const env = {}
   for (const n of names) {
     const v = resolveApiKey(n)

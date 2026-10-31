@@ -701,7 +701,9 @@ export function createFlowBridge(deps) {
           projectDir: st.flow.workDir || st.projectDir,
           sessionId,
           prompt,
-          env: modelEnv,
+          // 必须继承 bridge 的完整环境：spawn 的 env 是替换不是合并，
+          // 只传 key 的话 Windows 上 dsh.cmd 连 PATH 里的 node 都找不到。
+          env: { ...process.env, ...modelEnv },
           // 按阶段取超时：dev/test/acceptance 跑构建和逐条核对，给足时间；
           // 其余阶段默认半小时。配置里没写的阶段退回 default。
           timeoutMs: stageTimeoutMs(checkpoint.id, config),

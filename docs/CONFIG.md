@@ -15,6 +15,10 @@
   "dshBin": "dsh",
   "profile": "qqbot",
 
+  // 模型供应商由你自己填，留空则完全沿用 dsh profile 的默认行为。
+  // apiKeyEnv 是供应商读 key 的环境变量名，bridge 会把它注入 dsh 子进程。
+  "model": { "provider": "opencode-go", "model": "deepseek-v4.1-flash", "apiKeyEnv": "OPENCODE_GO_API_KEY" },
+
   "bot": { "qq": "", "name": "产品同学" },         // 群里显示的昵称
 
   "onebot": { "ws": "ws://127.0.0.1:3001", "token": "" },

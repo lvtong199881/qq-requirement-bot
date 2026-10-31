@@ -51,12 +51,13 @@ try {
 console.log('\n2. 模型凭证')
 // 官方 DeepSeek 和第三方通道都认：profile 决定用哪个 provider，
 // 这里只确认至少有一个能用的 key。
-const envKeys = resolveModelEnv()
+const envKeys = resolveModelEnv(config)
 const keyNames = Object.keys(envKeys)
 if (keyNames.length) {
   ok(`可用凭证：${keyNames.join('、')}`)
 } else {
-  fail('找不到模型凭证：设 DEEPSEEK_API_KEY 或 OPENCODE_GO_API_KEY')
+  const wanted = config.model?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
+  fail(`找不到模型凭证：设 ${wanted}（也认 DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY）`)
 }
 
 console.log('\n3. dsh 可执行')
