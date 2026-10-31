@@ -265,21 +265,15 @@ Step '4/5 bot.config.json'
 
 # 模型配置：预置供应商 + 上下键选择。
 # DeepSeek 有官方 /models 接口，动态拉；opencode-go 的目录在 dsh 内置配置里，用固定列表。
+# 两家都是 OpenAI 兼容接口，模型列表统一走 GET {baseUrl}/models。
 $providerInfo = @{
   'deepseek' = @{
     ApiKeyEnv = 'DEEPSEEK_API_KEY'
-    ModelsUrl = 'https://api.deepseek.com/models'
-    Fallback  = @('deepseek-chat', 'deepseek-reasoner')
+    BaseUrl   = 'https://api.deepseek.com/v1'
   }
   'opencode-go' = @{
     ApiKeyEnv = 'OPENCODE_GO_API_KEY'
-    ModelsUrl = ''
-    Fallback  = @(
-      'claude-haiku-5-5', 'minimax-m3', 'qwen3.8-flash',
-      'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash',
-      'glm-5.3', 'glm-5.3-flash', 'hy3', 'hy4-preview',
-      'kimi-k3', 'longcat-2.5-preview-free', 'space-bunny', 'gpt-6-luna'
-    )
+    BaseUrl   = 'https://opencode.ai/zen/go/v1'
   }
 }
 
@@ -303,22 +297,22 @@ if ($Provider) {
     }
 
     $models = @()
-    if ($info.ModelsUrl -and $ApiKey) {
+    if ($ApiKey) {
       try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $resp = Invoke-RestMethod -Uri $info.ModelsUrl -Headers @{ Authorization = "Bearer $ApiKey" } -TimeoutSec 15
+        $url = $info.BaseUrl.TrimEnd('/') + '/models'
+        $resp = Invoke-RestMethod -Uri $url -Headers @{ Authorization = "Bearer $ApiKey" } -TimeoutSec 20
         $models = @($resp.data | ForEach-Object { $_.id } | Where-Object { $_ })
         if ($models.Count) { Ok "已从 $Provider 拉到 $($models.Count) 个模型" }
       } catch {
         Warn "拉取模型列表失败：$($_.Exception.Message)"
       }
     }
-    if (-not $models.Count) { $models = $info.Fallback }
 
     if (-not $Model) {
-      if ($Yes) {
+      if ($models.Count -and $Yes) {
         $Model = $models[0]
-      } else {
+      } elseif ($models.Count) {
         $choices = @($models) + @('手动输入模型 id…')
         $mi = Select-Item '选择模型（↑/↓ 选择，Enter 确认）' $choices 0
         if ($mi -eq $models.Count) {
@@ -326,6 +320,9 @@ if ($Provider) {
         } elseif ($mi -ge 0) {
           $Model = $choices[$mi]
         }
+      } else {
+        # 拉不到列表（key 错/网络不通）时不猜，直接让用户填
+        $Model = Read-Host '  输入模型 id'
       }
     }
   }
