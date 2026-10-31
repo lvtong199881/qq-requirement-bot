@@ -68,6 +68,9 @@ param(
 # DeepSeek Harness Windows 安装包（官方 latest 链接）
 $DshInstallerUrl = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe'
 
+# QQ NT ARM64 安装包。版本会随 QQ 更新变化，失效时换成官网对应版本的直链。
+$QqInstallerUrl = 'https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/e8e54bbb/QQ_9.9.36_260924_arm64_01.exe'
+
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
@@ -466,18 +469,36 @@ if ($wsOk) {
 } else {
   Warn 'OneBot 3001 没起来，检查 QQ / NapCat'
 
-  # QQ：官网没有稳定直链，只能检测 + 打开下载页
+  # QQ：没装就下载官方安装包静默安装
   $qqCandidates = @(
     'C:\Program Files\Tencent\QQNT\QQ.exe',
     'C:\Program Files (x86)\Tencent\QQNT\QQ.exe',
     (Join-Path $env:LOCALAPPDATA 'Programs\QQNT\QQ.exe')
   )
   $qqExe = $qqCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if ($qqExe) {
-    Ok "QQ：$qqExe"
+  if (-not $qqExe) {
+    $qqSetup = Join-Path $env:TEMP 'QQ-setup.exe'
+    Warn '没找到 QQ，正在下载安装包…'
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $wc = New-Object System.Net.WebClient
+      $wc.DownloadFile($QqInstallerUrl, $qqSetup)
+      $wc.Dispose()
+      Ok "下载完成：$qqSetup"
+      Step '安装 QQ（可能需要几分钟）…'
+      Start-Process -FilePath $qqSetup -ArgumentList '/S' -Verb RunAs -Wait -ErrorAction Stop
+      $qqExe = $qqCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+      if ($qqExe) {
+        Ok "QQ 已安装：$qqExe"
+      } else {
+        Warn "静默安装没检测到，手动运行安装包：$qqSetup"
+      }
+    } catch {
+      Warn "QQ 下载/安装失败：$($_.Exception.Message)"
+      Warn "可以手动下载：$QqInstallerUrl"
+    }
   } else {
-    Warn '没找到 QQ。先装官方 QQ（https://im.qq.com），装完重跑本脚本'
-    Start-Process 'https://im.qq.com'
+    Ok "QQ：$qqExe"
   }
 
   # NapCat：一键包有固定 latest 地址，直接下载解压并拉起安装器
