@@ -200,7 +200,22 @@ Step '4/5 bot.config.json'
 
 $cfgPath = Join-Path $Root 'bot.config.json'
 if (Test-Path $cfgPath) {
-  Ok 'bot.config.json 已存在，跳过（想重来先备份删除）'
+  Ok 'bot.config.json 已存在，跳过'
+  # 之前生成时 dshBin 可能还是占位的 dsh；这次探测到真实路径就补上，
+  # 省得用户为了一个字段删配置重来。
+  if ($dshBin -ne 'dsh' -and -not $DryRun) {
+    try {
+      $existing = Get-Content $cfgPath -Raw | ConvertFrom-Json
+      if (-not $existing.dshBin -or $existing.dshBin -eq 'dsh') {
+        $existing.dshBin = $dshBin
+        $json = $existing | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+        Ok "已更新 bot.config.json 的 dshBin → $dshBin"
+      }
+    } catch {
+      Warn "更新 dshBin 失败：$($_.Exception.Message)"
+    }
+  }
 } else {
   if (-not $Qq) {
     $Qq = Ask '你的 QQ 号（写进 superAdmin，可留空）' ''
