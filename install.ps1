@@ -84,6 +84,55 @@ function Ask($m, $default) {
   return $v.Trim()
 }
 
+# 上下键选择列表，Enter 确认。返回序号，Esc/取消返回 -1。
+# 非交互环境（输入被重定向）自动降级成数字选择，避免 ReadKey 直接崩。
+function Select-Item($title, $items, $defaultIndex = 0) {
+  if (-not $items -or $items.Count -eq 0) { return -1 }
+
+  if ([Console]::IsInputRedirected) {
+    Write-Host "  $title"
+    for ($i = 0; $i -lt $items.Count; $i++) {
+      Write-Host ("    [{0}] {1}" -f ($i + 1), $items[$i])
+    }
+    $n = Read-Host '  输入序号'
+    $idx = 0
+    if ([int]::TryParse($n, [ref]$idx) -and $idx -ge 1 -and $idx -le $items.Count) {
+      return $idx - 1
+    }
+    return $defaultIndex
+  }
+
+  $idx = [Math]::Min([Math]::Max($defaultIndex, 0), $items.Count - 1)
+  $top = [Console]::CursorTop
+  Write-Host "  $title" -ForegroundColor DarkGray
+
+  while ($true) {
+    for ($i = 0; $i -lt $items.Count; $i++) {
+      [Console]::SetCursorPosition(0, $top + 1 + $i)
+      $prefix = if ($i -eq $idx) { '  > ' } else { '    ' }
+      $line = $prefix + $items[$i]
+      $pad = [Math]::Max(0, [Console]::WindowWidth - 1 - $line.Length)
+      if ($i -eq $idx) {
+        Write-Host ($line + (' ' * $pad)) -ForegroundColor Cyan -NoNewline
+      } else {
+        Write-Host ($line + (' ' * $pad)) -ForegroundColor Gray -NoNewline
+      }
+    }
+    $key = [Console]::ReadKey($true)
+    if ($key.Key -eq [ConsoleKey]::UpArrow) {
+      $idx = ($idx - 1 + $items.Count) % $items.Count
+    } elseif ($key.Key -eq [ConsoleKey]::DownArrow) {
+      $idx = ($idx + 1) % $items.Count
+    } elseif ($key.Key -eq [ConsoleKey]::Enter) {
+      [Console]::SetCursorPosition(0, $top + 1 + $items.Count)
+      return $idx
+    } elseif ($key.Key -eq [ConsoleKey]::Escape) {
+      [Console]::SetCursorPosition(0, $top + 1 + $items.Count)
+      return -1
+    }
+  }
+}
+
 Write-Host ''
 Write-Host 'qq-requirement-bot · Windows 安装' -ForegroundColor White
 Write-Host '─────────────────────────────────' -ForegroundColor DarkGray
@@ -214,14 +263,72 @@ if (Test-Path $profileDst) {
 # ── 4/5 配置 ─────────────────────────────────────────────
 Step '4/5 bot.config.json'
 
-# 模型供应商由用户自己填：不替用户选，也不硬编码某一家。
-if (-not $Provider -and -not $Yes) {
-  $Provider = Ask '模型供应商 provider（如 opencode-go；直接回车 = 用 dsh 默认 deepseek）' ''
+# 模型配置：预置供应商 + 上下键选择。
+# DeepSeek 有官方 /models 接口，动态拉；opencode-go 的目录在 dsh 内置配置里，用固定列表。
+$providerInfo = @{
+  'deepseek' = @{
+    ApiKeyEnv = 'DEEPSEEK_API_KEY'
+    ModelsUrl = 'https://api.deepseek.com/models'
+    Fallback  = @('deepseek-chat', 'deepseek-reasoner')
+  }
+  'opencode-go' = @{
+    ApiKeyEnv = 'OPENCODE_GO_API_KEY'
+    ModelsUrl = ''
+    Fallback  = @(
+      'claude-haiku-5-5', 'minimax-m3', 'qwen3.8-flash',
+      'deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash',
+      'glm-5.3', 'glm-5.3-flash', 'hy3', 'hy4-preview',
+      'kimi-k3', 'longcat-2.5-preview-free', 'space-bunny', 'gpt-6-luna'
+    )
+  }
 }
+
+if (-not $Provider -and -not $Yes) {
+  $providerNames = @('deepseek', 'opencode-go')
+  $pi = Select-Item '选择模型供应商（↑/↓ 选择，Enter 确认）' $providerNames 0
+  if ($pi -ge 0) { $Provider = $providerNames[$pi] }
+}
+
 if ($Provider) {
-  if (-not $Model) { $Model = Ask '模型名（如 deepseek-v4.1-flash）' '' }
-  if (-not $ApiKeyEnv) { $ApiKeyEnv = Ask 'API key 环境变量名（如 OPENCODE_GO_API_KEY）' '' }
-  if (-not $ApiKey -and -not $Yes) { $ApiKey = Ask 'API key 值（可留空，稍后自己设）' '' }
+  $info = $providerInfo[$Provider]
+  if (-not $info) {
+    Warn "未知供应商 $Provider，跳过模型配置"
+    $Provider = ''
+  } else {
+    if (-not $ApiKeyEnv) { $ApiKeyEnv = $info.ApiKeyEnv }
+
+    if (-not $ApiKey -and -not $Yes) {
+      Write-Host "  $Provider 的 key 环境变量：$ApiKeyEnv" -ForegroundColor DarkGray
+      $ApiKey = Read-Host '  粘贴 API key（sk-...，可留空稍后自己设）'
+    }
+
+    $models = @()
+    if ($info.ModelsUrl -and $ApiKey) {
+      try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $resp = Invoke-RestMethod -Uri $info.ModelsUrl -Headers @{ Authorization = "Bearer $ApiKey" } -TimeoutSec 15
+        $models = @($resp.data | ForEach-Object { $_.id } | Where-Object { $_ })
+        if ($models.Count) { Ok "已从 $Provider 拉到 $($models.Count) 个模型" }
+      } catch {
+        Warn "拉取模型列表失败：$($_.Exception.Message)"
+      }
+    }
+    if (-not $models.Count) { $models = $info.Fallback }
+
+    if (-not $Model) {
+      if ($Yes) {
+        $Model = $models[0]
+      } else {
+        $choices = @($models) + @('手动输入模型 id…')
+        $mi = Select-Item '选择模型（↑/↓ 选择，Enter 确认）' $choices 0
+        if ($mi -eq $models.Count) {
+          $Model = Read-Host '  输入模型 id'
+        } elseif ($mi -ge 0) {
+          $Model = $choices[$mi]
+        }
+      }
+    }
+  }
 }
 
 # 把选择写进 dsh profile 的 patch 层，dsh 启动时按它选 provider。
