@@ -1,7 +1,7 @@
 /**
  * 自检：不连 QQ，只验证本机这条链路能不能跑通。
  *
- *   node src/doctor.js            检查配置 / 密钥 / skill / dsh / OneBot 连通性
+ *   node src/doctor.js            检查配置 / 密钥 / dsh / OneBot 连通性
  *   node src/doctor.js --turn     额外真跑一个回合（会消耗 token）
  */
 import { existsSync } from 'node:fs'
@@ -27,7 +27,6 @@ try {
   config = loadConfig(configPath)
   ok(`配置文件：${config.configPath}`)
   ok(`项目目录：${config.projectDir}`)
-  ok(`skill 目录（可选）：${config.skillDir ?? '（未配置，v2 用仓库 skills/）'}`)
   ok(`profile：${config.profile}｜bot 昵称：${config.bot.name}`)
   if (!config.bot.qq) warn('bot.qq 未填（不影响接收消息，但填了能识别自发消息）')
 
@@ -54,15 +53,7 @@ const key = resolveApiKey()
 if (key) ok(`DEEPSEEK_API_KEY 可用（长度 ${key.length}）`)
 else fail('找不到 DEEPSEEK_API_KEY：export 一下，或在 DSH Web GUI 保存模型密钥')
 
-console.log('\n3. skill（可选）')
-if (config.skillDir && existsSync(`${config.skillDir}/SKILL.md`)) {
-  ok(`SKILL.md 存在：${config.skillDir}`)
-} else {
-  // v2 的角色卡在仓库 skills/<角色>/SKILL.md，requirement-spec 只是 v1 遗留
-  warn('没有 requirement-spec skill；v2 编排用仓库内 skills/<角色>/SKILL.md，不影响运行')
-}
-
-console.log('\n4. dsh 可执行')
+console.log('\n3. dsh 可执行')
 const which = await new Promise((resolve) => {
   import('node:child_process').then(({ execFile }) => {
     execFile(config.dshBin, ['--version'], (err, stdout) => {
@@ -73,7 +64,7 @@ const which = await new Promise((resolve) => {
 if (which) ok(`${config.dshBin} --version → ${which}`)
 else warn(`无法执行 ${config.dshBin}，确认在 PATH 里（headless 执行会用到）`)
 
-console.log('\n5. OneBot 连通性')
+console.log('\n4. OneBot 连通性')
 const wsUrl = config.onebot.ws
 const reachable = await new Promise((resolve) => {
   let settled = false
@@ -139,7 +130,7 @@ if (reachable) {
 }
 
 if (runRealTurn) {
-  console.log('\n6. 真实回合（会消耗 token）')
+  console.log('\n5. 真实回合（会消耗 token）')
   const group = config.groups[0]
   const started = Date.now()
   const res = await runTurn({

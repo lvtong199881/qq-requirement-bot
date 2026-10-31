@@ -14,7 +14,7 @@
 
 | 步骤 | 做什么 |
 | --- | --- |
-| 1 | 检查 Node ≥ 22、`dsh`、`DEEPSEEK_API_KEY`、requirement-spec skill |
+| 1 | 检查 Node ≥ 22、`dsh`、`DEEPSEEK_API_KEY` |
 | 2 | 把 `profiles/qqbot` 复制到 `~/.dsh/profiles/qqbot`（已存在则跳过） |
 | 3 | 生成 `bot.config.json`（已存在则不覆盖） |
 | 4 | 准备 NapCat：**没装 Docker 就用 Homebrew 装**；容器没建就建、停了就起；最后检查 OneBot 端口 |
@@ -58,7 +58,6 @@ Docker 是跑 NapCat 的强依赖，脚本会负责到底：`docker` 命令不�
 | DEEPSEEK_API_KEY | 环境变量，或存在 `~/.dsh/.credentials.yaml` | `echo $DEEPSEEK_API_KEY` |
 | Docker | 走 Docker 路线跑 NapCat 时必需（脚本会自动装） | `docker info` |
 | NapCat | 一个 QQ 号，开启**正向 WebSocket** | 见下一节 |
-| requirement-spec skill | 一份带 `name: requirement-spec` 的 skill 目录 | 见下文 |
 
 > 本项目**零 npm 依赖**，`npm install` 不用跑，仓库 clone 下来就能起。
 
@@ -106,23 +105,7 @@ cd ~/napcat && docker compose up -d
 3. 在 WebUI 里确认**正向 WebSocket** 已启用，端口 `3001`
 4. 记下地址（`ws://127.0.0.1:3001`）和 token，填进配置
 
-### 3. 准备 requirement-spec skill
-
-把 skill 放到下面任意一个位置即可，bridge 会按顺序探测，**不需要改配置**：
-
-```
-$QQ_RS_SKILL_ROOT/requirement-spec
-~/.agents/skills/requirement-spec
-~/.dsh/skills/requirement-spec
-<仓库上级目录>/skills/requirement-spec
-<仓库>/skills/requirement-spec
-```
-
-判定标准：该目录下有 `SKILL.md`，且文件头的 frontmatter 含一行 `name: requirement-spec`。换机器、目录搬家都不用重新配。
-
-只有确实要指向特殊位置时，才在 `bot.config.json` 里显式写 `skillDir`。
-
-### 4. 建 qqbot profile
+### 3. 建 qqbot profile
 
 仓库里的 `profiles/qqbot` 是从 headless 派生的模板，复制到 dsh 的 profile 目录：
 
@@ -131,18 +114,18 @@ cd ~/Documents/ChatGPT/qq-requirement-bot
 cp -R profiles/qqbot ~/.dsh/profiles/qqbot
 ```
 
-### 5. 写配置
+### 4. 写配置
 
 ```bash
 cp bot.config.example.json bot.config.json
 $EDITOR bot.config.json
 ```
 
-**必改的只有 `projectDir`**（需求落在哪个项目里）。群号不用填——bot 连上 NapCat 后会自己报出它所在的群。
+**必改的只有 `repos`**（需求落到哪个仓库）。群号不用填——bot 连上 NapCat 后会自己报出它所在的群。
 
 其余字段（限流、心跳、上传白名单、群策略、superAdmin）都有合理默认值，含义见 [配置说明](CONFIG.md)。
 
-### 6. 自检
+### 5. 自检
 
 ```bash
 node src/doctor.js            # 配置 / 密钥 / skill / dsh / OneBot 连通性
@@ -151,7 +134,7 @@ node src/doctor.js --turn     # 额外真跑一个回合（消耗 token）
 
 第一项全绿再往下走。`--turn` 是可选的重度自检。
 
-### 7. 启动与验证
+### 6. 启动与验证
 
 ```bash
 node src/index.js             # 前台跑，日志直接打屏

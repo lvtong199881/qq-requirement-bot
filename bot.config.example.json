@@ -1,6 +1,12 @@
 {
-  "projectDir": "~/Documents/ChatGPT/Instanto",
-  "skillDir": "",
+  "repos": [
+    {
+      "id": "app",
+      "name": "示例项目",
+      "path": "~/Documents/ChatGPT/Instanto",
+      "platform": "harmony"
+    }
+  ],
   "dshBin": "dsh",
   "profile": "qqbot",
   "bot": {

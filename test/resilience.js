@@ -25,18 +25,12 @@ const check = (name, cond, extra = '') => {
 const TMP = join(tmpdir(), 'qqrs-resilience')
 mkdirSync(TMP, { recursive: true })
 
-// config 现在强制要求有效的 requirement-spec skill，测试自己造一个
-const skillDir = join(TMP, 'skills', 'requirement-spec')
-mkdirSync(skillDir, { recursive: true })
-writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: requirement-spec\ndescription: test fixture\n---\n')
-
 const cfg = (ws) => {
   const p = join(TMP, `cfg-${Date.now()}.json`)
   writeFileSync(
     p,
     JSON.stringify({
       repos: [{ id: 'app', name: 'test', path: TMP }],
-      skillDir,
       dshBin: 'dsh',
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },

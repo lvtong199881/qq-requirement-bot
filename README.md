@@ -71,7 +71,7 @@ QQ 群 → NapCat → WebSocket → bridge
 | 文档 | 内容 |
 | --- | --- |
 | [安装指南](docs/INSTALL.md) | 一键脚本用法、手动安装全流程、NapCat 的 Docker 与 macOS 两种装法 |
-| [配置说明](docs/CONFIG.md) | 全部配置字段、群策略（auto / allowlist / deny）、skillDir 自动探测 |
+| [配置说明](docs/CONFIG.md) | 全部配置字段、群策略（auto / allowlist / deny） |
 | [群里的指令](docs/COMMANDS.md) | 斜杠指令、权限模型、确认与打回 |
 | [管理面板](docs/PANEL.md) | 需求大盘 / 实例 / 设置三页、进程架构、日志 |
 | [API 参考](docs/API.md) | 每个接口的参数、响应字段、错误码 |

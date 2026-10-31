@@ -56,8 +56,7 @@ writeFileSync(
   configPath,
   JSON.stringify(
     {
-      projectDir: project,
-      skillDir: '',
+      repos: [{ id: 'app', name: 'test', path: project }],
       dshBin: fakeDsh,
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },
@@ -66,6 +65,8 @@ writeFileSync(
       upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
       turnTimeoutMs: 60_000,
       heartbeat: { enabled: false },
+      // 端口 0 = 系统分配，避免和本机正在跑的 bot 撞车
+      panel: { enabled: true, port: 0, publicPort: 0, token: '' },
       verbose: true,
     },
     null,

@@ -2,14 +2,16 @@
 
 > 返回 [README](../README.md)
 
-全部配置都在仓库根目录的 `bot.config.json` 里，首次从 `bot.config.example.json` 复制（见[安装指南](INSTALL.md)第 5 步）。
+全部配置都在仓库根目录的 `bot.config.json` 里，首次从 `bot.config.example.json` 复制（见[安装指南](INSTALL.md)第 4 步）。
 
 **群号不用填。** bot 连上 NapCat 后会自己调 `get_group_list` 报出它所在的群，你把它拉进哪个群，它就在哪个群工作。
 
 ```jsonc
 {
-  "projectDir": "~/Documents/ChatGPT/Instanto",  // 需求默认落地的项目
-  "skillDir": "",                                  // 留空 = 自动探测（推荐）
+  // 需求要落到哪些仓库。单仓库写一项即可；给了 url 时 bot 会自己 clone。
+  "repos": [
+    { "id": "app", "name": "Instanto", "path": "~/Documents/ChatGPT/Instanto", "platform": "harmony" }
+  ],
   "dshBin": "dsh",
   "profile": "qqbot",
 
@@ -78,7 +80,7 @@
 }
 ```
 
-**关于 `skillDir`**：默认留空。bridge 会依次探测 `$QQ_RS_SKILL_ROOT/requirement-spec`、`~/.agents/skills/requirement-spec`、`~/.dsh/skills/requirement-spec` 等位置，用 `SKILL.md` 里的 `name: requirement-spec` 校验是不是对的那份。换机器、多人共用、目录搬家都不用改配置。只有确实要指向特殊位置时才显式写。
+**关于 `repos`**：`id` 是内部标识（路径按它派生，建了就别改）；`name` 是给人看的；`path` 和 `url` 二选一，给了 `url` 就由 bot 克隆到 `checkoutRoot`。`platform` 决定用哪套工具链（`harmony` / `android` / `ios`）。
 
 ## 编排
 

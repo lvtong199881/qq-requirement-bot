@@ -183,16 +183,6 @@ else
   fail '找不到 DEEPSEEK_API_KEY：export 一下，或在 DSH Web GUI 的 Models 页保存'
 fi
 
-# requirement-spec skill：复用 config.js 的探测逻辑，不重写一套
-if skill_dir=$(node --input-type=module -e '
-  import { resolveSkillDir } from "./src/config.js"
-  try { console.log(resolveSkillDir()) } catch { process.exit(1) }
-' 2>/dev/null); then
-  ok "skill：$skill_dir"
-else
-  fail '找不到 requirement-spec skill（放在 ~/.agents/skills/ 或 ~/.dsh/skills/ 下，或设 QQ_RS_SKILL_ROOT）'
-fi
-
 # ── 2. profile ──────────────────────────────────────────────────────
 step '2/6 安装 qqbot profile'
 PROFILE_DST="$HOME/.dsh/profiles/qqbot"
@@ -215,7 +205,7 @@ else
   cp bot.config.example.json bot.config.json
 
   if [ -z "$PROJECT_DIR" ]; then
-    DEFAULT_DIR=$(node -p 'require("./bot.config.example.json").projectDir')
+    DEFAULT_DIR=$(node -p 'require("./bot.config.example.json").repos[0].path')
     if [ "$ASSUME_YES" -eq 1 ]; then
       PROJECT_DIR="$DEFAULT_DIR"
       dim "项目目录用默认值：$PROJECT_DIR"
@@ -234,15 +224,16 @@ else
   # 用 node 改 JSON，避免依赖 jq，也避免手写 JSON 出错
   PROJECT_DIR="$PROJECT_DIR" QQ="${QQ:-}" node --input-type=module -e '
     import { readFileSync, writeFileSync } from "node:fs"
+    import { basename } from "node:path"
     const p = "bot.config.json"
     const cfg = JSON.parse(readFileSync(p, "utf8"))
-    cfg.projectDir = process.env.PROJECT_DIR
+    cfg.repos = [{ id: "app", name: basename(process.env.PROJECT_DIR), path: process.env.PROJECT_DIR }]
     cfg.superAdmin = process.env.QQ ? [process.env.QQ] : []
     cfg.adminUsers = []
     writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n")
   '
 
-  ok "已生成 bot.config.json（projectDir=$PROJECT_DIR${QQ:+，superAdmin=$QQ}）"
+  ok "已生成 bot.config.json（repo=$PROJECT_DIR${QQ:+，superAdmin=$QQ}）"
 fi
 
 # ── 4. NapCat ───────────────────────────────────────────────────────

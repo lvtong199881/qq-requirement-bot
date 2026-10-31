@@ -29,19 +29,12 @@ const mock = await startMockOneBot({ port: 0, selfId: 10000 })
 const tmpProject = mkdtempSync(join(tmpdir(), 'qqrs-full-'))
 mkdirSync(join(tmpProject, 'docs', 'requirements'), { recursive: true })
 
-// config 现在强制要求一个有效的 requirement-spec skill；
-// 测试自己造一个，避免依赖跑测试那台机器上装没装。
-const skillDir = join(tmpProject, 'skills', 'requirement-spec')
-mkdirSync(skillDir, { recursive: true })
-writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: requirement-spec\ndescription: test fixture\n---\n')
-
 const configPath = join(tmpProject, 'bot.config.json')
 writeFileSync(
   configPath,
   JSON.stringify(
     {
       repos: [{ id: 'app', name: 'test', path: tmpProject }],
-      skillDir,
       dshBin: 'dsh',
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },

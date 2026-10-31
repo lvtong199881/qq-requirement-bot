@@ -227,7 +227,6 @@ if (Test-Path $cfgPath) {
 
   $cfg = [ordered]@{
     repos        = @([ordered]@{ id = 'app'; name = $repoName; path = $Repo })
-    skillDir     = ''
     dshBin       = $dshBin
     profile      = 'qqbot'
     bot          = [ordered]@{ qq = $Qq; name = '产品同学' }
@@ -288,7 +287,7 @@ if (-not $SkipDoctor -and -not $DryRun) {
     Ok 'doctor 通过'
   } else {
     Warn 'doctor 有未通过项，按上面的提示修'
-    Warn '常见两项：DEEPSEEK_API_KEY 没设；requirement-spec skill 没放（见 docs/INSTALL.md）'
+    Warn '常见一项：DEEPSEEK_API_KEY 没设（见 docs/INSTALL.md）'
   }
 }
 

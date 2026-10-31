@@ -74,7 +74,6 @@ const flowBridge = createFlowBridge({
   repoRoot: config.repoRoot,
 })
 
-log(`配置就绪：skill=${config.skillDir ?? '（未配置，v2 用仓库 skills/）'}`)
 log('编排：状态机驱动')
 log(`项目目录：${config.projectDir}`)
 log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)

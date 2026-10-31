@@ -69,7 +69,7 @@
   <rect x="340" y="676" width="420" height="88" rx="10" fill="#161b22" stroke="#a371f7"/>
   <text x="360" y="706" fill="#a371f7" font-size="15" font-weight="600">dsh --profile qqbot --json</text>
   <text x="360" y="728" fill="#c9d1d9" font-size="12.5">headless agent，一回合一个进程，续跑带同一 session-id</text>
-  <text x="360" y="748" fill="#8b949e" font-size="12.5">流程本身交给 requirement-spec skill，一行都不改</text>
+  <text x="360" y="748" fill="#8b949e" font-size="12.5">角色卡固定在仓库 skills/ 下，按阶段加载</text>
 
   <!-- 项目目录 -->
   <rect x="340" y="804" width="420" height="88" rx="10" fill="#161b22" stroke="#3fb950"/>

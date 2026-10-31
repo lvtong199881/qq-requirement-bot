@@ -1,8 +1,8 @@
 /**
- * 配置加载 + skillDir 动态解析。
+ * 配置加载。
  *
- * 设计要点：skillDir 默认不写死。config 里留空时按固定优先级探测，
- * 这样换机器、换目录、多人共用同一份仓库都不用改配置。
+ * 配置全部来自 bot.config.json，路径类字段支持 ~ 展开；
+ * 角色卡固定在仓库 skills/<角色>/SKILL.md，不从这里配。
  */
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -11,70 +11,6 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..')
-
-/** 探测 skill 目录时依次尝试的候选路径 */
-function skillCandidates() {
-  const names = ['requirement-spec']
-  const roots = [
-    process.env.QQ_RS_SKILL_ROOT,
-    join(homedir(), '.agents', 'skills'),
-    join(homedir(), '.dsh', 'skills'),
-    join(REPO_ROOT, '..', 'skills'),
-    join(REPO_ROOT, 'skills'),
-  ].filter(Boolean)
-
-  const out = []
-  for (const root of roots) {
-    for (const name of names) out.push(join(root, name))
-  }
-  return out
-}
-
-/** 一个目录算不算 requirement-spec skill：有 SKILL.md 且 frontmatter 里 name 对得上 */
-function looksLikeSkill(dir) {
-  const skillMd = join(dir, 'SKILL.md')
-  if (!existsSync(skillMd)) return false
-  try {
-    const head = readFileSync(skillMd, 'utf8').slice(0, 2000)
-    return /^name:\s*requirement-spec\s*$/m.test(head)
-  } catch {
-    return false
-  }
-}
-
-/**
- * 解析 skill 目录。
- * v2 编排读的是仓库内 skills/<角色>/SKILL.md，这里的 requirement-spec
- * 只是 v1 遗留；找不到时默认返回 null，不阻塞启动。
- * @param {string|undefined} configured config 里显式写的路径（可为空）
- * @param {{required?: boolean}} [opts] required=true 时找不到仍抛错
- * @returns {string|null} 绝对路径，或 null
- */
-export function resolveSkillDir(configured, { required = false } = {}) {
-  if (configured && configured.trim()) {
-    const dir = expandHome(configured.trim())
-    if (!looksLikeSkill(dir)) {
-      if (!required) return null
-      throw new Error(
-        `config 里指定的 skillDir 不是有效的 requirement-spec skill：${dir}\n` +
-          `（需要该目录下存在 SKILL.md，且 frontmatter 含 name: requirement-spec）`,
-      )
-    }
-    return dir
-  }
-  for (const dir of skillCandidates()) {
-    if (looksLikeSkill(dir)) return dir
-  }
-  if (!required) return null
-  throw new Error(
-    '找不到 requirement-spec skill。\n' +
-      '可以用环境变量 QQ_RS_SKILL_ROOT 指向 skills 根目录，\n' +
-      '或在 bot.config.json 里显式写 skillDir。\n' +
-      `已尝试：\n${skillCandidates()
-        .map((p) => '  - ' + p)
-        .join('\n')}`,
-  )
-}
 
 /** 取正整数，非法值回退默认 */
 function posInt(v, fallback) {
@@ -230,7 +166,6 @@ export function loadConfig(configPath) {
     repos,
     primaryRepo,
     checkoutRoot,
-    skillDir: resolveSkillDir(raw.skillDir),
     dshBin: raw.dshBin || 'dsh',
     profile: raw.profile || 'qqbot',
     bot: {
