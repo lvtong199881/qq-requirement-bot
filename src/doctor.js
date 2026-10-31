@@ -5,7 +5,7 @@
  *   node src/doctor.js --turn     额外真跑一个回合（会消耗 token）
  */
 import { existsSync } from 'node:fs'
-import { loadConfig, resolveApiKey } from './config.js'
+import { loadConfig, resolveModelEnv } from './config.js'
 import { runTurn } from './runner.js'
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
@@ -48,10 +48,16 @@ try {
   process.exit(1)
 }
 
-console.log('\n2. 密钥')
-const key = resolveApiKey()
-if (key) ok(`DEEPSEEK_API_KEY 可用（长度 ${key.length}）`)
-else fail('找不到 DEEPSEEK_API_KEY：export 一下，或在 DSH Web GUI 保存模型密钥')
+console.log('\n2. 模型凭证')
+// 官方 DeepSeek 和第三方通道都认：profile 决定用哪个 provider，
+// 这里只确认至少有一个能用的 key。
+const envKeys = resolveModelEnv()
+const keyNames = Object.keys(envKeys)
+if (keyNames.length) {
+  ok(`可用凭证：${keyNames.join('、')}`)
+} else {
+  fail('找不到模型凭证：设 DEEPSEEK_API_KEY 或 OPENCODE_GO_API_KEY')
+}
 
 console.log('\n3. dsh 可执行')
 const which = await new Promise((resolve) => {
