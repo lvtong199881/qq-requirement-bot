@@ -464,7 +464,55 @@ try {
 if ($wsOk) {
   Ok 'OneBot 端口 3001 可连通'
 } else {
-  Warn 'OneBot 3001 没起来——先装官方 QQ + NapCat Windows 一键包，扫码后在 WebUI 开正向 WS 3001'
+  Warn 'OneBot 3001 没起来，检查 QQ / NapCat'
+
+  # QQ：官网没有稳定直链，只能检测 + 打开下载页
+  $qqCandidates = @(
+    'C:\Program Files\Tencent\QQNT\QQ.exe',
+    'C:\Program Files (x86)\Tencent\QQNT\QQ.exe',
+    (Join-Path $env:LOCALAPPDATA 'Programs\QQNT\QQ.exe')
+  )
+  $qqExe = $qqCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if ($qqExe) {
+    Ok "QQ：$qqExe"
+  } else {
+    Warn '没找到 QQ。先装官方 QQ（https://im.qq.com），装完重跑本脚本'
+    Start-Process 'https://im.qq.com'
+  }
+
+  # NapCat：一键包有固定 latest 地址，直接下载解压并拉起安装器
+  $napcatHome = Join-Path $env:USERPROFILE 'NapCat'
+  $installer = $null
+  if (Test-Path $napcatHome) {
+    $installer = Get-ChildItem $napcatHome -Filter 'NapCatInstaller.exe' -Recurse -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+  }
+  if (-not $installer) {
+    $zip = Join-Path $env:TEMP 'napcat-onekey.zip'
+    $url = 'https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.Windows.OneKey.zip'
+    Step "下载 NapCat → $napcatHome"
+    try {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+      Expand-Archive -Path $zip -DestinationPath $napcatHome -Force
+      $installer = Get-ChildItem $napcatHome -Filter 'NapCatInstaller.exe' -Recurse |
+        Select-Object -First 1
+      Ok "已解压到 $napcatHome"
+    } catch {
+      Warn "NapCat 下载失败：$($_.Exception.Message)"
+      Warn "可以手动下载：$url"
+    }
+  }
+
+  if ($installer) {
+    Warn '接下来运行安装器（会弹 UAC），按提示装到 QQ 上'
+    try {
+      Start-Process -FilePath $installer.FullName -Verb RunAs
+    } catch {
+      Warn "启动安装器失败：$($_.Exception.Message)"
+      Warn "手动运行：$($installer.FullName)"
+    }
+  }
 }
 
 if (-not $SkipDoctor -and -not $DryRun) {
