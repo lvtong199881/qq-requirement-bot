@@ -29,13 +29,19 @@ const mock = await startMockOneBot({ port: 0, selfId: 10000 })
 const tmpProject = mkdtempSync(join(tmpdir(), 'qqrs-full-'))
 mkdirSync(join(tmpProject, 'docs', 'requirements'), { recursive: true })
 
+// config 现在强制要求一个有效的 requirement-spec skill；
+// 测试自己造一个，避免依赖跑测试那台机器上装没装。
+const skillDir = join(tmpProject, 'skills', 'requirement-spec')
+mkdirSync(skillDir, { recursive: true })
+writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: requirement-spec\ndescription: test fixture\n---\n')
+
 const configPath = join(tmpProject, 'bot.config.json')
 writeFileSync(
   configPath,
   JSON.stringify(
     {
-      projectDir: tmpProject,
-      skillDir: '',
+      repos: [{ id: 'app', name: 'test', path: tmpProject }],
+      skillDir,
       dshBin: 'dsh',
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },
@@ -44,6 +50,8 @@ writeFileSync(
       limits: { maxMessagesPerMinute: 60, chunkChars: 400, maxChunksPerTurn: 12 },
       upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
       turnTimeoutMs: 240_000,
+      // 端口 0 = 让系统分配，避免和本机正在跑的 bot（7878）撞车
+      panel: { enabled: true, port: 0, publicPort: 0, token: '' },
       verbose: true,
     },
     null,
@@ -80,8 +88,8 @@ if (noLlm) {
   mock.sendGroupAt({ groupId: '123456', text: '这条没 @ 你', atBot: false })
   await sleep(500)
   check('未 @ 的消息被忽略', !mock.sentTexts().length)
-  // 发 @ 的「停」，验证指令通道
-  mock.sendGroupAt({ groupId: '123456', text: '停' })
+  // 发 @ 的 /stop，验证指令通道（v2 只认斜杠指令，自然语言「停」已不再处理）
+  mock.sendGroupAt({ groupId: '123456', text: '/stop' })
   await sleep(800)
   check('「停」有回复', mock.sentTexts().some((t) => t.includes('没有在跑')))
 } else {

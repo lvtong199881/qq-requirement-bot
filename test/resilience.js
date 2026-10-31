@@ -5,6 +5,7 @@
  */
 import { spawn } from 'node:child_process'
 import { writeFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startMockOneBot } from './mock-onebot.js'
@@ -20,13 +21,22 @@ const check = (name, cond, extra = '') => {
   cond ? pass++ : fail++
 }
 
-mkdirSync('/tmp/qqrs-resilience', { recursive: true })
+// 不要写死 /tmp：Windows 上没有这个目录，用系统临时目录
+const TMP = join(tmpdir(), 'qqrs-resilience')
+mkdirSync(TMP, { recursive: true })
+
+// config 现在强制要求有效的 requirement-spec skill，测试自己造一个
+const skillDir = join(TMP, 'skills', 'requirement-spec')
+mkdirSync(skillDir, { recursive: true })
+writeFileSync(join(skillDir, 'SKILL.md'), '---\nname: requirement-spec\ndescription: test fixture\n---\n')
+
 const cfg = (ws) => {
-  const p = `/tmp/qqrs-resilience/cfg-${Date.now()}.json`
+  const p = join(TMP, `cfg-${Date.now()}.json`)
   writeFileSync(
     p,
     JSON.stringify({
-      projectDir: '/tmp/qqrs-resilience',
+      repos: [{ id: 'app', name: 'test', path: TMP }],
+      skillDir,
       dshBin: 'dsh',
       profile: 'qqbot',
       bot: { qq: '10000', name: '产品同学' },
@@ -34,6 +44,8 @@ const cfg = (ws) => {
       limits: { maxMessagesPerMinute: 60, chunkChars: 400, maxChunksPerTurn: 12 },
       upload: { enabled: false },
       turnTimeoutMs: 60000,
+      // 端口 0 = 系统分配，避免和本机正在跑的 bot 撞车
+      panel: { enabled: true, port: 0, publicPort: 0, token: '' },
     }),
   )
   return p

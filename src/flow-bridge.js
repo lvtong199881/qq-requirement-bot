@@ -12,7 +12,7 @@
  */
 import { join, basename, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs'
-import { execSync, execFileSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
 import { parseCommand } from './commands.js'
@@ -1265,7 +1265,13 @@ function checkFinalArtifacts(reqDir) {
  */
 function packDirectory(dir, outFile) {
   try {
-    execFileSync('zip', ['-rq', outFile, basename(dir)], { cwd: dirname(dir), stdio: 'ignore' })
+    // Windows 没有 zip 命令，但 Win10 1803+ 自带 bsdtar；
+    // -a 按扩展名自动选格式，产出的就是标准 zip，不用引第三方库。
+    const [bin, args] =
+      process.platform === 'win32'
+        ? ['tar', ['-a', '-c', '-f', outFile, basename(dir)]]
+        : ['zip', ['-rq', outFile, basename(dir)]]
+    execFileSync(bin, args, { cwd: dirname(dir), stdio: 'ignore' })
     return existsSync(outFile) ? outFile : null
   } catch {
     return null
@@ -1300,7 +1306,9 @@ function collectPngs(dir) {
 /** 跑 git 命令，失败返回空串——git 不可用不该让流程崩 */
 function safeGit(cwd, args) {
   try {
-    return execSync(`git ${args.join(' ')}`, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    // 不要拼成 shell 字符串：Windows 上走 cmd.exe，路径里的空格和中文会被拆开。
+    // execFileSync 不经过 shell，参数原样传给 git。
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
   } catch {
     return ''
   }

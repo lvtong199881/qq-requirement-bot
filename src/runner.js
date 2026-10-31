@@ -5,8 +5,32 @@
  * 为什么用子进程而不是常驻 API：headless 是一次性任务模型，进程边界天然隔离，
  * 卡死可直接杀，且不需要碰 Web GUI 的鉴权链路。
  */
-import { spawn } from 'node:child_process'
+import { spawn, execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
+
+/**
+ * 杀掉回合子进程及其后代。
+ *
+ * Windows 上 child.kill 只结束直接子进程，dsh 拉起的 hvigor / node 构建
+ * 会变成孤儿继续跑，占着 CPU 和文件锁。必须 taskkill /T 按进程树杀。
+ * POSIX 保持 SIGTERM 语义，让 dsh 有机会收尾。
+ */
+function killChildTree(child) {
+  if (!child || child.exitCode !== null) return
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    } catch {
+      /* 进程可能已经退出 */
+    }
+  } else {
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 /**
  * @param {object} o
@@ -47,6 +71,11 @@ export function runTurn({
     // stdout/stderr 仍走管道（日志要用），父进程不在时写入会 EPIPE，
     // 下面的 error 处理会把这类错误吞掉。
     detached: true,
+    // Windows 上 npm 全局命令是 dsh.cmd，Node 的 spawn 不经过 cmd.exe 会直接
+    // ENOENT；统一走 shell 让 PATHEXT 解析，配裸 `dsh` 或完整路径都能用。
+    shell: process.platform === 'win32',
+    // detached 在 Windows 上会新建控制台窗口，不加这个每次回合都弹黑框。
+    windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   })
   onChild?.(child)
@@ -65,10 +94,14 @@ export function runTurn({
 
   const timer = setTimeout(() => {
     timedOut = true
-    child.kill('SIGTERM')
+    killChildTree(child)
     // 给 5 秒优雅退出，否则强杀
     setTimeout(() => {
-      if (child.exitCode === null) child.kill('SIGKILL')
+      if (child.exitCode === null) {
+        // Windows 的 taskkill /F 已经是强杀，重复调用是幂等的
+        if (process.platform === 'win32') killChildTree(child)
+        else child.kill('SIGKILL')
+      }
     }, 5000).unref?.()
   }, timeoutMs)
 
@@ -135,11 +168,7 @@ export function runTurn({
   runnerClassify = classifyError
 
   const abortHandler = () => {
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      /* ignore */
-    }
+    killChildTree(child)
   }
   signal?.addEventListener('abort', abortHandler, { once: true })
 

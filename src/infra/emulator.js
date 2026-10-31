@@ -10,10 +10,21 @@
  */
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+// DevEco 的默认安装位置按平台不同；Windows 从 ProgramFiles 拼，避免写死盘符。
+// 真实路径以安装为准，config.tools 可以覆盖。
+const DEVECO_HOME =
+  process.platform === 'win32'
+    ? join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Huawei', 'DevEco Studio')
+    : '/Applications/DevEco-Studio.app'
+
 const DEFAULT_BIN = {
-  harmony: '/Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator',
+  harmony:
+    process.platform === 'win32'
+      ? join(DEVECO_HOME, 'tools', 'emulator', 'Emulator.exe')
+      : join(DEVECO_HOME, 'Contents', 'tools', 'emulator', 'Emulator'),
   android: 'emulator',
   ios: 'xcrun',
 }
@@ -87,7 +98,7 @@ const harmonyAdapter = {
    * system / vendor / sys_prod 那几层不动：它们基本没改动，删了反而可能起不来。
    */
   wipeData(cfg, name, instancePath) {
-    const dir = instancePath ?? join(process.env.HOME ?? '', '.Huawei/Emulator/deployed', name)
+    const dir = instancePath ?? join(homedir(), '.Huawei/Emulator/deployed', name)
     const targets = ['userdata.img.qcow2', 'cache.img.qcow2', 'userdata.img', 'cache.img']
     const removed = []
     for (const f of targets) {
@@ -150,7 +161,7 @@ const ANDROID_VERSIONS = {
  */
 function avdOsInfo(avdName) {
   try {
-    const home = process.env.HOME || ''
+    const home = homedir()
     const ini = join(home, '.android', 'avd', `${avdName}.avd`, 'config.ini')
     if (!existsSync(ini)) return null
     const text = readFileSync(ini, 'utf8')
@@ -231,7 +242,7 @@ const androidAdapter = {
    * 和鸿蒙同理——比 -wipe-data 启动一次快得多。
    */
   wipeData(cfg, name) {
-    const dir = join(process.env.HOME ?? '', '.android', 'avd', `${name}.avd`)
+    const dir = join(homedir(), '.android', 'avd', `${name}.avd`)
     const targets = ['userdata-qemu.img', 'userdata-qemu.img.qcow2', 'cache.img', 'cache.img.qcow2']
     const removed = []
     for (const f of targets) {

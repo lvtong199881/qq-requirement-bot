@@ -8,14 +8,16 @@
  * 后来者可以抢占。这样进程被 kill -9 也不会永久卡住。
  */
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, unlinkSync, writeSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /** 默认锁有效期（毫秒）。合并操作是秒级的，5 分钟足够宽松 */
 const DEFAULT_TTL_MS = 5 * 60 * 1000
 
 function ensureParent(file) {
-  const dir = file.slice(0, file.lastIndexOf('/'))
-  if (dir) mkdirSync(dir, { recursive: true })
+  // 不能用 lastIndexOf('/') 切：Windows 路径是 C:\...，没有 '/'，
+  // 会返回 -1 把整个路径切错，锁文件建到意外位置。dirname 按平台分隔符处理。
+  const dir = dirname(file)
+  if (dir && dir !== '.') mkdirSync(dir, { recursive: true })
 }
 
 /** 进程是否还活着（权限不足也算活着，保守处理） */
