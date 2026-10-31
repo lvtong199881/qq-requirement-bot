@@ -44,13 +44,17 @@ function looksLikeSkill(dir) {
 
 /**
  * 解析 skill 目录。
+ * v2 编排读的是仓库内 skills/<角色>/SKILL.md，这里的 requirement-spec
+ * 只是 v1 遗留；找不到时默认返回 null，不阻塞启动。
  * @param {string|undefined} configured config 里显式写的路径（可为空）
- * @returns {string} 绝对路径
+ * @param {{required?: boolean}} [opts] required=true 时找不到仍抛错
+ * @returns {string|null} 绝对路径，或 null
  */
-export function resolveSkillDir(configured) {
+export function resolveSkillDir(configured, { required = false } = {}) {
   if (configured && configured.trim()) {
     const dir = expandHome(configured.trim())
     if (!looksLikeSkill(dir)) {
+      if (!required) return null
       throw new Error(
         `config 里指定的 skillDir 不是有效的 requirement-spec skill：${dir}\n` +
           `（需要该目录下存在 SKILL.md，且 frontmatter 含 name: requirement-spec）`,
@@ -61,6 +65,7 @@ export function resolveSkillDir(configured) {
   for (const dir of skillCandidates()) {
     if (looksLikeSkill(dir)) return dir
   }
+  if (!required) return null
   throw new Error(
     '找不到 requirement-spec skill。\n' +
       '可以用环境变量 QQ_RS_SKILL_ROOT 指向 skills 根目录，\n' +

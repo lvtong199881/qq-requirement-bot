@@ -27,7 +27,7 @@ try {
   config = loadConfig(configPath)
   ok(`配置文件：${config.configPath}`)
   ok(`项目目录：${config.projectDir}`)
-  ok(`skill 目录（动态解析）：${config.skillDir}`)
+  ok(`skill 目录（可选）：${config.skillDir ?? '（未配置，v2 用仓库 skills/）'}`)
   ok(`profile：${config.profile}｜bot 昵称：${config.bot.name}`)
   if (!config.bot.qq) warn('bot.qq 未填（不影响接收消息，但填了能识别自发消息）')
 
@@ -54,9 +54,13 @@ const key = resolveApiKey()
 if (key) ok(`DEEPSEEK_API_KEY 可用（长度 ${key.length}）`)
 else fail('找不到 DEEPSEEK_API_KEY：export 一下，或在 DSH Web GUI 保存模型密钥')
 
-console.log('\n3. skill')
-if (existsSync(`${config.skillDir}/SKILL.md`)) ok('SKILL.md 存在')
-else fail(`缺少 ${config.skillDir}/SKILL.md`)
+console.log('\n3. skill（可选）')
+if (config.skillDir && existsSync(`${config.skillDir}/SKILL.md`)) {
+  ok(`SKILL.md 存在：${config.skillDir}`)
+} else {
+  // v2 的角色卡在仓库 skills/<角色>/SKILL.md，requirement-spec 只是 v1 遗留
+  warn('没有 requirement-spec skill；v2 编排用仓库内 skills/<角色>/SKILL.md，不影响运行')
+}
 
 console.log('\n4. dsh 可执行')
 const which = await new Promise((resolve) => {
