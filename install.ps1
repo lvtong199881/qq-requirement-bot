@@ -16,6 +16,9 @@
 .PARAMETER DshPath
   dsh 可执行文件的完整路径。不填则自动从 PATH 和 DeepSeek Harness 安装目录里找。
 
+.PARAMETER SkipDshInstall
+  找不到 dsh 时不要自动下载安装。
+
 .PARAMETER PanelPort
   面板端口，默认 7878。
 
@@ -41,9 +44,13 @@ param(
   [string]$DshPath = '',
   [int]$PanelPort = 7878,
   [switch]$SkipDoctor,
+  [switch]$SkipDshInstall,
   [switch]$Yes,
   [switch]$DryRun
 )
+
+# DeepSeek Harness Windows 安装包（官方 latest 链接）
+$DshInstallerUrl = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe'
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -89,13 +96,11 @@ if (-not $gitCmd) {
 }
 Ok ((& git --version).Trim())
 
-# dsh 是 DeepSeek Harness 桌面应用自带的 CLI，不是 npm 包，没有公开下载地址。
-# 优先用 -DshPath，其次 PATH，最后探常见安装目录。
-if (-not $DshPath) {
-  $dshCmd = Get-Command dsh -ErrorAction SilentlyContinue
-  if ($dshCmd) { $DshPath = $dshCmd.Source }
-}
-if (-not $DshPath) {
+# dsh 是 DeepSeek Harness 桌面应用自带的 CLI，不是 npm 包。
+# 找不到时可以自动下载官方安装包静默安装（-SkipDshInstall 可跳过）。
+function Find-Dsh {
+  $cmd = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
   $candidates = @(
     (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'),
     (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.exe'),
@@ -103,16 +108,54 @@ if (-not $DshPath) {
     (Join-Path $env:ProgramFiles 'DeepSeek Harness\resources\runtime\cli\bin\dsh.exe')
   )
   foreach ($c in $candidates) {
-    if (Test-Path $c) { $DshPath = $c; break }
+    if (Test-Path $c) { return $c }
+  }
+  return ''
+}
+
+if (-not $DshPath) { $DshPath = Find-Dsh }
+
+if (-not $DshPath -and -not $SkipDshInstall) {
+  $doInstall = $false
+  if ($Yes) {
+    $doInstall = $true
+  } else {
+    $ans = Read-Host '  没找到 dsh。现在下载并安装 DeepSeek Harness？（约 200MB，装到当前用户目录）[y/N]'
+    if ($ans -match '^[yY]') { $doInstall = $true }
+  }
+
+  if ($doInstall) {
+    $tmp = Join-Path $env:TEMP 'dsh-setup.exe'
+    Step "下载 DeepSeek Harness → $tmp"
+    try {
+      # PS 5.1 默认可能还是 TLS 1.0，download.deepseek.com 要 1.2
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      $wc = New-Object System.Net.WebClient
+      $wc.DownloadFile($DshInstallerUrl, $tmp)
+      $wc.Dispose()
+      Ok '下载完成'
+
+      Step '静默安装（/S）…'
+      Start-Process -FilePath $tmp -ArgumentList '/S' -Wait | Out-Null
+      # 安装器可能先返回、后台才落盘，轮询几次再判定
+      for ($i = 0; $i -lt 6 -and -not $DshPath; $i++) {
+        Start-Sleep -Seconds 5
+        $DshPath = Find-Dsh
+      }
+    } catch {
+      Warn "自动安装失败：$($_.Exception.Message)"
+      Warn "可以手动下载安装：$DshInstallerUrl"
+    }
   }
 }
+
 if ($DshPath) {
   $dshBin = $DshPath
   Ok "dsh：$DshPath"
 } else {
   $dshBin = 'dsh'
-  Warn '找不到 dsh。装 DeepSeek Harness Windows 版后重跑本脚本会自动识别；'
-  Warn '也可以手动指定：.\install.ps1 -DshPath "C:\...\dsh.cmd"'
+  Warn '找不到 dsh。装 DeepSeek Harness 后重跑本脚本会自动识别；'
+  Warn "也可以手动指定：.\install.ps1 -DshPath `"C:\...\dsh.cmd`""
 }
 
 # ── 2/5 仓库 ─────────────────────────────────────────────
