@@ -63,7 +63,8 @@ if (keyNames.length) {
 console.log('\n3. dsh 可执行')
 const which = await new Promise((resolve) => {
   import('node:child_process').then(({ execFile }) => {
-    execFile(config.dshBin, ['--version'], (err, stdout) => {
+    // Windows 上 dsh 是 .cmd，execFile 不经过 shell 会直接 ENOENT
+    execFile(config.dshBin, ['--version'], { shell: process.platform === 'win32' }, (err, stdout) => {
       resolve(err ? null : (stdout || '').trim())
     })
   })

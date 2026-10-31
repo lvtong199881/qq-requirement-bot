@@ -352,7 +352,9 @@ if ($ApiKey -and $ApiKeyEnv) {
     Ok "[dry-run] 会设置用户环境变量 $ApiKeyEnv"
   } else {
     [Environment]::SetEnvironmentVariable($ApiKeyEnv, $ApiKey, 'User')
-    Ok "已写入用户环境变量 $ApiKeyEnv（重开窗口生效）"
+    # setx 只影响新进程；当前进程也设上，否则紧接着的 doctor 读不到
+    Set-Item -Path "env:$ApiKeyEnv" -Value $ApiKey
+    Ok "已写入用户环境变量 $ApiKeyEnv（新窗口生效，当前会话已可用）"
   }
 }
 
@@ -379,7 +381,10 @@ if (Test-Path $cfgPath) {
   if ($Provider -and -not $DryRun) {
     try {
       $existing = Get-Content $cfgPath -Raw | ConvertFrom-Json
-      $existing.model = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
+      # ConvertFrom-Json 返回 PSCustomObject，直接赋新属性会抛
+      # 「找不到属性 model」；必须 Add-Member 才加得上
+      $modelValue = [ordered]@{ provider = $Provider; model = $Model; apiKeyEnv = $ApiKeyEnv }
+      Add-Member -InputObject $existing -NotePropertyName model -NotePropertyValue $modelValue -Force
       $json = $existing | ConvertTo-Json -Depth 10
       [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding($false)))
       Ok "已更新 bot.config.json 的 model → $Provider/$Model"
