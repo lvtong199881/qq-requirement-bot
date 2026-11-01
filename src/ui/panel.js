@@ -10,7 +10,7 @@
 import { createServer } from 'node:http'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { InstanceRegistry } from '../instances.js'
 import { createEmulatorClient } from '../infra/emulator-client.js'
 import { reloadConfigInto } from '../config.js'
@@ -494,8 +494,10 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
   })
 }
 
-// 直接运行：node src/panel.js
-if (import.meta.url === `file://${process.argv[1]}`) {
+// 直接运行：node src/ui/panel.js
+// 不能用 `file://${process.argv[1]}`：Windows 上 argv[1] 是 C:\... 反斜杠路径，
+// 和 import.meta.url（file:///C:/...）永远不相等，入口块会静默不执行。
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { loadConfig } = await import('../config.js')
   let config
   try {

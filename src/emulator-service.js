@@ -19,6 +19,7 @@
  * 启动：node src/emulator-service.js [--port 7880]
  */
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { loadConfig } from './config.js'
 import { createEmulatorManager } from './infra/emulator.js'
 import { PLATFORMS } from './infra/platform.js'
@@ -248,7 +249,8 @@ export function startEmulatorService({ port = DEFAULT_PORT, config, log = consol
 }
 
 // 直接运行：node src/emulator-service.js
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows 上 argv[1] 是反斜杠路径，必须用 pathToFileURL 转，不能手拼 file://
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const portArg = process.argv.find((a) => a.startsWith('--port='))
   const port = Number(portArg?.split('=')[1] ?? process.env.EMULATOR_PORT ?? DEFAULT_PORT)
   await startEmulatorService({ port })
