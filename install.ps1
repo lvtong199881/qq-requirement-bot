@@ -585,9 +585,14 @@ if (-not $SkipDoctor -and -not $DryRun) {
 
 Write-Host ''
 Write-Host '下一步：' -ForegroundColor Cyan
-Write-Host '  1. 装官方 QQ（im.qq.com）和 NapCat Windows 一键包'
-Write-Host '  2. 打开 http://127.0.0.1:6099/webui 扫码登录小号'
-Write-Host '  3. NapCat 里开启正向 WebSocket（端口 3001）'
-Write-Host '  4. 把 bot 拉进群，@ 它说一句需求'
-Write-Host '  5. 启动 bridge：node src/index.js'
+if (-not $wsOk) {
+  Write-Host '  1. 装官方 QQ（im.qq.com）和 NapCat Windows 一键包'
+  Write-Host '  2. 打开 http://127.0.0.1:6099/webui 扫码登录小号'
+  Write-Host '  3. NapCat 里开启正向 WebSocket（端口 3001）'
+  Write-Host '  4. 把 bot 拉进群，@ 它说一句需求'
+  Write-Host '  5. 启动 bridge：node src/index.js'
+} else {
+  Write-Host '  1. 把 bot 拉进群，@ 它说一句需求'
+  Write-Host '  2. 启动 bridge：node src/index.js'
+}
 Write-Host ''
