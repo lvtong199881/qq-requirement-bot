@@ -292,6 +292,9 @@ export function loadConfig(configPath) {
     tools: {
       harmony: {
         hdc: pick(raw.tools?.harmony?.hdc, raw.tools?.hdc, 'hdc'),
+        // 模拟器 CLI。不填就走平台默认路径（Windows 是 DevEco 安装目录），
+        // 装到非默认位置时在这里指过去。
+        bin: pick(raw.tools?.harmony?.bin, raw.tools?.harmony?.emulator, null),
       },
       android: {
         adb: pick(raw.tools?.android?.adb, raw.tools?.adb, 'adb'),
