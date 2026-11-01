@@ -62,9 +62,10 @@ if (keyNames.length) {
 
 console.log('\n3. dsh 可执行')
 const which = await new Promise((resolve) => {
-  import('node:child_process').then(({ execFile }) => {
-    // Windows 上 dsh 是 .cmd，execFile 不经过 shell 会直接 ENOENT
-    execFile(config.dshBin, ['--version'], { shell: process.platform === 'win32' }, (err, stdout) => {
+  import('node:child_process').then(({ exec }) => {
+    // 用 exec（走 shell）而不是 execFile + shell：路径含空格时
+    // （...\DeepSeek Harness\...）必须靠引号包住整条命令。
+    exec(`"${config.dshBin}" --version`, { timeout: 15000, windowsHide: true }, (err, stdout) => {
       resolve(err ? null : (stdout || '').trim())
     })
   })

@@ -62,7 +62,14 @@ export function runTurn({
   // 用 "-" 从 stdin 读 prompt，避免超长需求被命令行长度限制截断
   args.push('-')
 
-  const child = spawn(dshBin, args, {
+  // Windows 上 dsh 是 .cmd，必须经 cmd.exe；而且 DeepSeek Harness 的安装路径
+  // 通常含空格（...\DeepSeek Harness\...），命令必须加引号，否则会被拆开。
+  // 参数拼进命令字符串、args 传空数组，顺带避开 shell:true + args 的 DEP0190。
+  const isWin = process.platform === 'win32'
+  const quoteArg = (a) => (/\s/.test(a) ? `"${a}"` : a)
+  const spawnTarget = isWin ? `"${dshBin}" ${args.map(quoteArg).join(' ')}` : dshBin
+
+  const child = spawn(spawnTarget, isWin ? [] : args, {
     cwd: projectDir,
     env,
     // detached：bridge 重启/退出时不要连带杀掉正在跑的回合。
@@ -71,9 +78,7 @@ export function runTurn({
     // stdout/stderr 仍走管道（日志要用），父进程不在时写入会 EPIPE，
     // 下面的 error 处理会把这类错误吞掉。
     detached: true,
-    // Windows 上 npm 全局命令是 dsh.cmd，Node 的 spawn 不经过 cmd.exe 会直接
-    // ENOENT；统一走 shell 让 PATHEXT 解析，配裸 `dsh` 或完整路径都能用。
-    shell: process.platform === 'win32',
+    shell: isWin,
     // detached 在 Windows 上会新建控制台窗口，不加这个每次回合都弹黑框。
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
