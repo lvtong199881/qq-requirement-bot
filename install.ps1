@@ -68,8 +68,8 @@ param(
 # DeepSeek Harness Windows 安装包（官方 latest 链接）
 $DshInstallerUrl = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe'
 
-# QQ NT ARM64 安装包。版本会随 QQ 更新变化，失效时换成官网对应版本的直链。
-$QqInstallerUrl = 'https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/e8e54bbb/QQ_9.9.36_260924_arm64_01.exe'
+# QQ NT x64 安装包。版本会随 QQ 更新变化，失效时换成官网对应版本的直链。
+$QqInstallerUrl = 'https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/e8e54bbb/QQ_9.9.36_260924_x64_01.exe'
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -482,6 +482,9 @@ if ($wsOk) {
     try {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
       $wc = New-Object System.Net.WebClient
+      # 腾讯 CDN 会拒绝没有浏览器 UA / Referer 的请求（403）
+      $wc.Headers.Add('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36')
+      $wc.Headers.Add('Referer', 'https://im.qq.com/pcqq')
       $wc.DownloadFile($QqInstallerUrl, $qqSetup)
       $wc.Dispose()
       Ok "下载完成：$qqSetup"
@@ -496,6 +499,7 @@ if ($wsOk) {
     } catch {
       Warn "QQ 下载/安装失败：$($_.Exception.Message)"
       Warn "可以手动下载：$QqInstallerUrl"
+      Start-Process 'https://im.qq.com/pcqq'
     }
   } else {
     Ok "QQ：$qqExe"
