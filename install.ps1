@@ -532,7 +532,9 @@ if ($wsOk) {
   if ($installer) {
     Warn '接下来运行安装器（会弹 UAC），按提示装到 QQ 上'
     try {
-      Start-Process -FilePath $installer.FullName -Verb RunAs
+      # 必须把工作目录设成安装器所在目录：安装器用相对路径 .\7z.exe 解压 QQ，
+      # 从 C:\qq-bot 启动就会报「7z.exe 不是内部或外部命令」。
+      Start-Process -FilePath $installer.FullName -WorkingDirectory (Split-Path $installer.FullName -Parent) -Verb RunAs
     } catch {
       Warn "启动安装器失败：$($_.Exception.Message)"
       Warn "手动运行：$($installer.FullName)"
