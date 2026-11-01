@@ -268,6 +268,28 @@ if (Test-Path $profileDst) {
 # ── 4/5 配置 ─────────────────────────────────────────────
 Step '4/5 bot.config.json'
 
+$cfgPath = Join-Path $Root 'bot.config.json'
+
+# 已有配置里已经选了供应商和模型 → 沿用，不再问一遍
+$existingModel = $null
+if (Test-Path $cfgPath) {
+  try {
+    $onDisk = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($onDisk.model -and $onDisk.model.provider -and $onDisk.model.model) {
+      $existingModel = $onDisk.model
+    }
+  } catch {
+    # 配置读坏了就当没有，下面会重新生成
+  }
+}
+
+if ($existingModel -and -not $Provider) {
+  $Provider = $existingModel.provider
+  $Model = $existingModel.model
+  if (-not $ApiKeyEnv) { $ApiKeyEnv = $existingModel.apiKeyEnv }
+  Ok "沿用已有模型配置：$Provider/$Model"
+}
+
 # 模型配置：预置供应商 + 上下键选择。
 # 两家都是 OpenAI 兼容接口，模型列表统一走 GET {baseUrl}/models。
 $providerInfo = @{
@@ -296,10 +318,20 @@ if ($Provider) {
     if (-not $ApiKeyEnv) { $ApiKeyEnv = $info.ApiKeyEnv }
 
     if (-not $ApiKey -and -not $Yes) {
-      Write-Host "  $Provider 的 key 环境变量：$ApiKeyEnv" -ForegroundColor DarkGray
-      $ApiKey = Read-Host '  粘贴 API key（可留空稍后自己设）'
-      # 从文件/聊天里复制常带引号或首尾空格，不清掉会 401
-      if ($ApiKey) { $ApiKey = $ApiKey.Trim().Trim('"').Trim("'").Trim() }
+      # 环境变量里已经有 key 就不再让人重填（重跑安装脚本时最常见）
+      $existingKey = $null
+      if ($ApiKeyEnv) {
+        $existingKey = [Environment]::GetEnvironmentVariable($ApiKeyEnv, 'User')
+        if (-not $existingKey) { $existingKey = [Environment]::GetEnvironmentVariable($ApiKeyEnv, 'Process') }
+      }
+      if ($existingKey) {
+        Ok "环境变量 $ApiKeyEnv 已存在，跳过 key 输入"
+      } else {
+        Write-Host "  $Provider 的 key 环境变量：$ApiKeyEnv" -ForegroundColor DarkGray
+        $ApiKey = Read-Host '  粘贴 API key（可留空稍后自己设）'
+        # 从文件/聊天里复制常带引号或首尾空格，不清掉会 401
+        if ($ApiKey) { $ApiKey = $ApiKey.Trim().Trim('"').Trim("'").Trim() }
+      }
     }
 
     $models = @()
@@ -367,7 +399,6 @@ if ($ApiKey -and $ApiKeyEnv) {
   }
 }
 
-$cfgPath = Join-Path $Root 'bot.config.json'
 if (Test-Path $cfgPath) {
   Ok 'bot.config.json 已存在，跳过'
   # 之前生成时 dshBin 可能还是占位的 dsh；这次探测到真实路径就补上，
