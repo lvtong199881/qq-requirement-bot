@@ -718,6 +718,53 @@
       </div>
     </template>
 
+    <!-- ===== 模拟器配置（设置下的二级页） ===== -->
+    <template v-if="view === 'emulator-config'">
+      <div class="page-head crumbs">
+        <button class="menu-btn" @click="switchView('settings')">← 设置</button>
+        <h1>模拟器配置</h1>
+      </div>
+      <div class="panel">
+        <div class="card">
+          <h2>鸿蒙</h2>
+          <p class="desc">DevEco Studio 自带的模拟器 CLI 和 hdc。路径含空格时直接粘贴完整路径。</p>
+          <div class="desc" style="margin:12px 0 4px">模拟器 CLI（Emulator.exe）</div>
+          <input class="field" v-model="tools.harmony.bin"
+                 placeholder="C:\Program Files\Huawei\DevEco Studio\tools\emulator\Emulator.exe">
+          <div class="desc" style="margin:12px 0 4px">hdc</div>
+          <input class="field" v-model="tools.harmony.hdc" placeholder="hdc">
+        </div>
+
+        <div class="card">
+          <h2>Android</h2>
+          <p class="desc">Android SDK 里的 emulator 和 adb。</p>
+          <div class="desc" style="margin:12px 0 4px">模拟器 CLI（emulator）</div>
+          <input class="field" v-model="tools.android.bin" placeholder="emulator">
+          <div class="desc" style="margin:12px 0 4px">adb</div>
+          <input class="field" v-model="tools.android.adb" placeholder="adb">
+        </div>
+
+        <div class="card">
+          <h2>iOS</h2>
+          <p class="desc">macOS 上的 xcrun（Windows 上不用管）。</p>
+          <div class="desc" style="margin:12px 0 4px">xcrun</div>
+          <input class="field" v-model="tools.ios.bin" placeholder="xcrun">
+        </div>
+
+        <div class="row">
+          <button class="menu-btn primary" @click="saveTools()" :disabled="settingsSaving">
+            {{ settingsSaving ? '保存中…' : '保存' }}
+          </button>
+          <button class="menu-btn" @click="loadSettings()" :disabled="settingsSaving">重置</button>
+          <span v-if="settingsError" class="msg err">{{ settingsError }}</span>
+          <span v-else-if="settingsOk" class="msg ok">{{ settingsOk }}</span>
+        </div>
+        <p class="desc" style="margin-top:10px">
+          保存后需要重启模拟器服务（<code>node src/emulator-service.js</code>）才会读到新路径。
+        </p>
+      </div>
+    </template>
+
     <!-- ===== 设置 ===== -->
     <template v-if="view === 'settings'">
       <div class="page-head"><h1>设置</h1></div>
@@ -775,6 +822,17 @@
             </p>
           </div>
           <button class="menu-btn primary" @click="switchView('messages')">编辑 →</button>
+        </div>
+
+        <div class="card card-row">
+          <div>
+            <h2>模拟器配置</h2>
+            <p class="desc">
+              配置各平台模拟器 CLI 与工具路径（鸿蒙 Emulator.exe / hdc、Android emulator / adb）。
+              保存后重启模拟器服务生效。
+            </p>
+          </div>
+          <button class="menu-btn primary" @click="switchView('emulator-config')">配置 →</button>
         </div>
 
         <div class="card">
@@ -890,7 +948,7 @@ createApp({
   setup() {
     // 视图写进真实路径（/console/emulators），不用 hash：
     // 刷新不会跳回大盘，链接也能直接发给别人。服务端把 /console/* 都回同一份 HTML。
-    const VIEWS = ['board', 'projects', 'emulators', 'instances', 'settings', 'messages']
+    const VIEWS = ['board', 'projects', 'emulators', 'instances', 'settings', 'messages', 'emulator-config']
     const BASE = '/console'
 
     /** 从当前路径解析视图；/console 或 /console/ 都算大盘 */
@@ -984,6 +1042,12 @@ createApp({
     const settingsError = ref('')
     const settingsOk = ref('')
     const settingsSaving = ref(false)
+    // 模拟器/工具路径；模板里 tools.harmony.bin 会自动解包这个 ref
+    const tools = ref({
+      harmony: { bin: '', hdc: '' },
+      android: { bin: '', adb: '' },
+      ios: { bin: '' },
+    })
 
     let pollTimer = null
 
@@ -1367,6 +1431,13 @@ createApp({
         messages.value = (d.messages || []).map((m) => ({ ...m }))
         if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
         if (Array.isArray(d.timeoutOptions) && d.timeoutOptions.length) timeoutOptions.value = d.timeoutOptions
+        if (d.tools) {
+          tools.value.harmony.bin = d.tools.harmony?.bin ?? ''
+          tools.value.harmony.hdc = d.tools.harmony?.hdc ?? ''
+          tools.value.android.bin = d.tools.android?.bin ?? ''
+          tools.value.android.adb = d.tools.android?.adb ?? ''
+          tools.value.ios.bin = d.tools.ios?.bin ?? ''
+        }
         messageErrors.value = {}
       } catch (e) {
         settingsError.value = '读取失败：' + e.message
@@ -1420,6 +1491,29 @@ createApp({
         if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
         const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
         settingsOk.value = '已保存' + (reloaded ? '，' + reloaded + ' 个实例已生效' : '')
+      } catch (e) {
+        settingsError.value = '保存失败：' + e.message
+      } finally {
+        settingsSaving.value = false
+      }
+    }
+
+    async function saveTools() {
+      settingsError.value = ''
+      settingsOk.value = ''
+      settingsSaving.value = true
+      try {
+        const r = await fetch('/api/settings/save', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tools: tools.value }),
+        })
+        const d = await r.json()
+        if (!d.ok) {
+          settingsError.value = d.error || '保存失败'
+          return
+        }
+        settingsOk.value = '已保存，重启模拟器服务后生效'
       } catch (e) {
         settingsError.value = '保存失败：' + e.message
       } finally {
@@ -1654,6 +1748,7 @@ createApp({
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
       switchView, loadSettings, saveSettings,
       stageTimeouts, timeoutOptions, timeoutFields, saveTimeouts,
+      tools, saveTools,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, detail,
     }
   },

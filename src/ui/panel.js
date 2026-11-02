@@ -177,6 +177,20 @@ function readSettings(repoRoot) {
         acceptance: raw.stageTimeouts?.acceptance ?? 60,
       },
       timeoutOptions: TIMEOUT_OPTIONS,
+      // 各平台的模拟器 / 工具路径；空字符串表示用代码里的平台默认值
+      tools: {
+        harmony: {
+          bin: raw.tools?.harmony?.bin ?? '',
+          hdc: raw.tools?.harmony?.hdc ?? '',
+        },
+        android: {
+          bin: raw.tools?.android?.bin ?? '',
+          adb: raw.tools?.android?.adb ?? '',
+        },
+        ios: {
+          bin: raw.tools?.ios?.bin ?? '',
+        },
+      },
     }
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
@@ -212,6 +226,20 @@ function writeSettings(repoRoot, patch) {
     }
     if (Object.keys(clean).length) raw.messageTemplates = clean
     else delete raw.messageTemplates
+  }
+  if (patch.tools !== undefined) {
+    // 只保留非空字符串；空值等于「用平台默认」，不写进配置
+    const clean = {}
+    for (const p of ['harmony', 'android', 'ios']) {
+      const entry = patch.tools?.[p]
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+      const out = {}
+      for (const [k, v] of Object.entries(entry)) {
+        if (typeof v === 'string' && v.trim()) out[k] = v.trim()
+      }
+      if (Object.keys(out).length) clean[p] = out
+    }
+    raw.tools = { ...(raw.tools || {}), ...clean }
   }
   try {
     writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`, 'utf8')
@@ -338,11 +366,12 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         if (
           body.adminUsers === undefined &&
           body.messageTemplates === undefined &&
-          body.stageTimeouts === undefined
+          body.stageTimeouts === undefined &&
+          body.tools === undefined
         ) {
           return json(res, 400, {
             ok: false,
-            error: '没有要保存的字段（adminUsers / messageTemplates / stageTimeouts）',
+            error: '没有要保存的字段（adminUsers / messageTemplates / stageTimeouts / tools）',
           })
         }
 
@@ -364,6 +393,13 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           const v = validateAllMessages(body.messageTemplates)
           if (!v.ok) return json(res, 400, { ok: false, error: v.error })
           patch.messageTemplates = body.messageTemplates
+        }
+
+        if (body.tools !== undefined) {
+          if (typeof body.tools !== 'object' || Array.isArray(body.tools)) {
+            return json(res, 400, { ok: false, error: 'tools 必须是对象' })
+          }
+          patch.tools = body.tools
         }
 
         const written = writeSettings(repoRoot, patch)
