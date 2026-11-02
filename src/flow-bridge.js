@@ -248,7 +248,7 @@ export function createFlowBridge(deps) {
    */
   function pickRepoFor(text) {
     const repos = config.repos ?? []
-    if (!repos.length) return { ok: false, reason: '没有配置任何项目', candidates: [] }
+    if (!repos.length) return { ok: false, reason: '还没有配置项目仓库，请先在管理面板的「项目」页添加一个', candidates: [] }
     if (repos.length === 1) return { ok: true, repo: repos[0] }
 
     const lower = String(text ?? '').toLowerCase()
@@ -267,6 +267,11 @@ export function createFlowBridge(deps) {
 
     const picked = pickRepoFor(text)
     if (!picked.ok) {
+      if (!picked.candidates.length) {
+        // 一个仓库都没配：直接提示去面板加，不进入「选项目」状态
+        await sendPlain(groupId, picked.reason, { replyTo })
+        return
+      }
       // 多个项目又没提到具体哪个：给用户选，别自己猜
       const list = picked.candidates
         .map((r, i) => `${i + 1}. ${r.name}（${platformOf(r).label}）`)

@@ -26,7 +26,7 @@ let config
 try {
   config = loadConfig(configPath)
   ok(`配置文件：${config.configPath}`)
-  ok(`项目目录：${config.projectDir}`)
+  ok(`项目目录：${config.projectDir ?? '（未配置，接需求前先在面板添加仓库）'}`)
   ok(`profile：${config.profile}｜bot 昵称：${config.bot.name}`)
   if (!config.bot.qq) warn('bot.qq 未填（不影响接收消息，但填了能识别自发消息）')
 
@@ -40,7 +40,7 @@ try {
     fail('群策略：deny —— 不会服务任何群')
   }
   for (const g of config.groups) {
-    if (!existsSync(g.projectDir)) fail(`群 ${g.groupId} 的项目目录不存在：${g.projectDir}`)
+    if (g.projectDir && !existsSync(g.projectDir)) fail(`群 ${g.groupId} 的项目目录不存在：${g.projectDir}`)
   }
 } catch (err) {
   fail(err.message)
@@ -145,7 +145,7 @@ if (runRealTurn) {
   const res = await runTurn({
     dshBin: config.dshBin,
     profile: config.profile,
-    projectDir: group?.projectDir || config.projectDir,
+    projectDir: group?.projectDir || config.projectDir || process.cwd(),
     prompt: '只回答两个字：收到。不要调用任何工具，也不要输出 [[WAITING]]。',
     env: { ...process.env, DEEPSEEK_API_KEY: key },
     timeoutMs: 120_000,

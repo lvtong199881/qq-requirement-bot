@@ -95,16 +95,12 @@ export function loadConfig(configPath) {
 
   // 仓库只有一种配法：repos 数组。单仓库就是一个元素，不需要第二套入口——
   // 以前同时认 projectDir 和 repos，两套配置迟早会不一致。
-  if (!Array.isArray(raw.repos) || raw.repos.length === 0) {
-    throw new Error(
-      'config 缺少 repos（需求要落到的仓库列表）。单仓库写一项即可：\n' +
-        '  "repos": [{ "id": "app", "path": "~/your-project" }]',
-    )
-  }
+  // 允许为空：刚装好还没加项目时 bot 也能启动，接需求前在面板里加一个即可。
+  const rawRepos = Array.isArray(raw.repos) ? raw.repos : []
 
   const PLATFORM_IDS = ['harmony', 'android', 'ios']
   const checkoutRoot = expandHome(raw.checkoutRoot?.trim?.() || '~/.qq-bot/checkouts')
-  const repos = raw.repos.map((r, i) => {
+  const repos = rawRepos.map((r, i) => {
     // id 是内部标识，建出来就不再变（路径都按它派生）；name 才是给人看的，
     // 可以随时改。id 缺省时生成一个随机的。
     const id = String(r.id ?? `r${Math.random().toString(36).slice(2, 10)}`)
@@ -134,10 +130,10 @@ export function loadConfig(configPath) {
   }
 
   // 第一个仓库只用于兜底（实例标识、日志），不再代表「默认项目」
-  const primaryRepo = repos[0]
+  const primaryRepo = repos[0] ?? null
   // projectDir 是从 repos 派生的，不是独立配置项：下游大量代码按单仓库写，
-  // 主仓库的路径就继续叫这个名，省得全项目改一遍。
-  const projectDir = primaryRepo.path
+  // 主仓库的路径就继续叫这个名，省得全项目改一遍。没有仓库时为 null。
+  const projectDir = primaryRepo?.path ?? null
 
   // 每个仓库一套裸仓库与工作区根目录。单仓库沿用原来的固定路径
   // （~/.qq-bot/repo.git、~/.qq-bot/worktrees），不破坏已经跑起来的数据；
@@ -152,10 +148,12 @@ export function loadConfig(configPath) {
     r.worktreeRoot = single ? wtBase : join(wtRoot, `${r.id}`)
   }
   // 主仓库还没克隆时不做目录校验（第一次用到会 clone）；配了 url 就合法
-  if (primaryRepo.url && !existsSync(projectDir)) {
-    // 交给 ensureCheckout
-  } else if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
-    throw new Error(`主仓库路径不存在或不是目录：${projectDir}`)
+  if (primaryRepo) {
+    if (primaryRepo.url && !existsSync(projectDir)) {
+      // 交给 ensureCheckout
+    } else if (!existsSync(projectDir) || !statSync(projectDir).isDirectory()) {
+      throw new Error(`主仓库路径不存在或不是目录：${projectDir}`)
+    }
   }
 
   return {

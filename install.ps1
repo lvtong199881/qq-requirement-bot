@@ -232,21 +232,20 @@ if ($DshPath) {
 Step '2/5 项目仓库'
 
 if (-not $Repo) {
-  $defaultRepo = Join-Path $env:USERPROFILE 'qq-bot-test'
-  $Repo = Ask "项目仓库路径（需求要落到哪个业务代码仓库；直接回车 = 先用空目录 $defaultRepo 跑通，稍后再改）" $defaultRepo
-}
-if (-not $Repo) {
-  Bad '没有仓库路径'
-  exit 1
+  $Repo = Ask '项目仓库路径（可留空，稍后在面板「项目」页添加）' ''
 }
 
-if (Test-Path $Repo) {
-  Ok "仓库目录：$Repo"
-} elseif ($DryRun) {
-  Ok "[dry-run] 会创建目录 $Repo"
+if ($Repo) {
+  if (Test-Path $Repo) {
+    Ok "仓库目录：$Repo"
+  } elseif ($DryRun) {
+    Ok "[dry-run] 会创建目录 $Repo"
+  } else {
+    New-Item -ItemType Directory -Path $Repo -Force | Out-Null
+    Ok "已创建空目录 $Repo（把项目放进来，或在 bot.config.json 里改成 git url）"
+  }
 } else {
-  New-Item -ItemType Directory -Path $Repo -Force | Out-Null
-  Ok "已创建空目录 $Repo（把项目放进来，或在 bot.config.json 里改成 git url）"
+  Ok '先不配项目，启动后到面板「项目」页添加即可'
 }
 
 # ── 3/5 dsh profile ──────────────────────────────────────
@@ -442,7 +441,6 @@ if (Test-Path $cfgPath) {
   if ($Qq) { $admins = @($Qq) }
 
   $cfg = [ordered]@{
-    repos        = @([ordered]@{ id = 'app'; name = $repoName; path = $Repo })
     dshBin       = $dshBin
     profile      = 'qqbot'
     bot          = [ordered]@{ qq = $Qq; name = '产品同学' }
@@ -466,6 +464,11 @@ if (Test-Path $cfgPath) {
       token      = ''
     }
     superAdmin   = $admins
+  }
+
+  # 没填仓库就不写 repos，启动后到面板里加
+  if ($Repo) {
+    $cfg.repos = @([ordered]@{ id = 'app'; name = $repoName; path = $Repo })
   }
 
   if ($Provider -and $Model) {

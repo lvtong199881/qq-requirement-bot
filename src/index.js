@@ -79,7 +79,7 @@ log('编排：状态机驱动')
 if (config.model?.provider) {
   log(`模型：${config.model.provider}/${config.model.model ?? '默认'}`)
 }
-log(`项目目录：${config.projectDir}`)
+log(`项目目录：${config.projectDir ?? '（未配置，接需求前先在面板添加仓库）'}`)
 log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
 
 /** 群成员角色缓存：`groupId:userId` → {role, at}。群管判定每条消息都要，缓存 5 分钟 */
