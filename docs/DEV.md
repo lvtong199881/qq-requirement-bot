@@ -7,7 +7,7 @@
 ## 会消耗 token 的两个
 
 ```bash
-node test/full.js             # 全链路：从 App API 提需求 → 跑 dsh → 在消息流里收到回复
+node test/full.js             # 全链路：从 App API 建群 → @需求bot 提需求 → 跑 dsh → 在消息流里收到回复
 node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 ```
 
@@ -18,7 +18,8 @@ node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 ```bash
 node test/full.js --no-llm    # 起真实 bridge 进程，验证握手与路由
 node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参、错误码
-node test/app-api.js          # App API：注册登录、权限、消息顺序、通过/打回
+node test/app-api.js          # App API：注册登录、权限、消息顺序、@ 与普通聊天
+node test/engine-channel.js   # IM/引擎拆分：路由三态、事件游标、引擎通道鉴权与白名单
 node test/transport.js        # 传输层：文本/图片/文件落库、失败不抛、跨会话不串
 node test/messages.js         # 消息 JSONL：seq 递增、增量窗口、坏行容错
 ```
@@ -32,12 +33,17 @@ node test/messages.js         # 消息 JSONL：seq 递增、增量窗口、坏�
 
 ```
 src/
-  index.js          入口：权限闸门、面板 API、App API
+  index.js          单机入口：编排层 + 面板 API + App API 一起起（IM 和引擎在一个进程里）
+  im.js             只跑 IM：账号、群、消息、产物、App API、引擎通道（不需要模型凭证和仓库）
+  engine.js         只跑需求引擎：长轮询 IM 拿事件、跑流程、回写消息和阶段
   flow-bridge.js    消息入口 + 播报 + feature 分支 + 合并
+  im/
+    router.js       「这句算聊天还是提需求」：@ 判据、去 @、模式切换
+    events.js       引擎事件队列：落盘、游标、长轮询
   account/          账号：auth.js（scrypt + HS256 token）、store.js（用户表）
-  api/              App API：server.js（路由）、threads.js（thread 与编排层接线）
+  api/              server.js（路由）、threads.js（thread ↔ 编排层接线）、engine.js（引擎通道）、http-util.js
   store/            消息 JSONL 落库、产物文件
-  transport/        transport.js（把发送变成落库，编排层不关心存哪）
+  transport/        transport.js（本地落库）、http.js（发到 IM 的 HTTP 客户端）
   flow/
     flow.js         阶段定义与状态机（纯函数，不碰 fs）
     orchestrator.js 任务包组装、回执校验、产物核对
@@ -50,12 +56,24 @@ src/
   ui/               panel.js / server.js / messages.js / format.js
   config.js  state.js  runner.js  commands.js  doctor.js
 skills/             按阶段拆的角色卡，每回合只加载一张
-app/                Flutter 客户端（需求列表 / 详情 / 登录），见 app/README.md
+app/                Flutter 客户端（群列表 / 群详情 / 登录），见 app/README.md
 test/               独立测试脚本，没有框架
 ```
 
 依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
 和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
+
+三个入口，同一套 `api/` 与 `store/`：
+
+| 入口 | 装了什么 | 什么时候用 |
+| --- | --- | --- |
+| `src/index.js` | 编排层 + 面板 + App API | 单机，一台机器什么都干 |
+| `src/im.js` | 账号/群/消息/产物 + App API + 引擎通道 | 只当 IM 用（拆开部署的 IM 那台） |
+| `src/engine.js` | 编排层 + HTTP transport | 只跑需求（拆开部署的引擎那台） |
+
+拆分的关键约定：`src/api/threads.js` 不再自己调 `flowBridge`，而是把「要不要交给引擎」
+算成 `routeMessage()` 的结果，交给注入的 `dispatch`。单机时 `dispatch` 直接问 state machine；
+拆开时它在 IM 侧变成 `EngineEvents.append`。这样同一个 `threads.js` 两边都能用。
 
 会话标识这个参数在代码里仍叫 `groupId`，文件名仍是 `.state/group-<id>.json`。
 这是 QQ 时代留下的命名，现在装的是 App 的 threadId：改名要动上百处、跨十几个
@@ -98,7 +116,7 @@ dart run tool/smoke.dart http://127.0.0.1:7881 用户名 密码
 `tool/smoke.dart` 故意放在 `test/` 外面：它要求后端进程在跑，放进
 `flutter test` 会让没有后端的机器上随机变红。带普通成员账号跑也能过
 ——脚本会先看 `/api/auth/me` 的 `perms`，没有 `startRequirement` 就
-改验「建需求被拒」，没有 `confirm` 就验「点通过被拒且文案可展示」。
+改验「建群被拒」，没有 `confirm` 就验「点通过被拒且文案可展示」。
 
 App 侧的三条测试各管一摊，不重叠：
 

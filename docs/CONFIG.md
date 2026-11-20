@@ -4,8 +4,9 @@
 
 全部配置都在仓库根目录的 `bot.config.json` 里，首次从 `bot.config.example.json` 复制（见[安装指南](INSTALL.md)第 4 步）。
 
-**会话不用配。** 在 App 里点「+」新建需求，服务端自动给它一个 threadId，
-状态、消息、产物都挂在这个 id 下面。配置文件里不需要列出任何会话。
+**会话不用配。** 在 App 里点「建群」起个群名，服务端自动给它一个 threadId，
+状态、消息、产物都挂在这个 id 下面。群里不 @ 需求 bot 就只是聊天，@ 一句才开始跑需求。
+配置文件里不需要列出任何会话。
 
 ```jsonc
 {
@@ -48,7 +49,18 @@
     "port": 7881,
     "host": "0.0.0.0",
     "allowedOrigin": "",
-    "maxBodyBytes": 1000000
+    "maxBodyBytes": 1000000,
+    // 引擎密钥：IM 和需求引擎分开跑时用。留空则由 src/im.js 首次启动自动生成，
+    // 落 .state/engine-token 并打印一次（抄进引擎那台机器的 im.token）
+    "engineToken": ""
+  },
+
+  // 只有 src/engine.js 读这一段，单机跑 src/index.js 时完全不看
+  // 分开部署：IM 在这台（src/im.js），引擎在那台（src/engine.js）
+  "im": {
+    "url": "http://192.168.1.10:7881",
+    "token": "",
+    "pollWaitMs": 25000
   }
 }
 ```
@@ -65,6 +77,24 @@
 | `host` | `0.0.0.0` | `cloudflared` / `tailscale` 要能连进来。想更保守就写 `127.0.0.1` 再本机反代 |
 | `allowedOrigin` | `""` | CORS 白名单，留空则按请求的 `Origin` 回显。App 是原生请求，用不到 |
 | `maxBodyBytes` | `1000000` | 单请求体上限 |
+| `engineToken` | `""` | 引擎密钥。留空时 `src/im.js` 首次启动自动生成并打印一次 |
+
+### IM 与引擎分开部署
+
+默认 `node src/index.js` 一个进程里两样都有。想把 IM 当成普通聊天工具用（不需要做需求时也能挂着），就拆开：
+
+| 进程 | 入口 | 配置它要的 |
+| --- | --- | --- |
+| IM | `node src/im.js` | 只有 `api` 段；`model`、`repos` 都可以空着 |
+| 引擎 | `node src/engine.js` | `im.url` + `im.token` + 正常的 `model`/`repos` |
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `im.url` | `""` | IM 的地址，例如 `http://192.168.1.10:7881`；引擎主动连它 |
+| `im.token` | `""` | 引擎密钥，来自 IM 启动时打印的那行或 `.state/engine-token` |
+| `im.pollWaitMs` | `25000` | 长轮询每次最多挂多久（上限 30 秒），小一点断线恢复更快、请求更频繁 |
+
+顺序不能反：先起 IM 拿到密钥，再起引擎。IM 侧 70 秒收不到轮询就把引擎当离线，App 列表顶部会提示「需求引擎没连上」，群照样能聊。从来没连上过的部署（只拿 IM 当聊天工具用）不会提示，`online` 返回 `null`。
 
 ### 开在 0.0.0.0 的代价
 

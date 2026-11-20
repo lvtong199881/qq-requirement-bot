@@ -443,11 +443,13 @@ App 首屏据此决定「显示注册还是只显示登录」，以及要不要�
 前端拿 `can` 决定按钮置灰，而不是自己写 `if (role === 'admin')`。
 规则变了只改服务端一处。
 
-## 需求（thread）
+## 群与需求（thread）
 
-App 里的「一条需求」在服务端就是一个 thread。它的 id 形如 `t1a2b3c4d5e6`，
-在编排层里直接当作原来的 `groupId` 用——状态机、并发槽、worktree 池、
-产物校验、git 操作全部不用改。
+App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，在编排层里直接当作原来的 `groupId` 用——状态机、并发槽、worktree 池、产物校验、git 操作全部不用改。
+
+群是容器，聊天和需求都在群里：**不 @ 需求 bot 就只是聊天，@ 一句才开始跑需求**。所以群有两种形态——还没提过需求的群（`mode: "chat"`、`pending: true`，没有 `name`/`stage`），和已经绑上需求的群（`mode: "requirement"`，有 `name`、`stage`、`stages`）。`groupName` 是建群时起的名，一直不变；`name` 是需求名，随流程走。
+
+`mode` 一旦变成 `requirement` 就不会退回 `chat`：它决定「这条 @ 是接着当前需求说，还是开一条新需求」，来回切换会让这个判断变得不可预测。
 
 ### `GET /api/threads`
 
@@ -459,6 +461,9 @@ App 里的「一条需求」在服务端就是一个 thread。它的 id 形如 `
   "threads": [
     {
       "threadId": "t1a2b3c4d5e6",
+      "groupName": "首页改版",
+      "mode": "requirement",
+      "pending": false,
       "name": "首页加欢迎弹窗",
       "reqId": "REQ-0007",
       "stage": "开发",
@@ -479,22 +484,50 @@ App 里的「一条需求」在服务端就是一个 thread。它的 id 形如 `
 }
 ```
 
+- `groupName` —— 群名（建群时起），需求还没起名时列表拿它当标题
+- `mode` —— `chat`（只是聊天）/ `requirement`（跑过需求，但群里不 @ 仍然只是聊天）
+- `pending` —— `true` 表示这个群还没提过需求，此时 `name`/`stage` 为 `null`、`stages` 为空
 - `needsMe` —— 该你拍板了（等价于 `stageStatus === "等你确认"`），列表页拿它做置顶和红点
 - `lastSeq` —— 这条需求最后一条消息的序号，App 用它算未读
 - `canAct` —— 当前用户能不能通过/打回（普通成员为 `false`）
 
 ### `POST /api/threads`
 
-新建需求。需要 `startRequirement` 权限（只有 admin）。
+建群。需要 `startRequirement` 权限（只有 admin）。
 
 ```jsonc
-{ "text": "给首页加个欢迎弹窗，新用户第一次打开时出现" }
+{ "name": "首页改版" }
 ```
 
-成功返回 `{ ok: true, threadId, thread }`。
+只有一个入参 `name`（群名，去空白后超过 40 字返回 `400`），**不接受需求文本**——需求等群里 @ 了需求 bot 再说。成功返回 `{ ok: true, threadId, thread }`，`thread.pending` 为 `true`、`thread.mode` 为 `"chat"`。
 
-**这个接口立刻返回，不等回合跑完。** 一次需求要走需求→设计→方案→开发→测试→验收
-好几个阶段，可能几十分钟，HTTP 请求等不起。拿到 `threadId` 后去轮询消息流看进展。
+没有权限返回 `403`（`error: "建群需要系统管理员权限"`）。
+
+### 在群里提需求
+
+在聊天模式的群里发一条 **@ 了需求 bot** 的消息，编排层就据此建 flow。这一步需要 `startRequirement` 权限（`403` 文案 `"提需求需要系统管理员权限"`，且被拒的那句话不会落库）。
+
+请求体里可以显式带上 `mentions`：
+
+```jsonc
+{ "text": "@首页加个欢迎弹窗", "mentions": ["bot"] }
+```
+
+不传 `mentions` 时，服务端也会从文本里认手打的 `@需求bot`（bot 名字可配置）。@ 判据、去 @、模式切换都在 `src/im/router.js` 里，测试见 `test/engine-channel.js`。
+
+之后的规矩——**判据只有一条：有没有 @ 需求 bot**，需求群里也一样：
+
+| 群状态 | 不 @ | @ 需求 bot |
+| --- | --- | --- |
+| `chat` | 只落库，谁都不打扰 | 建 flow，群变 `requirement` |
+| `requirement` | 只落库，谁都不打扰 | 转给引擎（接着答问题、补信息、拍板），不重开需求 |
+
+需求群里不豁免 @：同一个群平时也在聊别的事（谁去拿快递、按钮位置要不要换），
+全转给引擎等于让 agent 把无关的话当需求上下文吃进去，一句「嗯」也可能触发
+一轮真金白银的回合。要不要让 agent 听见，始终由说话的人用 @ 明确表示。
+
+唯一的例外是界面上的**通过 / 打回**按钮：它是按钮不是打字，不要求再 @ 一次，
+服务端按 `confirm` 权限判完后强制转给引擎。
 
 ### `GET /api/threads/:id`
 
@@ -542,11 +575,13 @@ App 里的「一条需求」在服务端就是一个 thread。它的 id 形如 `
 
 ### `POST /api/threads/:id/messages`
 
-说一句话。需要登录（任何角色都能发言）。
+说一句话。任何登录用户都能发；内容怎么处理看群模式和有没有 @ 需求 bot（见上面「在群里提需求」的表格）。
 
 ```jsonc
 { "text": "给新用户看，第一次打开的时候弹" }
 ```
+
+可选 `mentions: ["bot"]`，不传就按文本里的 `@需求bot` 判断。
 
 成功返回 `{ ok: true, accepted: true }`，同样**不等回合跑完**。
 
@@ -588,6 +623,35 @@ ASCII 兜底和 RFC 5987 的 UTF-8 形式，避免部分客户端乱码。
 
 产物文件是**复制**进 `.state/artifacts/<thread>/` 的，不是按记录的路径原样读——
 公网 API 上的任意文件读取等于把整台机器交出去。单文件上限 50MB。
+
+## 引擎通道
+
+IM（`src/im.js`）和需求引擎（`src/engine.js`）分开部署时，两边只通过这一组接口对话。引擎是客户端：它主动连 IM，用长轮询拿事件、POST 回写消息和阶段。
+
+鉴权用引擎密钥：IM 第一次启动时生成（`.state/engine-token`，也会打印一次），引擎侧写在配置的 `im.token` 里。请求头 `authorization: Bearer <密钥>`，错了返回 `401`。没配 `api.engineToken` 且没生成过密钥时，整组接口返回 `503`（`error` 里带「engineToken」）。
+
+| 接口 | 谁调 | 说明 |
+| --- | --- | --- |
+| `GET /api/engine/inbox?after=&wait=` | 引擎 | 长轮询事件；`after` 是已拿到的最大 `seq`，`wait` 最多挂 30 秒 |
+| `GET /api/engine/status` | App（**不鉴权**） | `{ online, botName, lastPollAt }`；`online` 为 `null` 表示从没连上过（纯聊天部署不提示），`false` 是连过又掉线（70 秒没轮询） |
+| `POST /api/engine/messages` | 引擎 | 往群里发一条消息（文本/图片/文件/阶段/决策） |
+| `POST /api/engine/groups/:id` | 引擎 | 上报需求阶段，只认白名单字段 |
+| `GET /api/engine/can?action=&userId=` | 引擎 | 问「这个人能不能做这个动作」，答 `{ ok, role, roleLabel }` |
+
+事件是一条 JSON，`type` 为 `start`（@ 了需求 bot、要开需求）或 `message`（需求群里接着说的话）：
+
+```jsonc
+{ "seq": 12, "at": 1730000000000, "type": "start",
+  "groupId": "t1a2b3c4d5e6", "text": "首页加个欢迎弹窗",
+  "mentions": ["bot"], "user": { "userId": "...", "nickname": "产品阿宝" } }
+```
+
+- 事件**落盘**在 `.state/engine/events.jsonl`：引擎断网或重启期间用户 @ 的不能静默消失，连上来按游标补。
+- 引擎回写消息时，图片/文件走 base64 内联（`payload.data`），因为引擎那台机器的路径 IM 根本读不到；单条上限 20MB，超了退化成一句文本。
+- 阶段上报只认 `reqId`/`reqName`/`stage`/`stageStatus`/`running`/`waitingLabel`/`featureBranch`：群名、模式、成员归 IM 管，引擎写了也不生效——两边都以为自己能改同一个字段，迟早打架。
+- 引擎问权限失败（IM 暂时连不上）时**按没权限处理**：宁可拒一次，也不要因为连不上就放行。
+
+IM 侧还有个细节：引擎离线时用户 @ 了它，会先回一句「需求引擎现在没连上。这条我先记下了，它连上之后会接着处理。」——然后照样把事件写进游标队列。
 
 ## 账号管理
 
