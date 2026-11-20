@@ -75,7 +75,8 @@ void main() {
       expect(t.needsMe, isFalse);
       expect(t.stages, isEmpty);
       // 没有 name 时有兜底标题，界面不会显示空白
-      expect(t.title, '未命名需求');
+      expect(t.title, '未命名群');
+      expect(t.pending, isFalse);
     });
 
     test('Thread 解析完整字段', () {
@@ -239,20 +240,38 @@ void main() {
       expect(jsonDecode(seen.body), {'reason': '按钮颜色不对'});
     });
 
-    test('createThread 返回后端给的 thread 形状', () async {
-      final c = clientWith((req) async => jsonOk({
-        'threadId': 'tnew',
-        'thread': {'threadId': 'tnew', 'name': '加弹窗', 'stage': '需求澄清'},
-      }));
-      final t = await c.createThread('加弹窗');
+    test('createGroup 发 name，返回空群形状', () async {
+      late http.Request seen;
+      final c = clientWith((req) async {
+        seen = req;
+        return jsonOk({
+          'threadId': 'tnew',
+          'thread': {
+            'threadId': 'tnew',
+            'groupName': '首页改版',
+            'pending': true,
+            'stageStatus': '待提需求',
+          },
+        });
+      });
+      final t = await c.createGroup('首页改版');
+      // 建群只送群名：需求是进去说的第一句话，不在建群时提交
+      expect(seen.url.path, '/api/threads');
+      expect(jsonDecode(seen.body), {'name': '首页改版'});
       expect(t.threadId, 'tnew');
-      expect(t.stage, '需求澄清');
+      expect(t.groupName, '首页改版');
+      expect(t.pending, isTrue);
+      expect(t.stageStatus, '待提需求');
+      // 还没有需求名时，列表标题退到群名，不能显示空白
+      expect(t.title, '首页改版');
     });
 
-    test('createThread 后端没回 thread 时退化成最小对象，不崩', () async {
+    test('createGroup 后端没回 thread 时退化成最小对象，不崩', () async {
       final c = clientWith((req) async => jsonOk({'threadId': 'tx'}));
-      final t = await c.createThread('x');
+      final t = await c.createGroup('新群');
       expect(t.threadId, 'tx');
+      expect(t.groupName, '新群');
+      expect(t.pending, isTrue);
       expect(t.stages, isEmpty);
     });
   });

@@ -26,6 +26,11 @@ class ThreadListController extends ChangeNotifier {
   /// 上次拉取成功的时刻，界面可以显示「几秒前更新」。
   DateTime? lastSyncedAt;
 
+  /// 需求引擎连没连上。null = 这台服务器没有独立的引擎（单机部署）。
+  ///
+  /// 单独存一份而不是塞进 Thread：引擎掉线是全站状态，跟哪个群无关。
+  bool? engineOnline;
+
   Timer? _timer;
   bool _inFlight = false;
   bool _disposed = false;
@@ -57,8 +62,15 @@ class ThreadListController extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      final list = await _api.listThreads();
+      // 顺手查一下引擎在不在。查不到不影响列表本身：引擎离线时
+      // 群照样能聊，只是 @ 了它没人接。
+      final results = await Future.wait<Object?>([
+        _api.listThreads(),
+        _api.engineOnline().catchError((_) => null),
+      ]);
+      final list = results[0] as List<Thread>;
       if (_disposed) return;
+      engineOnline = results[1] as bool?;
       threads = sortThreads(list);
       lastSyncedAt = DateTime.now();
       error = null;
@@ -96,8 +108,9 @@ class ThreadListController extends ChangeNotifier {
     return out;
   }
 
-  Future<Thread> create(String text) async {
-    final t = await _api.createThread(text);
+  /// 建群。只建容器，不带需求——需求要在群里说第一句话才开始。
+  Future<Thread> create(String name) async {
+    final t = await _api.createGroup(name);
     // 先本地插进去，界面立刻有反馈，不用等下一次轮询。
     threads = sortThreads([t, ...threads.where((x) => x.threadId != t.threadId)]);
     notifyListeners();

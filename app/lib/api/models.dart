@@ -104,11 +104,18 @@ class Perms {
   static const empty = Perms();
 }
 
-/// 一条需求（后端叫 thread）。
+/// 一个群（后端叫 thread）。
+///
+/// 群是容器，需求（flow）跑在群里：群里不 @ 需求 bot 就只是聊天，
+/// @ 一下才开始跑需求。所以群建好、还没提需求时 name（需求名）是 null，
+/// 只有 groupName 和 pending。
 class Thread {
   const Thread({
     required this.threadId,
     this.name,
+    this.groupName,
+    this.mode = 'chat',
+    this.pending = false,
     this.reqId,
     this.stage,
     this.stageStatus,
@@ -126,7 +133,19 @@ class Thread {
   });
 
   final String threadId;
+
+  /// 需求名。由 agent 根据第一句话生成，群刚建好时是 null。
   final String? name;
+
+  /// 群名。用户建群时自己起的，不随需求名变化。
+  final String? groupName;
+
+  /// chat（只是聊天）/ requirement（跑过需求；不 @ 需求 bot 仍然只是聊天）。
+  /// 需求群不会退回 chat：那样「这句话该不该交给 agent」就说不清了。
+  final String mode;
+
+  /// 群里还没有需求。此时 stage 为 null，详情页要提示「@需求bot 说一句」。
+  final bool pending;
   final String? reqId;
 
   /// 当前阶段名，如「需求澄清」
@@ -154,7 +173,12 @@ class Thread {
   /// 我能不能点通过/打回。普通成员能看到按钮，但这里会是 false。
   final bool canAct;
 
-  String get title => name?.isNotEmpty == true ? name! : '未命名需求';
+  /// 列表和标题用的名字：有需求名用需求名，还没提需求就退回群名。
+  String get title {
+    if (name?.isNotEmpty == true) return name!;
+    if (groupName?.isNotEmpty == true) return groupName!;
+    return '未命名群';
+  }
 
   bool get finished => stageStatus == '已完成' || stage == '已交付';
   bool get blocked => stageStatus == '卡住';
@@ -162,6 +186,9 @@ class Thread {
   factory Thread.fromJson(Map<String, dynamic> j) => Thread(
     threadId: (j['threadId'] ?? '').toString(),
     name: j['name']?.toString(),
+    groupName: j['groupName']?.toString(),
+    mode: j['mode']?.toString() ?? 'chat',
+    pending: j['pending'] == true,
     reqId: j['reqId']?.toString(),
     stage: j['stage']?.toString(),
     stageStatus: j['stageStatus']?.toString(),

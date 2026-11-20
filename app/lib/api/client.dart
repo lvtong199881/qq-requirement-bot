@@ -187,13 +187,14 @@ class ApiClient {
         .toList();
   }
 
-  Future<Thread> createThread(String text) async {
-    final m = await _send('POST', '/api/threads', body: {'text': text});
+  /// 建群。只给一个名字：需求不在这一步提，@ 需求 bot 才开跑。
+  Future<Thread> createGroup(String name) async {
+    final m = await _send('POST', '/api/threads', body: {'name': name});
     final raw = m['thread'];
     if (raw is! Map) {
       // 后端一定会回完整形状；真缺了就按 threadId 给个最小可用对象，
-      // 别让用户建完需求看到一片空白。
-      return Thread(threadId: m['threadId'].toString());
+      // 别让用户建完群看到一片空白。
+      return Thread(threadId: m['threadId'].toString(), groupName: name, pending: true);
     }
     return Thread.fromJson(raw.cast<String, dynamic>());
   }
@@ -226,11 +227,37 @@ class ApiClient {
     );
   }
 
-  Future<void> sendMessage(String threadId, String text) => _send(
+  /// 发一条消息。
+  ///
+  /// mentions 是「这句话提到了谁」：@ 了需求 bot 的那句才会开需求。
+  /// 服务端也会从文本里认手打的「@需求bot」，但显式传更准
+  /// （bot 名字可配置，文本里不一定是「需求bot」）。
+  Future<void> sendMessage(
+    String threadId,
+    String text, {
+    List<String> mentions = const [],
+  }) => _send(
     'POST',
     '/api/threads/${Uri.encodeComponent(threadId)}/messages',
-    body: {'text': text},
+    body: {'text': text, if (mentions.isNotEmpty) 'mentions': mentions},
   );
+
+  /// 需求引擎连没连上。
+  ///
+  /// 返回 null 表示无从判断：这台服务器没有可查的引擎通道（单机部署时引擎就在
+  /// 同一个进程里，或者没配密钥），或者引擎从没连上来过（纯聊天部署）。
+  /// 那种情况下不该提示「引擎没连上」——对用户来说并没有第二个东西需要连。
+  Future<bool?> engineOnline() async {
+    try {
+      final m = await _send('GET', '/api/engine/status');
+      final online = m['online'];
+      if (online is! bool) return null;
+      return online;
+    } on ApiException catch (e) {
+      if (e.statusCode == 404 || e.statusCode == 503) return null;
+      rethrow;
+    }
+  }
 
   Future<void> approve(String threadId) => _send(
     'POST',

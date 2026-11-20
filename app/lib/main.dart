@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'state/auth.dart';
 import 'state/threads.dart';
+import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/server_setup_page.dart';
 import 'ui/theme.dart';
-import 'ui/thread_list_page.dart';
 
 void main() {
   runApp(const QqbotApp());
@@ -56,7 +56,7 @@ class _QqbotAppState extends State<QqbotApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '需求',
+      title: '群',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
@@ -80,8 +80,8 @@ class _QqbotAppState extends State<QqbotApp> {
         }
         // key 用 baseUrl：换了服务器就是另一份数据，
         // 不复用旧页面的状态（尤其滚动位置和已加载的消息）。
-        return ThreadListPage(
-          key: ValueKey('threads-${_auth.baseUrl}'),
+        return HomePage(
+          key: ValueKey('home-${_auth.baseUrl}'),
           auth: _auth,
           controller: c,
         );

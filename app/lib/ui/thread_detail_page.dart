@@ -10,7 +10,12 @@ import 'format.dart';
 import 'theme.dart';
 import 'widgets/stage.dart';
 
-/// 需求详情：阶段进度 + 对话 + 拍板。
+/// 群详情：阶段进度 + 对话 + 拍板。
+///
+/// 群是容器，需求是群里跑的那条 flow。同一个群先当聊天用，@ 一下需求 bot
+/// 才开始跑需求。所以这个页面有两种形态：
+/// 1. 群还是聊天模式（mode == chat）：只有输入框，提示怎么把 agent 叫起来；
+/// 2. 需求在跑：阶段条 + 消息流 + 需要拍板时的「通过 / 打回」。
 ///
 /// 页面结构自上而下三段：
 /// 1. 吸顶的阶段条——随时知道走到哪了，滚到下面也不用往回找；
@@ -39,6 +44,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     seed: widget.seed,
   );
   final _input = TextEditingController();
+  final _focus = FocusNode();
   final _scroll = ScrollController();
 
   @override
@@ -53,6 +59,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     _c.removeListener(_onUpdate);
     _c.dispose();
     _input.dispose();
+    _focus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -77,8 +84,27 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   Future<void> _send() async {
     final text = _input.text;
     if (text.trim().isEmpty) return;
-    final ok = await _c.send(text);
+    // @ 了需求 bot 的这句才是「开需求」，服务端也从文本里认，
+    // 但显式带上更准：bot 名字是可配置的，文本里不一定是「需求bot」
+    final mentions = text.contains('@需求bot') ? const ['bot'] : const <String>[];
+    final ok = await _c.send(text, mentions: mentions);
     if (ok && mounted) _input.clear();
+  }
+
+  /// 把「@需求bot 」填进输入框。
+  ///
+  /// 不直接发一条空需求：用户往往要先说一句背景（给谁看、什么时候弹），
+  /// 让他接着打比替他按下发送键更符合实际用法。
+  void _mentionBot() {
+    const token = '@需求bot ';
+    if (_input.text.contains('@需求bot')) {
+      _focus.requestFocus();
+      return;
+    }
+    final head = _input.text;
+    _input.text = head.isEmpty || head.endsWith(' ') ? '$head$token' : '$head $token';
+    _input.selection = TextSelection.collapsed(offset: _input.text.length);
+    _focus.requestFocus();
   }
 
   Future<void> _approve() async {
@@ -114,14 +140,22 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  t?.title ?? '需求',
+                  t?.title ?? '群',
                   style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 if (t != null)
                   Text(
-                    [t.stage, t.stageStatus].where((e) => e != null && e.isNotEmpty).join(' · '),
+                    // 有需求时标题是需求名，群名退到副标题——群里可能有多个需求，
+                    // 用户要随时知道自己在哪个群里。
+                    [
+                      if (t.name?.isNotEmpty == true) t.groupName,
+                      t.stage,
+                      t.stageStatus,
+                    ].where((e) => e != null && e.isNotEmpty).join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w400,
@@ -166,10 +200,22 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       );
     }
     if (_c.messages.isEmpty) {
+      // 一句都没有的群：不是「没有对话」，而是「等你开口」。
+      // 已经跑过需求的群再说「说第一句话」就不对了，所以分开。
+      final t = _c.thread;
+      final empty = (t?.mode ?? 'chat') == 'chat'
+          ? (t?.pending == true
+              ? '群建好了。想聊天就直接说，要干活就 @需求bot 说一句。'
+              : '群里还没有消息，说第一句吧。')
+          : '群里还没有消息。要它动手，就 @需求bot 说一句。';
       return Center(
-        child: Text(
-          '还没有对话',
-          style: Theme.of(context).textTheme.bodySmall,
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Text(
+            empty,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ),
       );
     }
@@ -196,6 +242,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     final theme = Theme.of(context);
     final t = _c.thread;
     final busy = _c.sending;
+    // 群还是聊天模式：谁都能聊，只有管理员能把 agent 叫起来（@ 需求 bot）。
+    // 所以输入框永远可用，锁只锁在「叫 agent」这一步上。
+    final isChat = (t?.mode ?? 'chat') == 'chat';
+    final canStart = widget.auth.perms.startRequirement;
 
     return SafeArea(
       top: false,
@@ -249,10 +299,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                   children: [
                     Icon(
                       Icons.lock_outline,
-                      size: 14,
+                      size: 16,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         '通过和打回只有系统管理员能操作',
@@ -264,18 +314,55 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                   ],
                 ),
               ),
+            // 两句话得一直摆在输入框上面，否则用户会以为「群里说话它就听得见」：
+            //   chat 群——没人知道这个群还能叫 agent 干活；
+            //   requirement 群——更常见的误解是「需求群里的每句话都算数」，
+            //   结果讨论半天发现它没听见（它确实只认 @）。
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    canStart || !isChat
+                        ? Icons.smart_toy_outlined
+                        : Icons.lock_outline,
+                    size: 16,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      isChat
+                          ? (canStart
+                              ? '想让它开工？@需求bot 说一句你要什么。'
+                              : '要让 agent 开工，得由系统管理员 @需求bot 说一句')
+                          : '它只看得见 @需求bot 的话，其它的都在群里聊。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  if (canStart || !isChat)
+                    TextButton(
+                      onPressed: busy ? null : _mentionBot,
+                      child: const Text('@需求bot'),
+                    ),
+                ],
+              ),
+            ),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
                   child: TextField(
                     controller: _input,
+                    focusNode: _focus,
                     enabled: !busy,
                     minLines: 1,
                     maxLines: 5,
                     textInputAction: TextInputAction.newline,
-                    decoration: const InputDecoration(
-                      hintText: '说点什么…',
+                    decoration: InputDecoration(
+                      hintText: isChat ? '聊点什么' : '聊点什么（要它听就 @需求bot）',
                       isDense: true,
                     ),
                   ),

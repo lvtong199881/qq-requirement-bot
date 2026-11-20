@@ -8,9 +8,11 @@
 //
 // 故意不放进 test/：它依赖外部进程，放进 flutter test 会让 CI 随机红。
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:qqbot_app/api/client.dart';
+import 'package:qqbot_app/api/models.dart';
 
 Future<void> main(List<String> args) async {
   if (args.length < 3) {
@@ -54,12 +56,13 @@ Future<void> main(List<String> args) async {
     if (!me.perms.startRequirement) {
       // 普通成员跑这个脚本也是常见场景（验证「看得见但点不动」），
       // 不该因为建不了需求就报失败。
-      check('普通成员没有发起需求的权限', true, 'startRequirement=false，跳过建需求');
+      // 建群和提需求都只给管理员；普通成员这里应当被后端拦下
+      check('普通成员没有建群的权限', true, 'startRequirement=false，跳过建群');
       try {
-        await c.createThread('普通成员不该建成');
-        check('普通成员建需求应当被拒', false, '后端没拦');
+        await c.createGroup('普通成员不该建成');
+        check('普通成员建群应当被拒', false, '后端没拦');
       } on ApiException catch (e) {
-        check('普通成员建需求被拒', e.statusCode == 403, e.message);
+        check('普通成员建群被拒', e.statusCode == 403, e.message);
       }
 
       // m00102 的明确要求：普通成员看得见通过/打回，点了才告诉他不行。
@@ -82,14 +85,24 @@ Future<void> main(List<String> args) async {
       exit(failed == 0 ? 0 : 1);
     }
 
-    final created = await c.createThread('冒烟测试：加一个返回顶部的按钮');
-    check('POST /api/threads', created.threadId.isNotEmpty,
-        'threadId=${created.threadId} stage=${created.stage}');
-    check('新建的 thread 立刻有阶段', created.stages.isNotEmpty,
-        'stages=${created.stages.length}');
+    final created = await c.createGroup('冒烟测试群');
+    check('POST /api/threads（建群）', created.threadId.isNotEmpty,
+        'threadId=${created.threadId} groupName=${created.groupName}');
+    // 群建好但没人开口时是空群：没有需求名，也没有阶段
+    check('新建的群还没有需求', created.pending && created.name == null,
+        'pending=${created.pending} name=${created.name}');
 
-    final one = await c.thread(created.threadId);
+    // 需求是群里的第一句话：发出去之后编排层才开始建 flow
+    await c.sendMessage(created.threadId, '冒烟测试：加一个返回顶部的按钮');
+    Thread one = created;
+    for (var i = 0; i < 20; i++) {
+      one = await c.thread(created.threadId);
+      if (!one.pending) break;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
     check('GET /api/threads/:id', one.threadId == created.threadId);
+    check('第一句话之后进入需求流程', !one.pending && one.stages.isNotEmpty,
+        'pending=${one.pending} stage=${one.stage} stages=${one.stages.length}');
 
     final page = await c.messages(created.threadId, since: 0, limit: 50);
     check('GET /api/threads/:id/messages', page.messages.isNotEmpty,
