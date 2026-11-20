@@ -11,6 +11,11 @@ node_modules/
 *.log
 .DS_Store
 
+# 安装/打包产物（cloudflared.exe 之类的二进制，几十兆，不入库）
+dist/
+QQ.exe
+app/android/build/
+
 # 回合上下文落盘
 .state/
 .instances/
