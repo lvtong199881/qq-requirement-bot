@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   不注册 Windows 服务；跑通后手动 node src/index.js。
-  能自动化的都做了，剩下的只有填 API key、启动服务、用 App 注册第一个账号。
+  能自动化的都做了，剩下的只有填 API key、启动服务、用 App 登录并改密码。
 
 .PARAMETER Repo
   需求要落到的项目仓库路径。不存在会自动建空目录。
@@ -482,8 +482,9 @@ if (Test-Path $cfgPath) {
     # 再让人去手改 JSON 才能连上，等于把第一步做成坑。
     #
     # host 用 0.0.0.0 是为了让手机能连（填本机局域网 IP）。
-    # 代价是这个端口在局域网里可见，而「第一个注册的人是管理员」——
-    # 所以启动时会打一行告警提醒先自己注册。只想本机用就改成 127.0.0.1。
+    # 代价是这个端口在局域网里可见，而启动时会建 admin / 123456——
+    # 拿到地址的同网段机器都能用它登进来。所以启动日志会提醒改密码。
+    # 只想本机用就改成 127.0.0.1。
     api          = [ordered]@{
       enabled       = $true
       port          = $ApiPort
@@ -531,5 +532,5 @@ Write-Host '  1. 启动服务：node src/index.js'
 Write-Host "  2. 浏览器打开 http://127.0.0.1:$ApiPort/healthz 应返回 {`"ok`":true}"
 Write-Host "  3. 启动 App，服务器地址填 http://127.0.0.1:$ApiPort"
 Write-Host "     手机和这台机器同一个 Wi-Fi 时，填 http://<本机局域网IP>:$ApiPort"
-Write-Host '  4. 第一个注册的账号自动成为系统管理员，之后由它给别人分权限'
+Write-Host '  4. 用 admin / 123456 登录（登录页上会直接写出来），然后到「账号管理」改密码'
 Write-Host ''
