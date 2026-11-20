@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../api/models.dart';
 import '../state/auth.dart';
 import '../state/threads.dart';
-import 'thread_detail_page.dart';
 import 'format.dart';
 import 'theme.dart';
+import 'thread_detail_page.dart';
+import 'users_page.dart';
 import 'widgets/stage.dart';
 
 /// 需求列表。
@@ -181,6 +182,22 @@ class _ThreadListPageState extends State<ThreadListPage> {
                   ),
                 ),
                 const SizedBox(height: 18),
+                // 账号管理只对管理员出现。用 perms 而不是 user.isAdmin：
+                // 「谁能管账号」的规则归后端，前端跟着 /api/auth/me 走。
+                if (widget.auth.perms.command)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => UsersPage(auth: widget.auth),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.group_outlined),
+                    label: const Text('账号管理'),
+                  ),
+                if (widget.auth.perms.command) const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: () {
                     Navigator.of(ctx).pop();

@@ -10,7 +10,12 @@
                                     ├─ 阶段进度条
                                     ├─ 消息流（播报 + 我发的话）
                                     └─ 通过 / 打回 / 输入框
+             管理员 ──→ 账号管理（改角色 / 停用 / 重置密码）
 ```
+
+账号管理是管理员的第四页，入口在列表页右上角的「我的」里。加它是因为注册
+流程故意不做邮箱和找回密码——那些能力必须有个地方落地，否则「忘了密码找
+管理员重置」只是一句话。
 
 ## 跑起来
 
@@ -67,8 +72,8 @@ dart run tool/smoke.dart http://127.0.0.1:7881 用户名 密码
 lib/
   api/          client（HTTP + 错误映射）· models（容错解析）· credentials（secure storage）
   state/        auth（会话状态机）· threads（列表 + 5s 轮询）· detail（详情 + 3s 增量轮询）
-  ui/           三页 + theme/format/widgets
-test/           api_test · auth_test · widget_test
+  ui/           四页（含账号管理）+ theme/format/widgets
+test/           api_test · auth_test · users_page_test · widget_test
 tool/smoke.dart 打真后端的契约冒烟
 ```
 

@@ -236,6 +236,34 @@ class ApiClient {
     body: {'reason': reason},
   );
 
+  // ── 账号管理（只有系统管理员能调，后端会拒其他人） ──
+
+  Future<List<User>> listUsers() async {
+    final m = await _send('GET', '/api/users');
+    return (m['users'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => User.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  Future<void> setUserRole(String id, String role) => _send(
+    'POST',
+    '/api/users/${Uri.encodeComponent(id)}/role',
+    body: {'role': role},
+  );
+
+  Future<void> setUserDisabled(String id, bool disabled) => _send(
+    'POST',
+    '/api/users/${Uri.encodeComponent(id)}/disabled',
+    body: {'disabled': disabled},
+  );
+
+  Future<void> resetUserPassword(String id, String password) => _send(
+    'POST',
+    '/api/users/${Uri.encodeComponent(id)}/password',
+    body: {'password': password},
+  );
+
   /// 产物下载要带 token，而 Image.network / 浏览器下载不会带 header。
   /// 所以这里自己取字节，界面只负责显示或保存。
   Future<List<int>> artifactBytes(String urlPath) async {
