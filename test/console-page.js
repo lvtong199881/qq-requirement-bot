@@ -158,6 +158,21 @@ console.log('\n== 直接访问非大盘视图（/console/xxx）会加载数据 =
   check('ctx 拿到了', !!localCtx)
 }
 
+console.log('\n== 不再引用 QQ 时代的字段 ==')
+{
+  // 面板后端早就删了 onebot / botQQ / botNickname / groupPolicy / adminUsers / superAdmin，
+  // 前端还留着的话只是渲染出一片「—」，但更糟的是会让人以为还能配。
+  const dead = ['onebot', 'botQQ', 'botNickname', 'groupPolicy', 'adminUsers', 'superAdmin']
+  const found = dead.filter((k) => html.includes(k))
+  check('模板与脚本里没有已删字段', found.length === 0, found.join(', '))
+
+  // 设置页的「指令白名单」整块已删，别让人照着旧文档再加回来
+  check('没有指令白名单表单', !html.includes('指令白名单'))
+  check('没有超级管理员只读卡', !html.includes('超级管理员'))
+  check('操作走的是 /api/threads', html.includes("'/api/threads/' + kind"))
+  check('不再请求 /api/groups', !html.includes("'/api/groups/' + kind"))
+}
+
 console.log('\n== 路径路由映射 ==')
 {
   const blocks = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map((m) => m[1])

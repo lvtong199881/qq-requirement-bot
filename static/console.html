@@ -195,7 +195,7 @@
   .msg{font-size:12px}
   .msg.err{color:#cf222e}
   .msg.ok{color:var(--green)}
-  /* 群消息文案 */
+  /* 消息文案 */
   .msg-group{margin-bottom:18px}
   .msg-group > .gt{font-size:11.5px;font-weight:600;color:var(--dim2);letter-spacing:.04em;
     margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
@@ -571,7 +571,6 @@
           <thead>
             <tr>
               <th style="width:200px">需求名</th>
-              <th style="width:180px">QQ 群</th>
               <th style="width:160px">发起人</th>
               <th>当前阶段</th>
               <th style="width:70px"></th>
@@ -584,9 +583,6 @@
                   <span v-if="row.unreachable" class="dot" style="background:var(--red);margin-right:5px"></span>
                   {{ row.reqId || '（未绑定需求）' }}
                 </div>
-              </td>
-              <td>
-                <div class="clamp2" :title="row.groupName || '未知群'">{{ row.groupName || '未知群' }}</div>
               </td>
               <td class="who">
                 <div class="clamp2" :title="row.initiator?.nickname || '—'">{{ row.initiator?.nickname || '—' }}</div>
@@ -619,13 +615,10 @@
           <span class="dot" :style="{background: inst.unreachable ? 'var(--red)' : 'var(--green)'}"></span>
           <span class="pid">PID {{ inst.instance?.pid ?? '?' }}</span>
           <span class="sep">·</span>
-          <span :title="inst.instance?.botNickname ? 'QQ 昵称' : '昵称未知'">
-            {{ inst.instance?.botNickname || inst.config?.botName || '—' }}({{ inst.config?.botQQ || '—' }})
-          </span>
+          <span :title="'对外自称'">{{ inst.config?.botName || '—' }}</span>
           <span class="sep">·</span>
           <span class="muted">{{ inst.config?.model || '—' }}</span>
           <span v-if="inst.unreachable" class="tag" style="color:var(--red)">不可达：{{ inst.error }}</span>
-          <span v-else-if="!inst.onebot?.connected" class="tag" style="color:var(--yellow)">OneBot 未连接</span>
           <span v-else class="tag" style="color:var(--green)">运行中</span>
         </div>
 
@@ -634,16 +627,13 @@
           <div class="kv-item"><span class="k">启动时间</span><span class="v">{{ fmtTime(inst.instance?.startedAt) }}</span></div>
           <div class="kv-item"><span class="k">运行时长</span><span class="v">{{ fmtDur(Date.now() - (inst.instance?.startedAt || Date.now())) }}</span></div>
           <div class="kv-item"><span class="k">内存占用</span><span class="v">{{ inst.resources?.rssMb ?? '—' }} MB（heap {{ inst.resources?.heapMb ?? '—' }} MB）</span></div>
-          <div class="kv-item"><span class="k">OneBot</span><span class="v">{{ inst.onebot?.url || '—' }} · {{ inst.onebot?.connected ? '已连接' : '未连接' }}</span></div>
-          <div class="kv-item"><span class="k">QQ 昵称</span><span class="v">{{ inst.instance?.botNickname || '—' }}</span></div>
-          <div class="kv-item"><span class="k">账号</span><span class="v">{{ inst.config?.botQQ || '—' }}</span></div>
+          <div class="kv-item"><span class="k">App API</span><span class="v">{{ inst.instance?.appApiPort ? '端口 ' + inst.instance.appApiPort : '未启用' }}</span></div>
           <div class="kv-item"><span class="k">对外自称</span><span class="v">{{ inst.config?.botName || '—' }}</span></div>
           <div class="kv-item"><span class="k">模型</span><span class="v">{{ inst.config?.model || '—' }}</span></div>
           <div class="kv-item"><span class="k">profile</span><span class="v">{{ inst.config?.profile || '—' }}</span></div>
-          <div class="kv-item"><span class="k">群策略</span><span class="v">{{ inst.config?.groupPolicy || '—' }}</span></div>
           <div class="kv-item"><span class="k">心跳间隔</span><span class="v">{{ inst.config?.heartbeatMinutes ?? '—' }} 分钟</span></div>
           <div class="kv-item"><span class="k">回合超时</span><span class="v">{{ inst.config?.turnTimeoutMin ?? '—' }} 分钟</span></div>
-          <div class="kv-item"><span class="k">服务群数</span><span class="v">{{ inst.groups?.length ?? 0 }}</span></div>
+          <div class="kv-item"><span class="k">会话数</span><span class="v">{{ inst.groups?.length ?? 0 }}</span></div>
           <div class="kv-item" style="grid-column:1/-1">
             <span class="k">当前需求</span>
             <span class="v">
@@ -651,7 +641,7 @@
                 <div v-for="g in inst.groups" :key="g.groupId" style="line-height:1.7">
                   <code style="color:var(--blue)">{{ g.reqId || '未绑定' }}</code>
                   <span class="muted"> · {{ g.stage || '未开始' }} · {{ g.stageStatus || '—' }}</span>
-                  <span class="muted"> · 群 {{ g.groupId }}</span>
+                  <span class="muted"> · 会话 {{ g.groupId }}</span>
                 </div>
               </template>
               <template v-else>—</template>
@@ -664,22 +654,22 @@
       </div>
     </template>
 
-    <!-- ===== 群消息文案（设置下的二级页） ===== -->
+    <!-- ===== 消息文案（设置下的二级页） ===== -->
     <template v-if="view === 'messages'">
       <div class="page-head crumbs">
         <button class="menu-btn" @click="switchView('settings')">← 设置</button>
-        <h1>群消息文案</h1>
+        <h1>消息文案</h1>
       </div>
       <div class="panel">
         <div class="card">
           <p class="desc">
-            bot 在群里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
+            在对话框里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
             留空保存 = 该条恢复默认；带 <span style="color:#0969da">●</span> 的表示已自定义。
           </p>
 
-          <h2>群消息文案</h2>
+          <h2>消息文案</h2>
           <p class="desc">
-            bot 在群里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
+            在对话框里说的话，按四类消息 + 交互提示分组。改完点底部保存，所有实例立即生效。<br>
             留空保存 = 该条恢复默认；带 <span style="color:#0969da">●</span> 的表示已自定义。
           </p>
 
@@ -770,25 +760,6 @@
       <div class="page-head"><h1>设置</h1></div>
       <div class="panel">
         <div class="card">
-          <h2>指令白名单</h2>
-          <p class="desc">
-            名单里的 QQ 号可以在任意群驱动 bot。群主和群管理员默认就能用，不必写在这里。<br>
-            多个 QQ 号用逗号分隔（中英文都行）；留空表示不额外放行任何成员。
-          </p>
-          <textarea class="field" :class="{ invalid: !!settingsError }" v-model="adminInput"
-                    rows="4" placeholder="10001, 10002"
-                    @input="settingsError = ''; settingsOk = ''"></textarea>
-          <div class="row">
-            <button class="menu-btn primary" @click="saveSettings()" :disabled="settingsSaving">
-              {{ settingsSaving ? '保存中…' : '保存' }}
-            </button>
-            <button class="menu-btn" @click="loadSettings()" :disabled="settingsSaving">重置</button>
-            <span v-if="settingsError" class="msg err">{{ settingsError }}</span>
-            <span v-else-if="settingsOk" class="msg ok">{{ settingsOk }}</span>
-          </div>
-        </div>
-
-        <div class="card">
           <h2>阶段超时</h2>
           <p class="desc">
             每个阶段的回合上限。开发、测试、验收要跑构建、装包和逐条核对，默认给 60 分钟；
@@ -815,9 +786,9 @@
 
         <div class="card card-row">
           <div>
-            <h2>群消息文案</h2>
+            <h2>消息文案</h2>
             <p class="desc">
-              bot 在群里说的话，按四类消息 + 交互提示分组，共 {{ messages.length || 40 }} 条。
+              在对话框里说的话，按四类消息 + 交互提示分组，共 {{ messages.length || 40 }} 条。
               改完保存所有实例立即生效。
             </p>
           </div>
@@ -836,15 +807,11 @@
         </div>
 
         <div class="card">
-          <h2>超级管理员</h2>
+          <h2>账号与权限</h2>
           <p class="desc">
-            不受群角色与上面的白名单限制，任何群都能驱动 bot。<br>
-            出于安全考虑，这里只读——请在 <code>bot.config.json</code> 的 <code>superAdmin</code> 字段里修改。
+            谁能发起需求、能不能点「通过」和「打回」，由账号表决定，在 App 的「账号管理」里改。<br>
+            面板不提供入口——它是只读大盘，改权限应该在一个需要登录的地方做。
           </p>
-          <div class="chips">
-            <span class="chip" v-for="q in superAdminUsers" :key="q">{{ q }}</span>
-            <span v-if="!superAdminUsers.length" class="chip" style="opacity:.6">（未配置）</span>
-          </div>
         </div>
       </div>
     </template>
@@ -901,15 +868,14 @@
             <dt>端口</dt><dd>{{ modal.inst.instance?.port }}</dd>
             <dt>需求标识</dt><dd><code style="color:var(--blue)">{{ modal.group.reqId || '—' }}</code></dd>
             <dt>需求名称</dt><dd>{{ modal.group.name || '—' }}</dd>
-            <dt>QQ 群名</dt><dd>{{ modal.group.groupName || '—' }}</dd>
-            <dt>群 ID</dt><dd>{{ modal.group.groupId }}</dd>
+            <dt>会话 ID</dt><dd>{{ modal.group.groupId }}</dd>
             <dt>发起人</dt><dd>{{ modal.group.initiator?.nickname || '—' }}<span v-if="modal.group.initiator?.userId"> ({{ modal.group.initiator.userId }})</span></dd>
             <dt>发起时间</dt><dd>{{ fmtTime(modal.group.initiator?.at) }}</dd>
             <dt>当前阶段</dt><dd>{{ modal.group.stage || '—' }}</dd>
             <dt>阶段开始</dt><dd>{{ fmtTime(modal.group.stageStartedAt) }}</dd>
             <dt>当前模型</dt><dd>{{ modal.inst.config?.model || '—' }}</dd>
             <dt>进程启动</dt><dd>{{ fmtTime(modal.inst.instance?.startedAt) }}</dd>
-            <dt>OneBot</dt><dd>{{ modal.inst.onebot?.url }} · {{ modal.inst.onebot?.connected ? '已连接' : '未连接' }}</dd>
+            <dt>App API</dt><dd>{{ modal.inst.instance?.appApiPort ?? '未启用' }}</dd>
             <dt>内存占用</dt><dd>{{ modal.inst.resources?.rssMb }} MB（heap {{ modal.inst.resources?.heapMb }} MB）</dd>
             <dt>回合编号</dt><dd>{{ modal.group.turn ?? 0 }}</dd>
             <dt>等待事项</dt><dd>{{ modal.group.waitingLabel || '—' }}</dd>
@@ -1014,7 +980,6 @@ createApp({
     }
 
     // 设置页
-    const adminInput = ref('')
     const stageTimeouts = ref({ default: 30, dev: 60, test: 60, acceptance: 60 })
     const timeoutOptions = ref([10, 15, 30, 60])
     const timeoutFields = [
@@ -1023,8 +988,6 @@ createApp({
       { key: 'test', label: '测试' },
       { key: 'acceptance', label: '验收' },
     ]
-    const savedAdminUsers = ref([])
-    const superAdminUsers = ref([])
     const messages = ref([])
     const messageErrors = ref({})
     const messagesOk = ref('')
@@ -1055,7 +1018,7 @@ createApp({
     const groupCount = computed(() =>
       instances.value.reduce((n, i) => n + (i.groups?.length || 0), 0))
 
-    /** 需求大盘的行：/api/board 已经按群维度摊平，前端不再自己展平 */
+    /** 需求大盘的行：/api/board 已经按会话维度摊平，前端不再自己展平 */
     // ── 项目管理 ──
     const projects = ref([])
     const projError = ref('')
@@ -1425,9 +1388,6 @@ createApp({
           settingsError.value = d.error || '读取失败'
           return
         }
-        savedAdminUsers.value = d.adminUsers || []
-        superAdminUsers.value = d.superAdmin || []
-        adminInput.value = (d.adminUsers || []).join(', ')
         messages.value = (d.messages || []).map((m) => ({ ...m }))
         if (d.stageTimeouts) stageTimeouts.value = { ...d.stageTimeouts }
         if (Array.isArray(d.timeoutOptions) && d.timeoutOptions.length) timeoutOptions.value = d.timeoutOptions
@@ -1441,35 +1401,6 @@ createApp({
         messageErrors.value = {}
       } catch (e) {
         settingsError.value = '读取失败：' + e.message
-      }
-    }
-
-    async function saveSettings() {
-      settingsError.value = ''
-      settingsOk.value = ''
-      settingsSaving.value = true
-      try {
-        const r = await fetch('/api/settings/save', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ adminUsers: adminInput.value }),
-        })
-        const d = await r.json()
-        if (!d.ok) {
-          settingsError.value = d.error || '保存失败'
-          return
-        }
-        savedAdminUsers.value = d.adminUsers || []
-        adminInput.value = (d.adminUsers || []).join(', ')
-        const reloaded = (d.hotReloaded || []).filter((x) => x.ok).length
-        const suffix = reloaded ? '，' + reloaded + ' 个实例已生效' : ''
-        settingsOk.value = d.adminUsers.length
-          ? '已保存 ' + d.adminUsers.length + ' 个 QQ 号' + suffix
-          : '已清空白名单' + suffix
-      } catch (e) {
-        settingsError.value = '保存失败：' + e.message
-      } finally {
-        settingsSaving.value = false
       }
     }
 
@@ -1664,7 +1595,7 @@ createApp({
         message: isStop
           ? '正在运行的任务会被立即打断，本回合的产出可能丢失。'
           : '当前回合会先被中断，然后用「继续」重新起一轮。',
-        detail: `需求：${row.reqId || '（未绑定）'}　QQ 群：${row.groupName || row.groupId}`,
+        detail: `需求：${row.reqId || '（未绑定）'}　会话：${row.groupId}`,
         confirmText: isStop ? '确认终止' : '确认重启',
         danger: isStop,
         onConfirm: () => act(kind, row),
@@ -1673,10 +1604,10 @@ createApp({
 
     async function act(kind, row) {
       try {
-        const r = await fetch('/api/groups/' + kind, {
+        const r = await fetch('/api/threads/' + kind, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ groupId: row.groupId }),
+          body: JSON.stringify({ threadId: row.groupId }),
         })
         const d = await r.json()
         toast.value = {
@@ -1704,7 +1635,7 @@ createApp({
             .then((r) => r.json())
             .catch(() => ({ logs: [] })),
         ])
-        // 接口直接回这一行对应的群，前端不用再从 groups 里翻
+        // 接口直接回这一行对应的会话，前端不用再从 groups 里翻
         modal.value = {
           inst: detailRes ?? {},
           group: detailRes?.group ?? row,
@@ -1743,10 +1674,10 @@ createApp({
       emuPlatformFilter, emuTypeFilter, emuPlatformDraft, emuTypeDraft, emuFilterActive,
       emuPlatformOptions, emuTypeOptions, filteredEmulators, filteredRunningCount,
       emuApplyFilter, emuClearFilter, emuPlatformLabel,
-      adminInput, savedAdminUsers, superAdminUsers, settingsError, settingsOk, settingsSaving,
+      settingsError, settingsOk, settingsSaving,
       messages, messageGroups, messageErrors, messagesOk, messagesSaving,
       insertMessageVar, resetMessage, resetAllMessages, saveMessages,
-      switchView, loadSettings, saveSettings,
+      switchView, loadSettings,
       stageTimeouts, timeoutOptions, timeoutFields, saveTimeouts,
       tools, saveTools,
       badgeOf, fmtDur, fmtTime, fmtClock, openMenu, detail,

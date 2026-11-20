@@ -2,7 +2,7 @@
  * 管理面板：常驻进程，聚合所有 bridge 实例，提供 /console 页面。
  *
  * 架构：
- *   bridge  ← 暴露 /api/status、/api/logs、/api/groups/{stop,restart}
+ *   bridge  ← 暴露 /api/status、/api/logs、/api/threads/{stop,restart}
  *   panel   ← 扫描 .instances/*.json 发现实例，逐个拉状态，转发操作
  *
  * 面板与 bridge 分离的好处：bridge 崩了面板还活着，能告诉你它崩了。
@@ -83,23 +83,23 @@ async function fetchStatus(inst, path = '/api/status', timeoutMs = 2500) {
   }
 }
 
-/** 把操作转发给「持有某个群」的那个实例 */
-async function dispatch(instances, groupId, action, token) {
+/** 把操作转发给「持有某个会话」的那个实例 */
+async function dispatch(instances, threadId, action, token) {
   for (const inst of instances) {
     const status = await fetchStatus(inst, '/api/summary')
     if (status.unreachable) continue
-    const owns = (status.groups ?? []).some((g) => String(g.groupId) === String(groupId))
+    const owns = (status.groups ?? []).some((g) => String(g.groupId) === String(threadId))
     if (!owns) continue
 
-    const url = `http://127.0.0.1:${inst.port}/api/groups/${action}`
+    const url = `http://127.0.0.1:${inst.port}/api/threads/${action}`
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(token ? { 'x-panel-token': token } : {}) },
-      body: JSON.stringify({ groupId: String(groupId) }),
+      body: JSON.stringify({ threadId: String(threadId) }),
     })
     return await r.json()
   }
-  return { ok: false, error: `没有实例在服务群 ${groupId}` }
+  return { ok: false, error: `没有实例在服务会话 ${threadId}` }
 }
 
 /** 读 bot.config.json 里的可编辑项 */
@@ -247,14 +247,14 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
       }
       if (path === '/vue.js') return serveStatic(res, 'vue.global.prod.js')
 
-      // 需求大盘：按「群」维度摊平，前端拿到就能直接画表格
+      // 需求大盘：按「会话」维度摊平，前端拿到就能直接画表格
       if (path === '/api/board') {
         const list = registry.list({ cleanup: true })
         const statuses = await Promise.all(list.map((i) => fetchStatus(i, '/api/summary')))
         const rows = []
         let alerts = 0
-        // 并发资源是「实例级」的，但大盘按群展示，所以每个实例的池状态
-        // 单独收一份给前端画总览，行里只带这个群自己的排队信息。
+        // 并发资源是「实例级」的，但大盘按会话展示，所以每个实例的池状态
+        // 单独收一份给前端画总览，行里只带这个会话自己的排队信息。
         const pools = []
         for (const s of statuses) {
           if (s.unreachable) alerts += 1
@@ -280,7 +280,7 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         return json(res, 200, { instances: statuses, at: Date.now() })
       }
 
-      // 大盘某一行展开：一个群 + 它所在进程的完整状态
+      // 大盘某一行展开：一个会话 + 它所在进程的完整状态
       if (path === '/api/board/detail') {
         const pid = url.searchParams.get('pid')
         const groupId = url.searchParams.get('groupId')
@@ -296,7 +296,7 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           instance: full.instance,
           config: full.config,
           resources: full.resources,
-          // 只回这一行对应的群，前端不用再从 groups 里翻
+          // 只回这一行对应的会话，前端不用再从 groups 里翻
           group: (full.groups ?? []).find((g) => String(g.groupId) === String(groupId)) ?? null,
         })
       }
@@ -460,14 +460,14 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         return json(res, result.ok ? 200 : 400, result)
       }
 
-      // 操作：终止 / 重启 —— groupId 走 body，不塞进路径
-      const m = path.match(/^\/api\/groups\/(stop|restart)$/)
+      // 操作：终止 / 重启 —— threadId 走 body，不塞进路径
+      const m = path.match(/^\/api\/threads\/(stop|restart)$/)
       if (m && req.method === 'POST') {
         const body = await readJsonBody(req)
         if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
-        const groupId = String(body.groupId ?? '')
-        if (!groupId) return json(res, 400, { ok: false, error: '缺少 groupId' })
-        const result = await dispatch(registry.list(), groupId, m[1], token)
+        const threadId = String(body.threadId ?? body.groupId ?? '')
+        if (!threadId) return json(res, 400, { ok: false, error: '缺少 threadId' })
+        const result = await dispatch(registry.list(), threadId, m[1], token)
         return json(res, result.ok ? 200 : 400, result)
       }
 

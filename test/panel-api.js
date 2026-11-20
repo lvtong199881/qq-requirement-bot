@@ -20,7 +20,7 @@ const check = (name, cond, extra = '') => {
 }
 
 const FULL_GROUP = {
-  groupId: '100',
+  groupId: 'tbd1a2b3c4d5',
   reqId: 'demo',
   stage: '开发',
   stageStatus: '进行中',
@@ -28,7 +28,7 @@ const FULL_GROUP = {
   stages: [{ name: '开发', status: '进行中' }],
 }
 const SLIM_GROUP = {
-  groupId: '100',
+  groupId: 'tbd1a2b3c4d5',
   reqId: 'demo',
   stage: '开发',
   stageStatus: '进行中',
@@ -54,7 +54,6 @@ const fakeBridge = createServer(async (req, res) => {
     payload = {
       instance: { pid: process.pid, port: 0 },
       config: { model: 'fake-model' },
-      onebot: { url: 'ws://x', connected: true },
       resources: { rssMb: 10, heapMb: 5 },
       groups: [SLIM_GROUP],
       slim: true,
@@ -63,13 +62,12 @@ const fakeBridge = createServer(async (req, res) => {
     payload = {
       instance: { pid: process.pid, port: 0 },
       config: { model: 'fake-model' },
-      onebot: { url: 'ws://x', connected: true },
       resources: { rssMb: 10, heapMb: 5 },
       groups: [FULL_GROUP],
       recentEvents: [{ level: 'info', text: 'something happened' }],
       full: true,
     }
-  } else if (req.url.startsWith('/api/groups/')) {
+  } else if (req.url.startsWith('/api/threads/')) {
     payload = { ok: true, message: 'done' }
   } else {
     payload = { logs: [{ level: 'info', text: 'log line' }] }
@@ -103,14 +101,16 @@ console.log('\n== 需求大盘 /api/board ==')
   asked.length = 0
   const body = await (await fetch(`${base}/api/board`)).json()
   const row = body.rows?.[0] ?? {}
-  check('按群维度摊平', Array.isArray(body.rows) && body.rows.length === 1)
+  check('按会话维度摊平', Array.isArray(body.rows) && body.rows.length === 1)
   check('行里带所属进程 pid', row.pid === process.pid)
-  check('行里带群与需求字段', row.groupId === '100' && row.reqId === 'demo')
+  check('行里带会话与需求字段', row.groupId === 'tbd1a2b3c4d5' && row.reqId === 'demo')
   check('走的是 /api/summary', asked.every((u) => u.startsWith('/api/summary')))
   check('不含事件流', row.recentEvents === undefined)
   check('不含阶段表', row.stages === undefined)
   check('不含进程配置（那是实例页的事）', row.config === undefined && row.resources === undefined)
   check('带告警计数', typeof body.alerts === 'number' && body.alerts === 0)
+  // QQ 时代行里还有 groupName（群名），删通道后恒为 null，前端已经把这一列删了
+  check('没有 QQ 时代的群名字段值', row.groupName === null || row.groupName === undefined)
 }
 
 console.log('\n== 实例页 /api/instances ==')
@@ -123,28 +123,28 @@ console.log('\n== 实例页 /api/instances ==')
   check('走的是 /api/summary', asked.every((u) => u.startsWith('/api/summary')))
   check('不含事件流', inst.recentEvents === undefined)
   check('不含阶段表', inst.groups?.[0]?.stages === undefined)
-  check('带群数量用于汇总', Array.isArray(inst.groups) && inst.groups.length === 1)
+  check('带会话数量用于汇总', Array.isArray(inst.groups) && inst.groups.length === 1)
 }
 
 console.log('\n== 详情 /api/board/detail ==')
 {
   asked.length = 0
-  const body = await (await fetch(`${base}/api/board/detail?pid=${process.pid}&groupId=100`)).json()
+  const body = await (await fetch(`${base}/api/board/detail?pid=${process.pid}&groupId=tbd1a2b3c4d5`)).json()
   check('带进程的完整信息', body.instance?.pid === process.pid && body.config?.model === 'fake-model')
   check('带资源占用', body.resources?.rssMb === 10)
   check('走的是 /api/status', asked.some((u) => u.startsWith('/api/status')))
-  check('只回这一行对应的群', body.group?.groupId === '100')
-  check('群上带阶段表', Array.isArray(body.group?.stages) && body.group.stages.length === 1)
-  check('群上带阶段开始时间', typeof body.group?.stageStartedAt === 'number')
+  check('只回这一行对应的会话', body.group?.groupId === 'tbd1a2b3c4d5')
+  check('会话上带阶段表', Array.isArray(body.group?.stages) && body.group.stages.length === 1)
+  check('会话上带阶段开始时间', typeof body.group?.stageStartedAt === 'number')
   check('不回事件流（弹窗走 /api/logs）', body.recentEvents === undefined)
 }
 
 console.log('\n== 边界 ==')
 {
-  const r = await fetch(`${base}/api/board/detail?pid=999999&groupId=100`)
+  const r = await fetch(`${base}/api/board/detail?pid=999999&groupId=tbd1a2b3c4d5`)
   check('不存在的 pid 返回 404', r.status === 404)
 
-  const r2 = await fetch(`${base}/api/board/detail?groupId=100`)
+  const r2 = await fetch(`${base}/api/board/detail?groupId=tbd1a2b3c4d5`)
   check('缺 pid 返回 400', r2.status === 400)
 
   const r3 = await fetch(`${base}/api/instances/123`)
@@ -185,27 +185,27 @@ console.log('\n== 配置读写 /api/settings ==')
   check('POST /api/settings 不再兼任写入', barePost.status === 404)
 }
 
-console.log('\n== 操作转发 /api/groups ==')
+console.log('\n== 操作转发 /api/threads ==')
 {
   asked.length = 0
   lastPostBody = null
-  const r = await fetch(`${base}/api/groups/stop`, {
+  const r = await fetch(`${base}/api/threads/stop`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ groupId: '100' }),
+    body: JSON.stringify({ threadId: 'tbd1a2b3c4d5' }),
   })
   check('stop 返回 200', r.status === 200)
-  check('转发到 bridge 的 /api/groups/stop', asked.includes('/api/groups/stop'))
-  check('groupId 从 body 传下去', lastPostBody?.groupId === '100')
+  check('转发到 bridge 的 /api/threads/stop', asked.includes('/api/threads/stop'))
+  check('threadId 从 body 传下去', lastPostBody?.threadId === 'tbd1a2b3c4d5')
 
-  const missing = await fetch(`${base}/api/groups/restart`, {
+  const missing = await fetch(`${base}/api/threads/restart`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{}',
   })
-  check('缺 groupId 返回 400', missing.status === 400)
+  check('缺 threadId 返回 400', missing.status === 400)
 
-  const badJson = await fetch(`${base}/api/groups/stop`, {
+  const badJson = await fetch(`${base}/api/threads/stop`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{not json',
@@ -213,7 +213,16 @@ console.log('\n== 操作转发 /api/groups ==')
   check('非法 JSON 返回 400', badJson.status === 400)
 
   const oldPath = await fetch(`${base}/api/groups/100/stop`, { method: 'POST' })
-  check('旧的路径式操作已 404', oldPath.status === 404)
+  check('旧的路由已 404', oldPath.status === 404)
+
+  // 老前端（或者别的脚本）还在传 groupId 时要继续认，不然升级后点终止就报 400
+  lastPostBody = null
+  const compat = await fetch(`${base}/api/threads/stop`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ groupId: 'tbd1a2b3c4d5' }),
+  })
+  check('兼容旧字段 groupId', compat.status === 200 && lastPostBody?.threadId === 'tbd1a2b3c4d5')
 }
 
 await new Promise((r) => panel.close(r))
