@@ -434,10 +434,12 @@ if (Test-Path $cfgPath) {
     try {
       $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
       if (-not ($existing.PSObject.Properties.Name -contains 'api')) {
+        # host 和下面全新生成时保持一致：0.0.0.0，手机才能连。
+        # 补成 127.0.0.1 的话，用户重跑脚本仍然连不上手机，等于这个补丁白打。
         $apiValue = [ordered]@{
           enabled       = $true
           port          = $ApiPort
-          host          = '127.0.0.1'
+          host          = '0.0.0.0'
           allowedOrigin = ''
           maxBodyBytes  = 1000000
         }
