@@ -190,6 +190,20 @@ function sanitizePayload(kind, payload) {
   if (typeof p.userId === 'string' && p.userId) out.userId = p.userId
   if (typeof p.nickname === 'string' && p.nickname) out.nickname = p.nickname.slice(0, 32)
 
+  // 回答提问卡片时带上结构化选择：给人看的是 text（已经排版好的一句话），
+  // 给引擎看的是 answers——自然语言能被误解，勾了哪个选项不会。
+  if (Number.isFinite(p.askSeq)) out.askSeq = Math.max(0, Math.floor(p.askSeq))
+  if (Array.isArray(p.answers)) {
+    out.answers = p.answers
+      .slice(0, 20)
+      .map((a) => ({
+        qid: String(a?.qid ?? '').slice(0, 32),
+        optionIds: Array.isArray(a?.optionIds) ? a.optionIds.map(String).slice(0, 20) : [],
+        input: typeof a?.input === 'string' ? a.input.slice(0, 500) : '',
+      }))
+      .filter((a) => a.qid)
+  }
+
   switch (kind) {
     case 'image':
       if (typeof p.url === 'string') out.url = p.url
@@ -211,6 +225,26 @@ function sanitizePayload(kind, payload) {
       // 待决策卡片：通过/打回按钮就挂在这条消息下面
       if (typeof p.title === 'string') out.title = p.title
       if (Array.isArray(p.items)) out.items = p.items.map(String).slice(0, 20)
+      break
+    case 'ask':
+      // 提问卡片：问题内联在消息流里，用户点选完提交回一条普通消息。
+      // 形状收敛在这里，App 和引擎两边都不用自己防 undefined。
+      if (typeof p.title === 'string') out.title = p.title.slice(0, 200)
+      if (typeof p.submitLabel === 'string') out.submitLabel = p.submitLabel.slice(0, 20)
+      if (Array.isArray(p.questions)) {
+        out.questions = p.questions.slice(0, 20).map((q, i) => ({
+          id: String(q?.id ?? `q${i + 1}`).slice(0, 32),
+          title: String(q?.title ?? '').slice(0, 500),
+          // 只有 single / multi 两种：单选是「选一个」，多选是「勾几个都算」
+          kind: q?.kind === 'multi' ? 'multi' : 'single',
+          allowInput: Boolean(q?.allowInput),
+          inputLabel: typeof q?.inputLabel === 'string' ? q.inputLabel.slice(0, 60) : '',
+          options: (Array.isArray(q?.options) ? q.options : []).slice(0, 26).map((o, j) => ({
+            id: String(o?.id ?? String.fromCharCode(97 + j)).slice(0, 32),
+            label: String(o?.label ?? '').slice(0, 200),
+          })),
+        }))
+      }
       break
     default:
       break

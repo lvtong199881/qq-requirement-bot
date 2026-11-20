@@ -59,7 +59,15 @@ const machine = {
 /** 假的引擎：记录被投递了什么，不真的跑回合 */
 const delivered = []
 const dispatch = async (ev) => {
-  delivered.push({ type: ev.type, groupId: ev.threadId, text: ev.text, mentions: ev.mentions ?? [] })
+  delivered.push({
+    type: ev.type,
+    groupId: ev.threadId,
+    text: ev.text,
+    mentions: ev.mentions ?? [],
+    // 提问卡片的勾选结果：断言要能看出「提交了哪张卡、勾了什么」
+    answers: ev.answers ?? null,
+    askSeq: ev.askSeq ?? null,
+  })
   // 真引擎在 startNewRequirement 里绑 reqId 并开始推进阶段。
   // 不补这一步，群会一直停在「待提需求」，断言就看不出区别。
   const st = machines.get(ev.threadId)
@@ -439,6 +447,29 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
     delivered.some((d) => d.type === 'message' && d.text === '给新用户看，第一次打开的时候弹'),
     JSON.stringify(delivered.slice(-2)),
   )
+
+  // 提问卡片上点「提交」= 按钮，不该再要求用户 @ 一次；
+  // 但权限口径和原来的通过/打回一致：只有能确认的人能提交。
+  const cardBody = {
+    text: '1. 弹窗时机？ A. 首次启动',
+    answers: [{ qid: 'q1', optionIds: ['a'], input: '' }],
+    askSeq: 7,
+  }
+  const deniedCard = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: cardBody,
+  })
+  check('普通成员点卡片提交被拒', deniedCard.status === 403, deniedCard.status)
+  check('拒绝原因是权限', deniedCard.data?.error === '通过和打回只有系统管理员能操作', deniedCard.data?.error)
+
+  const picked = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: adminToken,
+    body: cardBody,
+  })
+  check('管理员点卡片提交也能发言', picked.status === 200 && picked.data?.action === 'message', picked.data?.action)
+  const cardEvent = delivered.filter((d) => Array.isArray(d.answers) && d.answers.length).pop()
+  check('勾选结果带给引擎', cardEvent?.answers?.[0]?.optionIds?.[0] === 'a', JSON.stringify(cardEvent))
+  check('记下了回答的是哪张卡', cardEvent?.askSeq === 7, String(cardEvent?.askSeq))
 
   const empty = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,

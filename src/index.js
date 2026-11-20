@@ -435,7 +435,7 @@ const threads = createThreadService({
   can,
   log,
   botName: config.bot?.name,
-  dispatch: async ({ threadId, text, user, replyTo }) => {
+  dispatch: async ({ threadId, text, user, replyTo, answers }) => {
     const st = machine.peek(threadId)
     if (!st) return { ok: false, error: '这个群当前不接受需求' }
 
@@ -451,6 +451,7 @@ const threads = createThreadService({
         replyTo,
         st,
         initiator,
+        answers: Array.isArray(answers) ? answers : null,
         can: (action, uid) => can(action, threadId, uid),
       })
       .catch((err) => {

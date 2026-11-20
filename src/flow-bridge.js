@@ -69,6 +69,61 @@ export function formatDecisions(decisions) {
 }
 
 /**
+ * 把「等用户拍板」变成一张提问卡片，直接进消息流。
+ *
+ * 以前是发一段「1. xx  A. yy」的纯文本，用户得在输入框里手打字母，
+ * 打错一位 agent 就理解成别的选项。卡片上勾选没有这个问题；
+ * 手机上一屏能点完，也不用记着「第几个问题对应哪个字母」。
+ *
+ * @param {Array} decisions agent 回执里的待决策项（没有就退化成「通过/打回」）
+ * @param {string} confirmTitle 通过/打回卡片的标题
+ */
+export function askPayloadFor(decisions = [], confirmTitle = '') {
+  const list = (Array.isArray(decisions) ? decisions : [])
+    .filter((d) => d && String(d.q ?? '').trim())
+
+  if (list.length) {
+    return {
+      title: '需要你拍板',
+      submitLabel: '提交',
+      questions: list.map((d, i) => ({
+        id: `q${i + 1}`,
+        title: String(d.q).trim(),
+        kind: 'single',
+        // 选项之外常常还有「都不是，我要的是…」。不给这个口子，用户只能
+        // 挑一个将就的，agent 拿到的是错的需求，还以为是用户本意。
+        allowInput: true,
+        inputLabel: '都不是？自己写',
+        options: (d.options ?? [])
+          .filter((o) => o && String(o.text ?? '').trim())
+          .map((o, j) => ({
+            id: String.fromCharCode(97 + j),
+            label: `${String(o.text).trim()}${o.recommended ? '（推荐）' : ''}`,
+          })),
+      })),
+    }
+  }
+
+  return {
+    title: confirmTitle || '确认一下',
+    submitLabel: '提交',
+    questions: [
+      {
+        id: 'confirm',
+        title: '本轮是否通过？',
+        kind: 'single',
+        allowInput: true,
+        inputLabel: '打回理由（选「打回」时填）',
+        options: [
+          { id: 'approve', label: '通过' },
+          { id: 'reject', label: '打回' },
+        ],
+      },
+    ],
+  }
+}
+
+/**
  * @param {object} deps
  *   config, store, machine, log, sendPlain, runTurn, transport, modelEnv, repoRoot
  */
@@ -117,7 +172,7 @@ export function createFlowBridge(deps) {
   /**
    * 入口。调用方已经做完权限校验。
    */
-  async function handleMessage({ groupId, text, replyTo, st, initiator, can }) {
+  async function handleMessage({ groupId, text, replyTo, st, initiator, can, answers = null }) {
     // 安全指令：v2 下只保留打断和释放，其余斜杠指令在老流程里
     const cmd = parseCommand(text)
     if (cmd?.name === 'stop') {
@@ -236,7 +291,7 @@ export function createFlowBridge(deps) {
     // 等用户回答/拍板
     if (flow.status === 'waiting_user') {
       // commit 的等待是「要不要提交」，不是对 agent 提问的回答
-      return answerWaiting({ groupId, text, replyTo, st, initiator })
+      return answerWaiting({ groupId, text, replyTo, st, initiator, answers })
     }
 
     // 卡住了：用户给一句话就接着试（重置本轮计数，但不重置历史轮次）
@@ -339,16 +394,24 @@ export function createFlowBridge(deps) {
     await runFromState({ groupId, st, replyTo })
   }
 
-  async function answerWaiting({ groupId, text, replyTo, st, initiator }) {
+  async function answerWaiting({ groupId, text, replyTo, st, initiator, answers = null }) {
     const flow = st.flow
     // 用户这句话既是「对等待事项的回答」，也可能是修改意见；先原样存进 vars，
     // 由该阶段的 agent 自己判断怎么用（bridge 不做语义猜测）。
     // 上一轮 agent 提的问题也要存下来——否则「AA」这种回答会被拿去和
     // 《待提问清单》（需求澄清阶段的旧清单）比对，永远对不上。
     const prevDecisions = flow.waiting?.decisions ?? []
+    // 卡片上勾选的结果也一起留着：只有它能无歧义地还原「第 2 题选了 B」，
+    // 纯文本那句「我要的是第三个」agent 常常理解偏。
+    const cards = (Array.isArray(answers) ? answers : []).filter((a) => a && a.qid)
     const answered = {
       ...resumeFromUser(flow),
-      vars: { ...flow.vars, userAnswer: text, lastDecisions: prevDecisions },
+      vars: {
+        ...flow.vars,
+        userAnswer: text,
+        lastDecisions: prevDecisions,
+        answerCards: cards.length ? cards : null,
+      },
       // 审计：谁在哪个阶段点的确认。发起人可能不是确认人，
       // 团队里需要能追「这一步是谁放行的」。
       confirmer: {
@@ -444,7 +507,12 @@ export function createFlowBridge(deps) {
         userAnswer: flow.vars?.userAnswer ?? '',
         // 用户回答单独成段，并且尽量和问题编号对齐——直接塞进「输入文件清单」里，
         // agent 会把它当成一个文件名或占位符去猜（实测：它数了字母个数，怀疑是乱码）。
-        answerBlock: buildAnswerBlock(reqDirOf(flow), flow.vars?.userAnswer, flow.vars?.lastDecisions),
+        answerBlock: buildAnswerBlock(
+          reqDirOf(flow),
+          flow.vars?.userAnswer,
+          flow.vars?.lastDecisions,
+          flow.vars?.answerCards,
+        ),
         // 代码工作区：dev 之后才有；之前的阶段不传，避免 agent 去找一个不存在的目录
         // merge 阶段在专用工作区里操作；其他阶段用需求自己的工作区
         workDir: (flow.current === 'merge' ? flow.vars?.mergeWorkDir : flow.workDir) ?? flow.workDir ?? '',
@@ -977,19 +1045,12 @@ async function doMerge({ groupId, flow, st, log, config }) {
       // merge 这类 bridge 动作已经在 bridgeAction 里把「回什么才执行」说清楚了，
       // 再补一句「等你回复上面的问题」只会让人以为还要回答别的
       if (flow.waiting?.bridge) return
-      const decisions = formatDecisions(flow.waiting?.decisions)
-      if (decisions) {
-        await sendPlain(groupId, renderMessage('v2Waiting', { content: decisions }, templates), { replyTo }).catch(() => {})
-      } else {
-        // 没有决策项 = 阶段正常完成，人工模式下等一句「通过」。
-        // 之前这里复用了「等你回复上面的问题」，可上面根本没提问，用户只会困惑。
-        const nextLabel = getCheckpoint(flow.waiting?.advanceTo)?.label ?? '下一步'
-        await sendPlain(
-          groupId,
-          renderMessage('v2Confirm', { stage: currentCheckpoint(flow)?.label ?? '', next: nextLabel }, templates),
-          { replyTo },
-        ).catch(() => {})
-      }
+      const cp = currentCheckpoint(flow)
+      // 提问卡片直接进消息流（历史上这里发的是「1. 问题 / A. 选项」纯文本）：
+      // 用户得在输入框里手打字母，打错一位 agent 就理解成别的选项；
+      // 卡片上点选没有歧义，手机上也不用记「第几个问题对应哪个字母」。
+      const ask = askPayloadFor(flow.waiting?.decisions ?? [], `「${cp?.label ?? '这一步'}」做完了，确认一下`)
+      tx.event(groupId, 'ask', ask)
       return
     }
 
@@ -1087,9 +1148,54 @@ async function doMerge({ groupId, flow, st, log, config }) {
  * 尝试按位展开成 Q-1 → B 这种形式（读《待提问清单》拿到问题列表），
  * 对不上就原样引用并说明——让 agent 知道这是一串选项字母还是自然语言。
  */
-export function buildAnswerBlock(dataDir, rawAnswer, lastDecisions) {
+export function buildAnswerBlock(dataDir, rawAnswer, lastDecisions, answers = null) {
   const answer = String(rawAnswer ?? '').trim()
-  if (!answer) return ''
+  const cards = (Array.isArray(answers) ? answers : []).filter((a) => a && a.qid)
+  if (!answer && !cards.length) return ''
+
+  // 卡片上勾选的选项是结构化的、不会歧义，优先用它。
+  // 纯文本那条路径只在用户没点卡片、直接在输入框里说话时才走到。
+  if (cards.length) {
+    const decisions = (Array.isArray(lastDecisions) ? lastDecisions : []).filter((d) => d?.q)
+    const lines = ['【用户对上一轮提问的回答】（在提问卡片上勾选/填写的）']
+    if (answer) lines.push(`(另外还打了一句：「${answer}」)`)
+    lines.push('')
+    for (const a of cards) {
+      const n = /^q(\d+)$/.exec(String(a.qid))
+      const d = n ? decisions[Number(n[1]) - 1] : null
+      const title = d?.q ? String(d.q).trim() : (a.qid === 'confirm' ? '本轮是否通过？' : String(a.qid))
+      const labelOf = (id) => {
+        const idx = String(id).charCodeAt(0) - 97
+        const opt = d?.options?.[idx]
+        if (opt?.text) return String(opt.text).trim()
+        // 通过/打回卡片没有 lastDecisions 可对位（它不是 agent 提的问题），
+        // 只能按约定的 id 还原成中文
+        if (String(id) === 'approve') return '通过'
+        if (String(id) === 'reject') return '打回'
+        return String(id)
+      }
+      const picked = (a.optionIds ?? []).map(labelOf)
+      const input = String(a.input ?? '').trim()
+      if (a.qid === 'confirm') {
+        if (picked.some((p) => /打回/.test(p))) {
+          lines.push(`- 本轮是否通过？ → 打回${input ? `；理由：${input}` : '（没写理由，按用户的意见为主）'}`)
+        } else if (picked.length) {
+          lines.push('- 本轮是否通过？ → 通过')
+        } else if (input) {
+          lines.push(`- 本轮是否通过？ → 用户没选，只说了一句：${input}`)
+        } else {
+          lines.push('- 本轮是否通过？ → 用户没填')
+        }
+        continue
+      }
+      if (picked.length && input) lines.push(`- ${title} → ${picked.join('、')}；另外补充：${input}`)
+      else if (picked.length) lines.push(`- ${title} → ${picked.join('、')}`)
+      else if (input) lines.push(`- ${title} → 用户自己写：${input}`)
+      else lines.push(`- ${title} → 用户没选，按推荐值转成采用假设`)
+    }
+    lines.push('', '勾选的是用户的明确决定，照它做，不要改回你原来推荐的方案。')
+    return lines.join('\n')
+  }
 
   // 优先用「上一轮 agent 自己提的问题」：用户回答的就是这些。
   // 没有才退回需求澄清阶段的《待提问清单》——那是 req-prd 回合才适用的旧清单。

@@ -142,6 +142,8 @@ function handleEvent(ev) {
       replyTo: null,
       st: machine.peek(threadId),
       initiator,
+      // 卡片上勾了什么：有它就不用猜自然语言，逐条对得上的选择更可靠
+      answers: Array.isArray(ev.answers) ? ev.answers : null,
       can: (action, uid) => can(action, uid),
     })
     .catch((err) => {

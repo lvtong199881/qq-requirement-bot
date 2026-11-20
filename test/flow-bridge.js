@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock } from '../src/flow-bridge.js'
+import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
 
@@ -49,6 +49,7 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
   const logs = []
   const agentCalls = []
   const queued = []
+  const events = []
 
   const store = {
     get: (g) => saved.get(g) ?? null,
@@ -152,9 +153,15 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
     modelEnv: {},
     repoRoot,
     gitDiff: () => '+++ b/a.js',
+    // 提问卡片走 transport.event，不发文本；这里收下来断言卡片内容
+    transport: {
+      sendImage: async () => {},
+      sendFile: async () => {},
+      event: (groupId, kind, payload) => { events.push({ groupId, kind, payload }) },
+    },
   }
 
-  return { deps, saved, sent, agentCalls, queued, logs }
+  return { deps, saved, sent, agentCalls, queued, logs, events }
 }
 
 function newState(groupId = 'g1') {
@@ -232,7 +239,7 @@ console.log('\n== formatDecisions ==')
 
 console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
 {
-  const { deps, saved, sent, agentCalls } = makeDeps()
+  const { deps, saved, sent, agentCalls, events } = makeDeps()
   const bridge = createFlowBridge(deps)
   const st = newState()
   await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: '产品' } })
@@ -246,7 +253,11 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
   check('首次会话是新起（无 sessionId）', agentCalls[0].sessionId === null)
   check('播报受理', sent.some((t) => t.includes('开始处理')))
   check('播报阶段完成', sent.some((t) => t.includes('需求澄清阶段已完成')))
-  check('播报在等用户', sent.some((t) => t.includes('回复「通过」') || t.includes('等你回复')))
+  check('播报在等用户', sent.some((t) => t.includes('需求澄清阶段已完成')))
+  // 等用户拍板改成发提问卡片，不再是「回复「通过」」那种纯文本
+  const ask = events.find((e) => e.kind === 'ask')
+  check('等用户时发提问卡片', Boolean(ask), JSON.stringify(events))
+  check('卡片结构正确', ask?.payload?.questions?.length >= 1 && ask.payload.questions[0].kind === 'single', JSON.stringify(ask?.payload))
   check('需求绑进群状态', saved.get('g1').reqId === flow.reqId, `${saved.get('g1').reqId} vs ${flow.reqId}`)
 }
 
@@ -301,9 +312,9 @@ console.log('\n== /stop 打断 ==')
   check('回了提示', sent.length === 1 && sent[0].includes('没有在跑'))
 }
 
-console.log('\n== agent 要用户拍板：把问题渲染出来 ==')
+console.log('\n== agent 要用户拍板：把它做成提问卡片 ==')
 {
-  const { deps, saved, sent } = makeDeps({
+  const { deps, saved, sent, events } = makeDeps({
     replyPlan: {
       'req-questions': { receipt: { status: 'needs_input', decisions: [{ q: '弹窗时机？', options: [{ text: '首次启动', recommended: true }] }] } },
     },
@@ -314,7 +325,33 @@ console.log('\n== agent 要用户拍板：把问题渲染出来 ==')
   const flow = saved.get('g1').flow
   check('状态 waiting_user', flow.status === 'waiting_user')
   check('问题进 waiting', flow.waiting.decisions.length === 1)
-  check('群里看到了问题', sent.some((t) => t.includes('弹窗时机') && t.includes('首次启动')), sent.join(' / '))
+  const ask = events.find((e) => e.kind === 'ask')?.payload
+  check('群里看到了问题', Boolean(ask?.questions?.[0]?.title?.includes('弹窗时机')), JSON.stringify(ask))
+  check('选项带推荐标记', ask?.questions?.[0]?.options?.[0]?.label === '首次启动（推荐）', JSON.stringify(ask?.questions?.[0]?.options))
+  check('留了自由输入的口子', ask?.questions?.[0]?.allowInput === true)
+  check('不再发纯文本列表', !sent.some((t) => t.includes('A. 首次启动')), sent.join(' / '))
+}
+
+console.log('\n== 提问卡片：通过/打回 + 结构化回答 ==')
+{
+  const confirm = askPayloadFor([])
+  check('没有决策项时给通过/打回', confirm.questions[0].id === 'confirm' && confirm.questions[0].options.length === 2, JSON.stringify(confirm))
+  check('打回能填理由', confirm.questions[0].allowInput === true && /打回理由/.test(confirm.questions[0].inputLabel), JSON.stringify(confirm.questions[0]))
+  check('标题带上当前阶段', confirm.title.includes('确认'), confirm.title)
+
+  const picked = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }, { text: '首页' }] }], 'x')
+  check('决策卡片一个问题', picked.questions.length === 1 && picked.questions[0].title === '先做哪个', JSON.stringify(picked))
+  check('选项编号是字母', picked.questions[0].options[1].id === 'b' && picked.questions[0].options[1].label === '首页', JSON.stringify(picked.questions[0].options))
+
+  const dec = [{ q: '弹窗时机？', options: [{ text: '首次启动' }, { text: '每次启动' }] }]
+  const block = buildAnswerBlock(repoRoot, '', dec, [{ qid: 'q1', optionIds: ['b'], input: '再补一句：能关掉' }])
+  check('回答块按勾选还原成文字', block.includes('弹窗时机？ → 每次启动') && block.includes('能关掉'), block)
+
+  const confirmBlock = buildAnswerBlock(repoRoot, '', [], [{ qid: 'confirm', optionIds: ['reject'], input: '按钮颜色不对' }])
+  check('打回理由进回答块', confirmBlock.includes('打回') && confirmBlock.includes('按钮颜色不对'), confirmBlock)
+
+  const approveBlock = buildAnswerBlock(repoRoot, '', [], [{ qid: 'confirm', optionIds: ['approve'] }])
+  check('通过也写清楚', approveBlock.includes('通过'), approveBlock)
 }
 
 console.log('\n== 返工不播「完成」 ==')

@@ -215,8 +215,18 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
    *
    * 唯一的例外是 through=force：通过/打回是界面上的按钮，不是打字，
    * 不该要求用户再去 @ 一次；权限已经由路由层（confirm）判过了。
+   * 提交提问卡片（answers）也走 force：点选不是打字，同样不该再 @ 一次。
    */
-  async function deliver({ threadId, text, user, mentions = [], replyTo = null, force = false }) {
+  async function deliver({
+    threadId,
+    text,
+    user,
+    mentions = [],
+    replyTo = null,
+    force = false,
+    answers = null,
+    askSeq = null,
+  }) {
     const saved = get(threadId)
     if (!exists(saved)) return { ok: false, notFound: true, error: '没有这个群' }
 
@@ -225,10 +235,12 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       nickname: user.nickname || user.username,
       at: Date.now(),
     }
+    const picked = Array.isArray(answers) && answers.length ? answers : null
     const missed = mentionsOf({ mentions, text, botName })
-    const route = force
-      ? { action: 'message', atBot: false, needsStart: false }
-      : routeMessage({ mode: saved.mode ?? 'chat', mentions: missed })
+    const route =
+      force || picked
+        ? { action: 'message', atBot: false, needsStart: false }
+        : routeMessage({ mode: saved.mode ?? 'chat', mentions: missed })
 
     if (route.action === 'start') {
       // 权限判断放在落库和发事件之前：被拒的话群里不留痕，引擎也不会跑
@@ -238,6 +250,20 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
           ok: false,
           forbidden: true,
           error: '提需求需要系统管理员权限',
+          roleLabel: perm?.roleLabel ?? null,
+        }
+      }
+    }
+
+    // 点提问卡片提交 = 通过/打回/答决策，和原来的按钮是同一件事，
+    // 权限口径也得一样：只有能确认的人才放行。
+    if (picked) {
+      const perm = await can('confirm', threadId, user.id)
+      if (!perm?.ok) {
+        return {
+          ok: false,
+          forbidden: true,
+          error: '通过和打回只有系统管理员能操作',
           roleLabel: perm?.roleLabel ?? null,
         }
       }
@@ -265,6 +291,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       payload: {
         text,
         ...(missed.length ? { mentions: missed } : {}),
+        // 从哪张提问卡片上点的（App 用它把卡片标成「已回答」，引擎用它对齐问题）
+        ...(Number.isFinite(askSeq) ? { askSeq } : {}),
+        ...(picked ? { answers: picked } : {}),
         // 群里可能有好几个人，App 靠 userId 判断气泡该靠左还是靠右
         userId: initiator.userId,
         nickname: initiator.nickname,
@@ -296,7 +325,11 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
         type: route.action,
         threadId,
         // @ 只是触发器，不该进需求名、也不该成为 agent 看到的第一句废话
-        text: stripBotMention(text, botName),        mentions: missed,
+        text: stripBotMention(text, botName),
+        mentions: missed,
+        ...(picked ? { answers: picked } : {}),
+        // 哪张卡片被回答了：引擎侧靠它把「这句话是对哪次提问的答复」对上号
+        ...(Number.isFinite(askSeq) ? { askSeq } : {}),
         user: { userId: initiator.userId, nickname: initiator.nickname },
         replyTo,
       })

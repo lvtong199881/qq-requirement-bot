@@ -300,11 +300,15 @@ export function createApiServer({
           if (!text) return json(res, 400, { ok: false, error: '消息不能为空' })
           if (text.length > 5000) return json(res, 400, { ok: false, error: '消息太长了' })
           const mentions = Array.isArray(body.mentions) ? body.mentions.map(String).slice(0, 20) : []
+          // 提问卡片的提交：带结构化选择回来。有这个字段就说明不是在聊天，
+          // 是用户点了卡片上的选项，deliver 据此不再要求 @ 一次。
+          const answers = Array.isArray(body.answers) ? body.answers : null
+          const askSeq = Number.isFinite(body.askSeq) ? body.askSeq : null
 
           // 落库、权限、分发都在 deliver 里：它才知道这个群是聊天还是需求群
           // （@ 了 bot 才开需求，权限要求和管理员建群一致）。
           // 被拒的话那句不落库——群里不该多一条自己说、agent 永远不会回的话。
-          const result = await deliver({ threadId, text, user, mentions })
+          const result = await deliver({ threadId, text, user, mentions, answers, askSeq })
           if (result?.forbidden) {
             return json(res, 403, {
               ok: false,
