@@ -366,7 +366,21 @@ if ($Provider) {
 # 把选择写进 dsh profile 的 patch 层，dsh 启动时按它选 provider。
 if ($Provider -and $Model) {
   $patchPath = Join-Path $profileDst 'cordis.patch.yml'
-  $patch = @"
+  # providers 段不能省：dsh 只给「注册过」的 provider 建适配器。
+  # 只写 agent-default-model 时，内置以外的供应商（opencode-go 这类）
+  # 会在第一回合就报 NO_ADAPTER: no adapter registered for provider "xxx"。
+  $providersBlock = ''
+  if ($ApiKeyEnv) {
+    $providersBlock = @"
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      ${Provider}:
+        apiKeyEnv: $ApiKeyEnv
+"@
+  }
+  $patch = $providersBlock + @"
 - id: agent-default-model
   name: "@deepseek-ai/dsh-agent-default-model"
   config:

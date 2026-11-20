@@ -1,12 +1,20 @@
 # qqbot profile 的用户补丁层（顶层 YAML 数组）。
 #
 # 默认只含注释：完全沿用 headless 的默认行为。
-# 模型供应商由用户自己填，install.ps1 会在这里写入：
+# 模型供应商由用户自己填，install.ps1 会在这里写入两段：
+#
+#   - id: llm-pi-ai
+#     name: "@deepseek-ai/dsh-llm-pi-ai"
+#     config:
+#       providers:
+#         <provider>:
+#           apiKeyEnv: <你的 key 环境变量>
 #   - id: agent-default-model
 #     name: "@deepseek-ai/dsh-agent-default-model"
 #     config:
 #       provider: <你的 provider>
 #       model: <你的 model>
 #
-# 也可以手动改成任意 dsh 支持的 provider，bridge 不关心是哪一家。
-[]
+# 第一段不能省：dsh 只给注册过的 provider 建适配器，只写第二段时
+# 内置以外的供应商（opencode-go 这类）第一回合就报 NO_ADAPTER。
+[] 

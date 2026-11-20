@@ -110,7 +110,28 @@ if (runRealTurn) {
     ok(`sessionId：${res.sessionId}`)
   } else {
     fail(`回合失败（退出码 ${res.exitCode}，超时=${res.timedOut}）`)
-    if (res.stderr) console.log(res.stderr.split('\n').slice(-5).join('\n'))
+    const tail = String(res.stderr ?? '').split('\n').slice(-5).join('\n')
+    if (tail) console.log(tail)
+    // 这个错跟代码无关，是 dsh 那边没给 provider 注册适配器。
+    // 照着报错去翻源码要花很久，这里直接把改法写出来。
+    if (/NO_ADAPTER|no adapter registered/.test(`${tail}${res.finalText ?? ''}`)) {
+      console.log(
+        [
+          '',
+          `  这不是 bridge 的问题：dsh 的 profile 里没有注册 ${config.model?.provider ?? '这个 provider'}。`,
+          `  在 ~/.dsh/profiles/${config.profile}/cordis.patch.yml 加上：`,
+          '',
+          '    - id: llm-pi-ai',
+          '      name: "@deepseek-ai/dsh-llm-pi-ai"',
+          '      config:',
+          '        providers:',
+          `          ${config.model?.provider ?? 'provider'}:`,
+          `            apiKeyEnv: ${config.model?.apiKeyEnv ?? 'API_KEY'}`,
+          '',
+          '  改完不用重启任何东西，下一个回合就会用上。',
+        ].join('\n'),
+      )
+    }
   }
 }
 
