@@ -75,7 +75,7 @@ const prompts = () => {
 }
 
 try {
-  await b.register('测试管理员', 'pass1234')
+  await b.asAdmin()
 
   const { threadId } = await b.createThread('首页加个欢迎弹窗')
   check('需求已创建', Boolean(threadId))

@@ -44,6 +44,12 @@ class AuthController extends ChangeNotifier {
   /// 上次成功登录用的用户名，登录页预填，省得每次敲。
   String? lastUsername;
 
+  /// 后端有还没改过密码的预设管理员时，这里是它的账号和密码。
+  /// 登录页直接把它写出来——新装好的人拿到地址却不知道用什么登，
+  /// 是这套系统最容易卡住的一步。
+  String? presetAdmin;
+  String? presetPassword;
+
   /// 上次注册时的提示（比如「你是第一个注册的，已自动成为管理员」）。
   /// 一次性的，显示完由界面清掉。
   String? flashNotice;
@@ -115,8 +121,12 @@ class AuthController extends ChangeNotifier {
     final probe = _newClient(url);
     // 先探一次 /healthz：地址写错时立刻告诉用户，比让他输完账号密码
     // 再看到「连不上」体验好得多。
+    String? presetName;
+    String? presetPwd;
     try {
-      await probe.authStatus();
+      final st = await probe.authStatus();
+      presetName = st.presetAdmin;
+      presetPwd = st.presetPassword;
     } finally {
       probe.close();
     }
@@ -128,6 +138,10 @@ class AuthController extends ChangeNotifier {
     user = null;
     perms = Perms.empty;
     _client = _newClient(url)..token = null;
+    presetAdmin = presetName;
+    presetPassword = presetPwd;
+    // 有预设账号就替用户填好账号名，少打一个字是一个
+    if (presetName != null) lastUsername = presetName;
     stage = AuthStage.needLogin;
     notifyListeners();
   }
@@ -159,6 +173,9 @@ class AuthController extends ChangeNotifier {
     perms = me.perms;
     lastUsername = username;
     await _store.saveSession(token: tok, username: username);
+    // 登进来了就不再提示初始密码：它可能已被改掉，继续显示会误导
+    presetAdmin = null;
+    presetPassword = null;
     stage = AuthStage.ready;
     notifyListeners();
   }

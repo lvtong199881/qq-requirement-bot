@@ -559,16 +559,23 @@ function startAppApi() {
     const { port, address } = server.address()
     appApiPort = port
     runtime.info(`App API：http://${address}:${port}/healthz`)
-    // 没有账号时，第一个能访问到这个端口的人就会成为管理员。
-    // 对着全网开的部署（host=0.0.0.0）必须把这句话说清楚，
-    // 否则抢注这件事在日志里一点痕迹都没有。
-    if (users.needsFirstAdmin()) {
-      if (address === '0.0.0.0' || address === '::') {
-        runtime.warn('App 还没有账号——现在任何一个能访问这个端口的人注册都会成为系统管理员')
-        runtime.warn('先自己注册一个，或临时把 api.host 改成 127.0.0.1 注册完再放开')
-      } else {
-        runtime.info('App 还没有账号——第一个注册的人会自动成为系统管理员')
+
+    // 预设一个管理员：新装的系统不该要求人先会注册才能进去。
+    // 只在用户表完全为空时生效，所以改过密码、加过账号之后它不会再出现。
+    const boot = users.ensureBootstrap()
+    if (boot.created) {
+      runtime.info(`已创建预设管理员：${boot.user.username} / 123456`)
+      runtime.warn('这个密码是公开的，登录后请立刻在「账号管理」里改掉')
+      const openToAll = address === '0.0.0.0' || address === '::'
+      if (openToAll) {
+        runtime.warn(`现在这个端口对全网开放（${address}），拿到地址的人都能用预设账号登进来`)
+        runtime.warn('要么先改密码，要么把 api.host 收成 127.0.0.1 用隧道转发')
       }
+    } else if (users.needsFirstAdmin()) {
+      // 用户表非空但没有管理员（被降级/停用光了），这时不能自动补一个 admin，
+      // 否则等于留了个后门。让用户知道该怎么救。
+      runtime.warn('用户表里有账号但没有可用的管理员——预设账号只在空表时创建')
+      runtime.warn('删掉 .state/users.json 重启可以回到初始状态（数据会丢）')
     }
   })
 }

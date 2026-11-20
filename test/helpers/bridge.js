@@ -7,9 +7,13 @@
  * 而原来的做法绕过了 API 层，等于测的是一个用户永远不会走的入口。
  *
  *   const b = await boot({ config: {...}, logPrefix: 'rerun' })
- *   await b.register('测试管理员', 'pass1234')   // 第一个注册的自动当管理员
+ *   await b.asAdmin()                            // 直接用预设管理员登进来
  *   await b.createThread('首页加个欢迎弹窗')
  *   b.logs()   b.child()   await b.stop()
+ *
+ * 注意：bridge 启动时会建一个预设管理员 admin / 123456，
+ * 所以「注册一个新账号」拿到的是普通成员，不再是管理员。
+ * 需要管理员就用 asAdmin()，需要普通成员就用 b.register(...)。
  */
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -138,6 +142,15 @@ export async function boot({
       if (!r.body?.ok) throw new Error(`注册失败：${JSON.stringify(r.body)}`)
       token = r.body.token
       return r.body
+    },
+    /**
+     * 用 bridge 启动时自动建的预设管理员登录。
+     *
+     * 它是「第一个账号」，所以是管理员——但它是系统建的，不是注册来的。
+     * 测试里要管理员权限就走这里，别用 register（那会拿到普通成员）。
+     */
+    async asAdmin() {
+      return api.login('admin', '123456')
     },
     async login(username = '测试管理员', password = 'pass1234') {
       const r = await call('POST', '/api/auth/login', { username, password })

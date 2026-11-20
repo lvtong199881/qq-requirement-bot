@@ -149,9 +149,17 @@ export function createApiServer({
 
       // 注册状态：App 首屏要判断「显示注册还是只显示登录」
       if (method === 'GET' && path === '/api/auth/status') {
+        // 还有没改过密码的预设管理员时，把账号名带回去——
+        // 这样首屏可以直接写「用 admin / 123456 登录」，
+        // 用户不用去翻文档或猜。改过密码就不会再返回。
+        const preset = users.pendingPresetAdmin()
         return json(res, 200, {
           ok: true,
           needsFirstAdmin: users.needsFirstAdmin(),
+          presetAdmin: preset ? preset.username : null,
+          // 预设密码是固定的，写在代码里也是公开的。
+          // 只在这一刻跟着账号名一起给，改过就都不给了。
+          presetPassword: preset ? '123456' : null,
         })
       }
 
@@ -172,7 +180,7 @@ export function createApiServer({
         }
         clearRate(ip)
         log(`[api] 新账号：${result.user.username}（${result.user.roleLabel}）`)
-        // 第一个注册者自动是管理员，提示一下，否则用户不知道自己能干什么
+        // 只有空表时注册才会直接当上管理员；有预设账号时这里就是日常注册
         return json(res, 200, {
           ok: true,
           token: result.token,

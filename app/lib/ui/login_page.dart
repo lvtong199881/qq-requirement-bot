@@ -185,9 +185,89 @@ class _LoginPageState extends State<LoginPage> {
                   '第一个注册的人会成为系统管理员。admin 才能发起需求和点通过/打回。',
                 ),
               ],
+
+              // 后端建了预设管理员（还没改过密码）就直接写出来。
+              // 新装好的机器上，人拿到地址之后最容易卡在「用什么登录」这一步，
+              // 让他去翻安装文档不如直接告诉他。
+              if (!_registering && widget.auth.presetAdmin != null) ...[
+                const SizedBox(height: 20),
+                _PresetHint(
+                  username: widget.auth.presetAdmin!,
+                  password: widget.auth.presetPassword ?? '',
+                  onFill: () => setState(() {
+                    _username.text = widget.auth.presetAdmin!;
+                    _password.text = widget.auth.presetPassword ?? '';
+                    _error = null;
+                  }),
+                ),
+              ],
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 预设账号提示。带一个「填入」按钮：知道密码和不用打密码是两回事，
+/// 手机上打 6 位数字比点一下麻烦得多。
+class _PresetHint extends StatelessWidget {
+  const _PresetHint({
+    required this.username,
+    required this.password,
+    required this.onFill,
+  });
+
+  final String username;
+  final String password;
+  final VoidCallback onFill;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.key_outlined, size: 16, color: theme.colorScheme.onSecondaryContainer),
+              const SizedBox(width: 8),
+              Text(
+                '初始管理员账号',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: theme.colorScheme.onSecondaryContainer,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            '$username / $password',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '登录后请在「账号管理」里改掉这个密码。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSecondaryContainer,
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: onFill,
+              child: const Text('填入'),
+            ),
+          ),
+        ],
       ),
     );
   }

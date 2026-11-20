@@ -74,9 +74,9 @@ export class UserStore {
         if (Array.isArray(raw?.users)) users = raw.users
       }
     } catch {
-      // 用户表损坏时不能静默当成「没有账号」——那会让下一个人注册拿到 admin。
-      // 备份一份坏文件保留现场，然后按空表启动（此时第一个注册者仍是 admin，
-      // 但至少坏文件还在，能人工抢救）。
+      // 用户表损坏时不能静默当成「没有账号」。备份坏文件保留现场，再按空表启动：
+      // 空表会让预设账号被重新建出来（admin/123456 又回来了），这是有意的——
+      // 坏表状态下系统得能起来；但备份文件还在，能人工抢救。
       try {
         if (existsSync(this.file)) {
           renameSync(this.file, `${this.file}.broken-${Date.now()}`)
@@ -126,8 +126,9 @@ export class UserStore {
     const name = String(username).trim()
     if (this.findByUsername(name)) return { ok: false, error: '这个用户名已经有人用了' }
 
-    // 第一个注册者自动成为管理员：否则新装好的系统没人能批需求，
-    // 还得手动改 JSON，等于把初始化步骤推给用户。
+    // 没有任何可用管理员时才给 admin。正常情况下启动时建好的预设账号
+    // 已经占了这个位置，所以新注册的一律是普通成员——要提权得由管理员改，
+    // 不能靠「注册得早」白拿权限。
     const role = this.needsFirstAdmin() ? ROLES.admin : ROLES.member
     const salt = newSalt()
     const user = {
@@ -143,6 +144,43 @@ export class UserStore {
     this.data.users.push(user)
     this.#save()
     return { ok: true, user: publicUser(user), token: this.issueToken(user) }
+  }
+
+  /**
+   * 预设管理员。
+   *
+   * 新装好的系统如果非要人先跑去 App 注册一次才能用，那第一件事就会卡住：
+   * 门店/同事拿到地址却进不去。所以默认放一个 admin 账号。
+   *
+   * 只在**用户表完全空**时创建，不是「没有管理员就补」：
+   * 后者会在你把人降级/删表之后又冒出个 admin/123456，等于留下一个后门。
+   * 密码改了就不会再变——这里只负责「第一次」。
+   *
+   * @returns {{created:boolean, user:object|null}}
+   */
+  ensureBootstrap({ username = 'admin', password = '123456', nickname = '管理员' } = {}) {
+    if (this.data.users.length > 0) return { created: false, user: null }
+    const badName = checkUsername(username)
+    const badPwd = checkPassword(password)
+    if (badName || badPwd) {
+      return { created: false, user: null, error: badName || badPwd }
+    }
+    const salt = newSalt()
+    const user = {
+      id: `u_${randomId()}`,
+      username: String(username).trim(),
+      nickname: String(nickname ?? '').trim() || '管理员',
+      role: ROLES.admin,
+      salt,
+      passwordHash: hashPassword(String(password), salt),
+      createdAt: Date.now(),
+      disabled: false,
+      // 标记出来，好在日志和 UI 上提示「这是初始密码，该换了」
+      preset: true,
+    }
+    this.data.users.push(user)
+    this.#save()
+    return { created: true, user: publicUser(user) }
   }
 
   /**
@@ -233,8 +271,24 @@ export class UserStore {
     if (bad) return { ok: false, error: bad }
     user.salt = newSalt()
     user.passwordHash = hashPassword(password, user.salt)
+    // 密码一改，「这还是初始密码」就不再成立，登录页的提示要跟着消失。
+    // 不清这个标记的话，App 会一直挂着「初始密码 123456」，
+    // 而那个密码其实已经登不进去了——最糟的一类提示。
+    delete user.preset
     this.#save()
     return { ok: true }
+  }
+
+  /**
+   * 还没改过密码的预设管理员。
+   *
+   * App 首屏拿它决定要不要显示「初始账号 admin / 123456」。
+   * 只报预设、还是管理员、没被停用的——被人改过密码或降级之后
+   * 就不该再提示一个登不进去的号码。
+   */
+  pendingPresetAdmin() {
+    const u = this.data.users.find((x) => x.preset && x.role === ROLES.admin && !x.disabled)
+    return u ? { username: u.username } : null
   }
 
   list() {
@@ -268,6 +322,9 @@ export function publicUser(u) {
     createdAt: u.createdAt ?? null,
     lastLoginAt: u.lastLoginAt ?? null,
     disabled: Boolean(u.disabled),
+    // 预设账号还是那串初始密码时，App 上提醒一次。改过密码这个标记就没意义了，
+    // 但留着它不会泄露什么——它只说明「这个号是系统建的」。
+    preset: Boolean(u.preset),
   }
 }
 

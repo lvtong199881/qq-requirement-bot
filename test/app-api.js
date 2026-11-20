@@ -167,8 +167,42 @@ const api = async (method, path, { token, body } = {}) => {
 
 console.log('\n== 首屏：还没账号时要提示注册 ==')
 {
+  // 这个测试自己起 UserStore，不会像 index.js 那样调 ensureBootstrap，
+  // 所以这里的状态就是「真·空表」。预设账号的行为在 test/account.js 里测。
   const r = await api('GET', '/api/auth/status')
   check('needsFirstAdmin 为 true', r.data?.needsFirstAdmin === true)
+  check('没有预设账号时不提示初始密码', r.data?.presetAdmin === null && r.data?.presetPassword === null)
+}
+
+console.log('\n== 首屏：有没改过密码的预设账号时给出账号和密码 ==')
+{
+  // 模拟 index.js 启动时建了预设账号的那台机器
+  const presetUsers = new UserStore(mkdtempSync(join(tmpdir(), 'qq-preset-')))
+  presetUsers.ensureBootstrap()
+  const presetSrv = createApiServer({
+    users: presetUsers,
+    messages,
+    artifacts,
+    threadInfo: threads.threadInfo,
+    listThreads: threads.listThreads,
+    deliver: threads.deliver,
+    createThread: threads.createThread,
+    log: () => {},
+  })
+  await new Promise((r) => presetSrv.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${presetSrv.address().port}`
+  const r = await (await fetch(`${base}/api/auth/status`)).json()
+  check('返回了预设账号名', r.presetAdmin === 'admin')
+  check('返回了预设密码', r.presetPassword === '123456')
+  check('有管理员了所以不催注册', r.needsFirstAdmin === false)
+
+  // 改过密码之后这俩字段必须消失，否则 App 会一直显示一个登不进去的号码
+  presetUsers.resetPassword(presetUsers.findByUsername('admin').id, 'my-own-pass')
+  const r2 = await (await fetch(`${base}/api/auth/status`)).json()
+  check('改密码后不再返回预设账号', r2.presetAdmin === null)
+  check('改密码后不再返回预设密码', r2.presetPassword === null)
+
+  await new Promise((r) => presetSrv.close(r))
 }
 
 console.log('\n== 注册：第一个注册者成为管理员 ==')

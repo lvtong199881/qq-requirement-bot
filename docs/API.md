@@ -333,7 +333,10 @@ bridge 时会带 `x-panel-token`，由 bridge 校验（没配 token 时 bridge �
 ### 账号模型
 
 - 只有一个角色维度：`admin`（系统管理员）/ `member`（普通成员）
-- **第一个注册的账号自动成为 admin**，否则新装机没人能批需求
+- **启动时会建一个预设管理员** `admin` / `123456`，只在用户表为空时创建
+- 表非空之后，新注册的账号一律是 `member`；要提权得由管理员在 App 里改
+- 预设账号没有任何特权豁免：能被降级、能停用，也受「最后一个管理员」约束
+- 改过密码之后，`/api/auth/status` 就不再返回预设账号（见下）
 - 用户名 2–20 字符，允许中文；密码 6–128 字符，用 `scrypt` 存哈希
 - 不设邮箱，也不做找回密码——忘了让管理员重置
 - 最后一个管理员不能降级、不能停用（否则只能改 JSON 救场）
@@ -363,13 +366,29 @@ HS256，自带 `iat`/`exp`，有效期 7 天。签名密钥在首次启动时生
 
 ### `GET /api/auth/status`
 
-App 首屏据此决定「显示注册还是只显示登录」。
+App 首屏据此决定「显示注册还是只显示登录」，以及要不要把初始账号写出来。
 
 ```jsonc
-{ "ok": true, "needsFirstAdmin": true }
+// 刚装好、预设管理员还没改过密码
+{
+  "ok": true,
+  "needsFirstAdmin": false,
+  "presetAdmin": "admin",
+  "presetPassword": "123456"
+}
 ```
 
-`needsFirstAdmin` 为 `true` 时说明一个账号都没有，此时注册的那个人会成为管理员。
+```jsonc
+// 改过密码、或者本来就没有预设账号
+{ "ok": true, "needsFirstAdmin": false, "presetAdmin": null, "presetPassword": null }
+```
+
+- `needsFirstAdmin`：一个可用管理员都没有。预设账号建好之后基本总是 `false`
+- `presetAdmin` / `presetPassword`：**只在预设账号还是初始密码、且仍是可用管理员时**给出。
+  改过密码或降级之后都变 `null`——继续返回一串登不进去的账号是最糟的提示。
+
+预设密码是固定的、写在代码里，所以返回它不泄露任何东西；它只是让新装机的人
+不用去翻文档就知道用什么登录。
 
 ### `POST /api/auth/register`
 
@@ -383,10 +402,14 @@ App 首屏据此决定「显示注册还是只显示登录」。
 {
   "ok": true,
   "token": "eyJhbGci...",
-  "user": { "id": "...", "username": "阿宝", "role": "admin", "roleLabel": "系统管理员", ... },
-  "notice": "你是第一个注册的，已自动成为系统管理员"
+  "user": { "id": "...", "username": "阿宝", "role": "member", "roleLabel": "普通成员", ... },
+  "notice": ""
 }
 ```
+
+`notice` 只在真的当上管理员时非空。**因为有预设管理员，正常情况下注册拿到的是
+`member`，`notice` 是空串**——只有把用户表清空后注册才会是管理员（那时
+`notice` 是「你是第一个注册的，已自动成为系统管理员」）。
 
 失败：`400` + `{ "ok": false, "error": "这个用户名已经有人用了" }`。
 

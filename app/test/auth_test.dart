@@ -167,6 +167,74 @@ void main() {
     expect(auth.stage, AuthStage.needLogin);
   });
 
+  test('后端建了预设管理员时，登录页能拿到账号密码', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = authWith((req) async {
+      if (req.url.path == '/api/auth/status') {
+        return jsonOk({
+          'needsFirstAdmin': false,
+          'presetAdmin': 'admin',
+          'presetPassword': '123456',
+        });
+      }
+      return jsonOk(_me);
+    });
+    await auth.restore();
+
+    await auth.setServer('http://x:7881');
+
+    expect(auth.presetAdmin, 'admin');
+    expect(auth.presetPassword, '123456');
+    // 账号名顺手填好，手机上少打一个字是一个
+    expect(auth.lastUsername, 'admin');
+  });
+
+  test('没有预设账号时不留任何提示', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = authWith((req) async {
+      if (req.url.path == '/api/auth/status') {
+        return jsonOk({'needsFirstAdmin': true});
+      }
+      return jsonOk(_me);
+    });
+    await auth.restore();
+
+    await auth.setServer('http://x:7881');
+
+    expect(auth.presetAdmin, isNull);
+    expect(auth.presetPassword, isNull);
+  });
+
+  test('登录成功后清掉预设提示', () async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final auth = authWith((req) async {
+      if (req.url.path == '/api/auth/status') {
+        return jsonOk({
+          'needsFirstAdmin': false,
+          'presetAdmin': 'admin',
+          'presetPassword': '123456',
+        });
+      }
+      if (req.url.path == '/api/auth/login') {
+        return jsonOk({
+          'ok': true,
+          'token': 'good',
+          'user': (_me['user'] as Map).cast<String, dynamic>(),
+        });
+      }
+      return jsonOk(_me);
+    });
+    await auth.restore();
+    await auth.setServer('http://x:7881');
+    expect(auth.presetAdmin, 'admin');
+
+    await auth.login(username: 'admin', password: '123456');
+
+    // 登进来之后那个密码可能已经被改了，继续显示会误导下一个人
+    expect(auth.presetAdmin, isNull);
+    expect(auth.presetPassword, isNull);
+  });
+
   test('换服务器时探测失败要报错，不能把地址写进去', () async {
     FlutterSecureStorage.setMockInitialValues({
       'server_base_url': 'http://old:7881',

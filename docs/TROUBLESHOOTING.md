@@ -33,7 +33,7 @@ node src/doctor.js
 | 已失效 | 原来干什么 | 现在怎么办 |
 | --- | --- | --- |
 | `onebot` | 连 NapCat 的 WebSocket 地址 | 不需要，App 直接调 API |
-| `bot.qq` | 认 QQ 群里的管理员用 | 身份来自用户表，第一个注册的是管理员 |
+| `bot.qq` | 认 QQ 群里的管理员用 | 身份来自用户表，预设管理员 `admin` 或管理员提权的人 |
 | `groups` | 手动指定服务哪些群 | 不需要，App 里点「+」新建就行 |
 | `groupPolicy` / `excludeGroups` | 哪些群能用、哪些不能用 | 权限只看账号（系统管理员 / 普通成员） |
 | `superAdmin` / `adminUsers` | QQ 号白名单 | 在 App 的「账号管理」里改角色 |

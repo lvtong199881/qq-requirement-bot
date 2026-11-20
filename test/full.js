@@ -40,20 +40,45 @@ try {
     const hz = await b.call('GET', '/healthz')
     check('/healthz 返回 200', hz.status === 200 && hz.body?.ok === true, JSON.stringify(hz.body))
     const st = await b.call('GET', '/api/auth/status')
-    check('全新实例需要第一个管理员', st.body?.needsFirstAdmin === true, JSON.stringify(st.body))
+    // 预设管理员在启动时就建好了，所以这里不再是「需要人注册」的状态。
+    // 但首屏要能把初始账号告诉用户，否则新装机根本不知道用什么登。
+    check('首屏给出了预设账号', st.body?.presetAdmin === 'admin', JSON.stringify(st.body))
+    check('首屏给出了预设密码', st.body?.presetPassword === '123456', JSON.stringify(st.body))
   }
 
   console.log('\n== 账号 ==')
   {
-    const reg = await b.register('全链路管理员', 'pass1234', '产品同学')
-    check('第一个注册的是管理员', reg.user?.role === 'admin', reg.user?.role)
-    check('注册给了 token', typeof reg.token === 'string' && reg.token.length > 100)
-    check('注册给了提示', typeof reg.notice === 'string' && reg.notice.includes('系统管理员'), reg.notice)
+    // bridge 启动时已经建了预设管理员 admin / 123456，
+    // 所以「第一个注册的人」这个位置被占了，新注册的只会是普通成员。
+    const st = await b.call('GET', '/api/auth/status')
+    check('/api/auth/status 可用', st.body?.ok === true)
+    check('预设管理员已被占用', st.body?.needsFirstAdmin === false)
+
+    const admin = await b.asAdmin()
+    check('预设管理员能登录', admin.user?.role === 'admin', admin.user?.role)
+    check('登录给了 token', typeof admin.token === 'string' && admin.token.length > 100)
+    check('昵称是「管理员」', admin.user?.nickname === '管理员', admin.user?.nickname)
 
     const me = await b.call('GET', '/api/auth/me')
-    check('/api/auth/me 返回用户', me.body?.user?.username === '全链路管理员')
+    check('/api/auth/me 返回用户', me.body?.user?.username === 'admin')
     check('自己可以发起需求', me.body?.can?.startRequirement === true)
     check('自己可以通过打回', me.body?.can?.confirm === true)
+
+    // 注册入口仍然要能注册，只是拿不到管理员
+    const reg = await b.register('产品同学', 'pass1234', '产品同学')
+    check('新注册的是普通成员', reg.user?.role === 'member', reg.user?.role)
+    check('注册给了 token', typeof reg.token === 'string' && reg.token.length > 100)
+    check('没有「成为管理员」的提示', !String(reg.notice ?? '').includes('系统管理员'), reg.notice)
+
+    // 真实用起来就是这样：产品同学要自己提需求，得先让管理员提权。
+    // 顺手把提权接口也覆盖掉。
+    const memberId = reg.user.id
+    await b.asAdmin()
+    const up = await b.call('POST', `/api/users/${memberId}/role`, { role: 'admin' })
+    check('管理员能给别人提权', up.status === 200 && up.body?.ok === true, JSON.stringify(up.body))
+    await b.login('产品同学', 'pass1234')
+    const meAgain = await b.call('GET', '/api/auth/me')
+    check('提权后旧 token 立刻生效', meAgain.body?.can?.startRequirement === true, JSON.stringify(meAgain.body?.can))
   }
 
   console.log('\n== 建需求、驱动回合 ==')

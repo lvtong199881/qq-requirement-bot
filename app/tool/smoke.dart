@@ -29,8 +29,12 @@ Future<void> main(List<String> args) async {
 
   final c = ApiClient(baseUrl: baseUrl);
   try {
-    final needsFirstAdmin = await c.authStatus();
-    check('GET /api/auth/status', true, 'needsFirstAdmin=$needsFirstAdmin');
+    final st = await c.authStatus();
+    check(
+      'GET /api/auth/status',
+      true,
+      'needsFirstAdmin=${st.needsFirstAdmin} presetAdmin=${st.presetAdmin}',
+    );
 
     final login = await c.login(username: username, password: password);
     check('POST /api/auth/login', login.token.isNotEmpty, 'user=${login.user.displayName}');
