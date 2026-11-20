@@ -1,5 +1,8 @@
 allprojects {
     repositories {
+        // 本机访问 dl.google.com 偶发 TLS 断连，AGP 等构件先走阿里云镜像兜底
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
     }
