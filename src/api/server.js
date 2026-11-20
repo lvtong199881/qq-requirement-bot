@@ -233,6 +233,8 @@ export function createApiServer({
             error: '发起需求需要系统管理员权限',
             code: 'forbidden',
             role: user.role,
+            // 和 approve/reject 的 403 保持同一形状：前端只有一套错误解析
+            roleLabel: roleLabelOf(user.role),
           })
         }
         const body = await readBody(req)

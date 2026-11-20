@@ -1,17 +1,14 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   Windows 一键安装：环境检查、dsh profile、bot.config.json、自检。
 
 .DESCRIPTION
   不注册 Windows 服务；跑通后手动 node src/index.js。
-  能自动化的都做了，剩下的只有 QQ 扫码、拉群、填 API key、装 DevEco。
+  能自动化的都做了，剩下的只有填 API key、启动服务、用 App 注册第一个账号。
 
 .PARAMETER Repo
   需求要落到的项目仓库路径。不存在会自动建空目录。
-
-.PARAMETER Qq
-  你的 QQ 号，写进 superAdmin。
 
 .PARAMETER DshPath
   dsh 可执行文件的完整路径。不填则自动从 PATH 和 DeepSeek Harness 安装目录里找。
@@ -34,6 +31,9 @@
 .PARAMETER PanelPort
   面板端口，默认 7878。
 
+.PARAMETER ApiPort
+  App 用的 API 端口，默认 7881。App 在「服务器地址」里填 http://<本机IP>:7881。
+
 .PARAMETER SkipDoctor
   跳过最后的 node src/doctor.js。
 
@@ -44,21 +44,18 @@
   只打印会做什么，不写盘。
 
 .EXAMPLE
-  .\install.ps1 -Repo C:\work\my-app -Qq 123456789
-
-.EXAMPLE
   .\install.ps1 -Yes -Repo C:\work\my-app
 #>
 [CmdletBinding()]
 param(
   [string]$Repo = '',
-  [string]$Qq = '',
   [string]$DshPath = '',
   [string]$Provider = '',
   [string]$Model = '',
   [string]$ApiKeyEnv = '',
   [string]$ApiKey = '',
   [int]$PanelPort = 7878,
+  [int]$ApiPort = 7881,
   [switch]$SkipDoctor,
   [switch]$SkipDshInstall,
   [switch]$Yes,
@@ -67,9 +64,6 @@ param(
 
 # DeepSeek Harness Windows 安装包（官方 latest 链接）
 $DshInstallerUrl = 'https://download.deepseek.com/desktop/dsh-latest-windows-x64.exe'
-
-# QQ NT x64 安装包。版本会随 QQ 更新变化，失效时换成官网对应版本的直链。
-$QqInstallerUrl = 'https://qqdl.gtimg.cn/qqfile/QQNTV2/9.9.36/release/e8e54bbb/QQ_9.9.36_260924_x64_01.exe'
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -431,23 +425,42 @@ if (Test-Path $cfgPath) {
       Warn "更新 model 失败：$($_.Exception.Message)"
     }
   }
-} else {
-  if (-not $Qq) {
-    $Qq = Ask '你的 QQ 号（写进 superAdmin，可留空）' ''
-  }
 
+  # App API 同理。老配置是加 App 之前生成的，里面没有 api 段，
+  # 而 api.enabled 缺省是 false，重跑脚本不补的话 App 永远连不上，
+  # 报错还只有一句「连不上服务器」，很难定位到这里。
+  # 只在缺失时补，已经有 api 段就不动（用户可能自己改过端口/放开过 host）。
+  if (-not $DryRun) {
+    try {
+      $existing = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+      if (-not ($existing.PSObject.Properties.Name -contains 'api')) {
+        $apiValue = [ordered]@{
+          enabled       = $true
+          port          = $ApiPort
+          host          = '127.0.0.1'
+          allowedOrigin = ''
+          maxBodyBytes  = 1000000
+        }
+        Add-Member -InputObject $existing -NotePropertyName api -NotePropertyValue $apiValue -Force
+        $json = $existing | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($cfgPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+        Ok "已给 bot.config.json 补上 api 段（端口 $ApiPort）"
+      } else {
+        Ok "bot.config.json 已有 api 段，未改动"
+      }
+    } catch {
+      Warn "补 api 段失败：$($_.Exception.Message)"
+    }
+  }
+} else {
   $repoName = Split-Path $Repo -Leaf
-  $admins = @()
-  if ($Qq) { $admins = @($Qq) }
 
   $cfg = [ordered]@{
     dshBin       = $dshBin
     profile      = 'qqbot'
-    bot          = [ordered]@{ qq = $Qq; name = '产品同学' }
-    onebot       = [ordered]@{ ws = 'ws://127.0.0.1:3001'; token = '' }
-    groupPolicy  = [ordered]@{ mode = 'auto' }
+    bot          = [ordered]@{ name = '产品同学' }
     approval     = 'manual'
-    limits       = [ordered]@{ maxMessagesPerMinute = 10; chunkChars = 3000; maxChunksPerTurn = 4 }
+    limits       = [ordered]@{ maxConcurrentTurns = 2; maxWorktrees = 12 }
     heartbeat    = [ordered]@{ enabled = $true; idleMinutes = 5 }
     upload       = [ordered]@{
       enabled   = $true
@@ -463,7 +476,19 @@ if (Test-Path $cfgPath) {
       publicPort = ($PanelPort + 1)
       token      = ''
     }
-    superAdmin   = $admins
+    # App 走这个端口。默认开：装完脚本就是为了用 App，
+    # 再让人去手改 JSON 才能连上，等于把第一步做成坑。
+    #
+    # host 用 0.0.0.0 是为了让手机能连（填本机局域网 IP）。
+    # 代价是这个端口在局域网里可见，而「第一个注册的人是管理员」——
+    # 所以启动时会打一行告警提醒先自己注册。只想本机用就改成 127.0.0.1。
+    api          = [ordered]@{
+      enabled       = $true
+      port          = $ApiPort
+      host          = '0.0.0.0'
+      allowedOrigin = ''
+      maxBodyBytes  = 1000000
+    }
   }
 
   # 没填仓库就不写 repos，启动后到面板里加
@@ -485,96 +510,8 @@ if (Test-Path $cfgPath) {
   }
 }
 
-# ── 5/5 NapCat 与自检 ────────────────────────────────────
-Step '5/5 NapCat 与自检'
-
-$wsOk = $false
-try {
-  $client = New-Object System.Net.Sockets.TcpClient
-  $async = $client.BeginConnect('127.0.0.1', 3001, $null, $null)
-  $wsOk = $async.AsyncWaitHandle.WaitOne(1500, $false) -and $client.Connected
-  $client.Close()
-} catch {
-  $wsOk = $false
-}
-
-if ($wsOk) {
-  Ok 'OneBot 端口 3001 可连通'
-} else {
-  Warn 'OneBot 3001 没起来，检查 QQ / NapCat'
-
-  # QQ：没装就下载官方安装包静默安装
-  $qqCandidates = @(
-    'C:\Program Files\Tencent\QQNT\QQ.exe',
-    'C:\Program Files (x86)\Tencent\QQNT\QQ.exe',
-    (Join-Path $env:LOCALAPPDATA 'Programs\QQNT\QQ.exe')
-  )
-  $qqExe = $qqCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-  if (-not $qqExe) {
-    $qqSetup = Join-Path $env:TEMP 'QQ-setup.exe'
-    Warn '没找到 QQ，正在下载安装包…'
-    try {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      $wc = New-Object System.Net.WebClient
-      # 腾讯 CDN 会拒绝没有浏览器 UA / Referer 的请求（403）
-      $wc.Headers.Add('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36')
-      $wc.Headers.Add('Referer', 'https://im.qq.com/pcqq')
-      $wc.DownloadFile($QqInstallerUrl, $qqSetup)
-      $wc.Dispose()
-      Ok "下载完成：$qqSetup"
-      Step '安装 QQ（可能需要几分钟）…'
-      Start-Process -FilePath $qqSetup -ArgumentList '/S' -Verb RunAs -Wait -ErrorAction Stop
-      $qqExe = $qqCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-      if ($qqExe) {
-        Ok "QQ 已安装：$qqExe"
-      } else {
-        Warn "静默安装没检测到，手动运行安装包：$qqSetup"
-      }
-    } catch {
-      Warn "QQ 下载/安装失败：$($_.Exception.Message)"
-      Warn "可以手动下载：$QqInstallerUrl"
-      Start-Process 'https://im.qq.com/pcqq'
-    }
-  } else {
-    Ok "QQ：$qqExe"
-  }
-
-  # NapCat：一键包有固定 latest 地址，直接下载解压并拉起安装器
-  $napcatHome = Join-Path $env:USERPROFILE 'NapCat'
-  $installer = $null
-  if (Test-Path $napcatHome) {
-    $installer = Get-ChildItem $napcatHome -Filter 'NapCatInstaller.exe' -Recurse -ErrorAction SilentlyContinue |
-      Select-Object -First 1
-  }
-  if (-not $installer) {
-    $zip = Join-Path $env:TEMP 'napcat-onekey.zip'
-    $url = 'https://github.com/NapNeko/NapCatQQ/releases/latest/download/NapCat.Shell.Windows.OneKey.zip'
-    Step "下载 NapCat → $napcatHome"
-    try {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-      Expand-Archive -Path $zip -DestinationPath $napcatHome -Force
-      $installer = Get-ChildItem $napcatHome -Filter 'NapCatInstaller.exe' -Recurse |
-        Select-Object -First 1
-      Ok "已解压到 $napcatHome"
-    } catch {
-      Warn "NapCat 下载失败：$($_.Exception.Message)"
-      Warn "可以手动下载：$url"
-    }
-  }
-
-  if ($installer) {
-    Warn '接下来运行安装器（会弹 UAC），按提示装到 QQ 上'
-    try {
-      # 必须把工作目录设成安装器所在目录：安装器用相对路径 .\7z.exe 解压 QQ，
-      # 从 C:\qq-bot 启动就会报「7z.exe 不是内部或外部命令」。
-      Start-Process -FilePath $installer.FullName -WorkingDirectory (Split-Path $installer.FullName -Parent) -Verb RunAs
-    } catch {
-      Warn "启动安装器失败：$($_.Exception.Message)"
-      Warn "手动运行：$($installer.FullName)"
-    }
-  }
-}
+# ── 5/5 自检 ─────────────────────────────────────────────
+Step '5/5 自检'
 
 if (-not $SkipDoctor -and -not $DryRun) {
   & node src/doctor.js
@@ -588,14 +525,9 @@ if (-not $SkipDoctor -and -not $DryRun) {
 
 Write-Host ''
 Write-Host '下一步：' -ForegroundColor Cyan
-if (-not $wsOk) {
-  Write-Host '  1. 装官方 QQ（im.qq.com）和 NapCat Windows 一键包'
-  Write-Host '  2. 打开 http://127.0.0.1:6099/webui 扫码登录小号'
-  Write-Host '  3. NapCat 里开启正向 WebSocket（端口 3001）'
-  Write-Host '  4. 把 bot 拉进群，@ 它说一句需求'
-  Write-Host '  5. 启动 bridge：node src/index.js'
-} else {
-  Write-Host '  1. 把 bot 拉进群，@ 它说一句需求'
-  Write-Host '  2. 启动 bridge：node src/index.js'
-}
+Write-Host '  1. 启动服务：node src/index.js'
+Write-Host "  2. 浏览器打开 http://127.0.0.1:$ApiPort/healthz 应返回 {`"ok`":true}"
+Write-Host "  3. 启动 App，服务器地址填 http://127.0.0.1:$ApiPort"
+Write-Host "     手机和这台机器同一个 Wi-Fi 时，填 http://<本机局域网IP>:$ApiPort"
+Write-Host '  4. 第一个注册的账号自动成为系统管理员，之后由它给别人分权限'
 Write-Host ''

@@ -1,13 +1,15 @@
 /**
- * 群内指令：让用户在极端情况下能直接操作整个需求，不用靠自然语言猜。
+ * 文本指令：让用户在极端情况下能直接操作整个需求，不用靠自然语言猜。
  *
- * 白名单机制：每条指令声明 scope。标 admin 的只有 adminUsers 里的人能执行，
+ * 这套指令原本是给 QQ 群用的（那时唯一的输入方式是发消息），App 化之后
+ * 依然留着：用户在对话框里打 /stop 比找按钮快，而且不需要给每个动作
+ * 都在界面上开一个入口。
+ *
+ * 白名单机制：每条指令声明 scope。标 admin 的只有系统管理员能执行，
  * 后续加危险操作（清库、改配置）直接标 admin 即可，不用改分发逻辑。
  */
 
 /** 指令表。desc 用于 /help，scope 决定谁能用 */
-import { renderMessage } from './ui/messages.js'
-
 export const COMMANDS = {
   help: {
     desc: '查看所有可用指令',
@@ -48,41 +50,4 @@ export function parseCommand(text) {
     def: def ?? null,
     unknown: !def,
   }
-}
-
-/**
- * 生成 /help 的回复正文。标出哪些指令需要管理员。
- * @param {{isAdmin: boolean, state?: object, stages?: Array}} o
- */
-export function helpText({ isAdmin, statusLine, templates }) {
-  const list = Object.entries(COMMANDS)
-    .map(([name, def]) => `/${name}${def.scope === 'admin' ? '（管理员）' : ''}  ${def.desc}`)
-    .join('\n')
-
-  return renderMessage(
-    'help',
-    {
-      list,
-      statusLine: statusLine ? `\n\n${statusLine}` : '',
-      permissionNote: '只有群主、群管理员和 adminUsers 白名单能让 bot 干活（superAdmin 不受群限制），其他成员的 @ 会被静默忽略。',
-    },
-    templates,
-  )
-}
-
-/** /release 的二次确认文案 */
-export function releaseConfirmText({ reqId, stage, templates }) {
-  return renderMessage(
-    'releaseAsk',
-    {
-      target: reqId ? `「${reqId}」` : '当前需求',
-      stage: stage || '当前',
-    },
-    templates,
-  )
-}
-
-/** 指令权限不足时的提示 */
-export function deniedText(name, templates) {
-  return renderMessage('denied', { cmd: name }, templates)
 }

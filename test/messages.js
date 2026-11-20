@@ -34,18 +34,18 @@ console.log('\n== 四类消息都在 ==')
   check(
     '全部完成提示带需求名',
     renderMessage('allDone', { reqId: 'welcome-dialog', reqIdPad: ' welcome-dialog ' }) ===
-      '本需求 welcome-dialog 已全部完成，新需求请开新群。',
+      '本需求 welcome-dialog 已全部完成，新需求请新建一个对话。',
     renderMessage('allDone', { reqId: 'welcome-dialog', reqIdPad: ' welcome-dialog ' }),
   )
   check(
     '没有需求名也通顺',
-    renderMessage('allDone', { reqId: '', reqIdPad: '' }) === '本需求已全部完成，新需求请开新群。',
+    renderMessage('allDone', { reqId: '', reqIdPad: '' }) === '本需求已全部完成，新需求请新建一个对话。',
     renderMessage('allDone', { reqId: '', reqIdPad: '' }),
   )
 
   const taken = renderMessage('groupTaken', { reqId: 'welcome-dialog' })
-  check('群已占用用引号包需求名', taken.includes('「welcome-dialog」'), taken.split('\n')[0])
-  check('群已占用提示另开群', taken.includes('另开一个群'), taken)
+  check('会话已占用用引号包需求名', taken.includes('「welcome-dialog」'), taken.split('\n')[0])
+  check('会话已占用提示新建对话', taken.includes('新建一个对话'), taken)
   check('不再多说「直接问我」', !taken.includes('直接问我'), taken)
 }
 

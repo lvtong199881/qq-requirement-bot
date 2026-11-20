@@ -4,7 +4,8 @@
 
 全部配置都在仓库根目录的 `bot.config.json` 里，首次从 `bot.config.example.json` 复制（见[安装指南](INSTALL.md)第 4 步）。
 
-**群号不用填。** bot 连上 NapCat 后会自己调 `get_group_list` 报出它所在的群，你把它拉进哪个群，它就在哪个群工作。
+**会话不用配。** 在 App 里点「+」新建需求，服务端自动给它一个 threadId，
+状态、消息、产物都挂在这个 id 下面。配置文件里不需要列出任何会话。
 
 ```jsonc
 {
@@ -19,17 +20,13 @@
   // apiKeyEnv 是供应商读 key 的环境变量名，bridge 会把它注入 dsh 子进程。
   "model": { "provider": "opencode-go", "model": "deepseek-v4.1-flash", "apiKeyEnv": "OPENCODE_GO_API_KEY" },
 
-  "bot": { "qq": "", "name": "产品同学" },         // 群里显示的昵称
+  "bot": { "name": "产品同学" },                    // 对话框里显示的昵称
 
-  "onebot": { "ws": "ws://127.0.0.1:3001", "token": "" },
-
-  "groupPolicy": { "mode": "auto" },               // auto = 拉进哪个群就服务哪个群
   "approval": "manual",                            // manual = 每阶段等确认；auto = 自动推进
 
   "limits": {
-    "maxMessagesPerMinute": 10,                    // 发送限流，防风控
-    "chunkChars": 3000,                            // 超过才拆条；正常一条发完
-    "maxChunksPerTurn": 4                          // 一回合最多拆几条
+    "maxConcurrentTurns": 2,                       // 同时最多跑几个回合
+    "maxWorktrees": 12                             // worktree 池上限
   },
 
   "heartbeat": {
@@ -45,9 +42,9 @@
   "stageTimeouts": { "default": 30, "dev": 60, "test": 60, "acceptance": 60 },
   "turnTimeoutMs": 1800000,                       // 兼容旧配置：没有 stageTimeouts 时当作默认值
 
-  // 给 Flutter App 用的公网 API。默认关，见下面「App API」一节
+  // 给 Flutter App 用的 API。这是唯一的入口，见下面「App API」一节
   "api": {
-    "enabled": false,
+    "enabled": true,
     "port": 7881,
     "host": "0.0.0.0",
     "allowedOrigin": "",
@@ -58,21 +55,25 @@
 
 ## App API
 
-给手机 App 用的那套 HTTP 服务。**默认关闭**，和面板是两个独立端口，
-接口细节见 [API.md 的 App API 一节](API.md#app-api-im-api)。
+给手机 App 用的那套 HTTP 服务。这是团队提需求、拍板的唯一入口，
+和面板是两个独立端口，接口细节见 [API.md 的 App API 一节](API.md#app-api)。
 
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
-| `enabled` | `false` | 必须显式 `true` 才启动 |
+| `enabled` | `true` | 关掉 App 就连不上，只剩面板能看 |
 | `port` | `7881` | 独立端口，别和 `panel.port`(7878) 撞 |
 | `host` | `0.0.0.0` | `cloudflared` / `tailscale` 要能连进来。想更保守就写 `127.0.0.1` 再本机反代 |
 | `allowedOrigin` | `""` | CORS 白名单，留空则按请求的 `Origin` 回显。App 是原生请求，用不到 |
 | `maxBodyBytes` | `1000000` | 单请求体上限 |
 
-### 为什么默认关
+### 开在 0.0.0.0 的代价
 
-这个进程能 spawn dsh 回合、在本地仓库里跑 git。没配好隧道和 HTTPS 就把它开到
-`0.0.0.0`，等于把需求内容和 git 操作权限放上公网。
+这个进程能 spawn dsh 回合、在本地仓库里跑 git。绑 `0.0.0.0` 是为了手机能连，
+代价是同网段的机器都能访问到它；再加上「第一个注册的是管理员」，等于
+**谁先抢注谁就是管理员**。所以启动时如果还没有任何账号，日志会告警提醒。
+
+稳妥做法：先把 `host` 写成 `127.0.0.1` 自己注册完，再改回 `0.0.0.0` 让手机连。
+只想在本机用 App（macOS 桌面版）就一直 `127.0.0.1`。
 
 ### 和面板的区别
 
@@ -80,7 +81,7 @@
 | --- | --- | --- |
 | 只听回环 | ✅ | ❌（要公网） |
 | 鉴权 | token 为空时**直接放行** | 必须用户名密码登录 |
-| 能停群 / 改配置 | ✅ | ❌ |
+| 能停会话 / 改配置 | ✅ | ❌ |
 
 **绝不能**把 `panel` 那个端口暴露出去。它有 `stop`/`restart`/`applySettings`，
 而 `src/ui/server.js` 的 `needToken` 在没配 token 时直接返回 `true`。
@@ -133,28 +134,8 @@ cloudflared tunnel run --url http://127.0.0.1:7881 qq-bot
 面板「设置 → 阶段超时」提供 `10 / 15 / 30 / 60` 四档，保存后立即热更新，不用重启。
 超出四档的值面板会拒绝——防手滑改成 3 分钟把回合切碎。
 
-超时不是「失败重试」，是**直接中断这一回合**。中断后该群状态停在 `running`，
+超时不是「失败重试」，是**直接中断这一回合**。中断后该会话状态停在 `running`，
 发一句「继续」会从当前阶段重跑（产物和分支都在，不会重头来）。
-
-## 群策略
-
-| mode | 行为 | 用在哪 |
-| --- | --- | --- |
-| `auto`（默认） | 任何拉进 bot 的群都服务，项目目录用顶层 `projectDir` | 日常用，最省事 |
-| `allowlist` | 只服务 `groups` 里列出的群，可给每个群配不同项目目录 | 一个 bot 服务多个项目时 |
-| `deny` | 全部拒绝 | 临时关闭 |
-
-`auto` 模式下完全不需要写 `groups`。只有想「同一个人 bot 服务多个项目、不同群落不同目录」时才用 `allowlist`：
-
-```jsonc
-{
-  "groupPolicy": { "mode": "allowlist" },
-  "groups": [
-    { "groupId": "111111", "projectDir": "~/Documents/ChatGPT/Instanto", "approval": "manual" },
-    { "groupId": "222222", "projectDir": "~/Documents/ChatGPT/KuaiSao", "approval": "auto" }
-  ]
-}
-```
 
 **关于 `repos`**：`id` 是内部标识（路径按它派生，建了就别改）；`name` 是给人看的；`path` 和 `url` 二选一，给了 `url` 就由 bot 克隆到 `checkoutRoot`。`platform` 决定用哪套工具链（`harmony` / `android` / `ios`）。
 

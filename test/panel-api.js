@@ -91,7 +91,7 @@ writeFileSync(
 )
 writeFileSync(
   join(repoRoot, 'bot.config.json'),
-  JSON.stringify({ adminUsers: [], superAdmin: [] }, null, 2),
+  JSON.stringify({ messageTemplates: {} }, null, 2),
   'utf8',
 )
 
@@ -164,11 +164,11 @@ console.log('\n== 配置读写 /api/settings ==')
   const save = await fetch(`${base}/api/settings/save`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ adminUsers: '10001, 10002' }),
+    body: JSON.stringify({ stageTimeouts: { default: 30, dev: 60, test: 30, acceptance: 15 } }),
   })
   const saved = await save.json()
   check('写接口是 POST /api/settings/save', save.status === 200 && saved.ok === true)
-  check('写操作已落盘', readFileSync(join(repoRoot, 'bot.config.json'), 'utf8').includes('10001'))
+  check('写操作已落盘', readFileSync(join(repoRoot, 'bot.config.json'), 'utf8').includes('"acceptance": 15'))
 
   const oldPut = await fetch(`${base}/api/settings`, {
     method: 'PUT',

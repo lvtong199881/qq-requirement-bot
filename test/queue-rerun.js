@@ -2,21 +2,23 @@
  * 回合进行中插话，回合结束后必须补跑。
  *
  * 真实事故：一个回合跑了 31 分钟，用户中途发的两条「继续」进了队列，
- * 回合结束后两条都没执行，日志里也没有任何痕迹——群里看着就是 bot 没反应。
- * 这里用假 dsh 复现该场景，确保队列一定被消费、且失败时有日志可查。
+ * 回合结束后两条都没执行，日志里也没有任何痕迹——界面上看着就是 bot 没反应。
+ * 这里用假 dsh 复现该场景，确保队列一定被消费。
+ *
+ * 判据为什么是「假 dsh 收到的 prompt」而不是某句日志：
+ * 原先断言的是 `日志里出现「补跑排队消息」`，但代码里从来没有这行日志
+ * （drainQueue 在 src/flow-bridge.js:1034，只调 handleMessage，不打这个标）。
+ * 那条断言等于永远失败，等于没测。现在改成看 dsh 真正吃进去的内容——
+ * 排队的话只要出现在后续任一回合的 prompt 里，就证明它没被丢掉。
+ *
+ * 走 App API 注入，不再用 mock OneBot：QQ 通道已经删了，测试也该走真实入口。
  *
  *   node test/queue-rerun.js
  */
-import { spawn } from 'node:child_process'
-import { writeFileSync, readFileSync, mkdtempSync, mkdirSync, chmodSync, existsSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { startMockOneBot } from './mock-onebot.js'
-
-const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = join(HERE, '..')
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+import { join } from 'node:path'
+import { boot } from './helpers/bridge.js'
 
 let pass = 0
 let fail = 0
@@ -25,104 +27,95 @@ const check = (name, cond, extra = '') => {
   cond ? pass++ : fail++
 }
 
-const tmp = mkdtempSync(join(tmpdir(), 'qqrs-rerun-'))
-const project = join(tmp, 'project')
-mkdirSync(join(project, 'docs', 'requirements'), { recursive: true })
+const work = mkdtempSync(join(tmpdir(), 'qqrs-rerun-'))
+const fakeDsh = join(work, 'fake-dsh.mjs')
+const promptsLog = join(work, 'prompts.jsonl')
 
-// 假 dsh：每次被调起就往 FAKE_DSH_LOG 追加一行，睡一会儿再吐一个合法事件流。
-// 用睡眠模拟「回合要跑一阵」，好让第二条消息插在它中间。
-const dshLog = join(tmp, 'dsh-calls.log')
-const fakeDsh = join(tmp, 'fake-dsh.mjs')
+// 假 dsh：把收到的 stdin 存下来（这样能断言「排队的话真的被送进去了」），
+// 睡一会儿再吐一个合法事件流。用睡眠模拟「回合要跑一阵」，
+// 好让第二条消息插在它中间，落进队列。
 writeFileSync(
   fakeDsh,
   `#!/usr/bin/env node
 import { appendFileSync } from 'node:fs'
-appendFileSync(${JSON.stringify(dshLog)}, 'call\\n')
-process.stdin.resume()
-setTimeout(() => {
+let input = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', (d) => { input += d })
+process.stdin.on('end', () => {
+  appendFileSync(${JSON.stringify(promptsLog)}, JSON.stringify({ prompt: input }) + '\\n')
   process.stdout.write(JSON.stringify({ type: 'session', sessionId: 'fake-session' }) + '\\n')
   process.stdout.write(JSON.stringify({ type: 'final', text: '做完了 [[DONE]]交付完成' }) + '\\n')
   process.exit(0)
-}, ${Number(process.env.FAKE_DSH_DELAY ?? 2500)})
+})
+process.stdin.resume()
+setTimeout(() => process.stdin.emit('end'), ${Number(process.env.FAKE_DSH_DELAY ?? 1200)})
 `,
 )
 chmodSync(fakeDsh, 0o755)
 
-const mock = await startMockOneBot({ port: 0, selfId: 10000 })
-const groupId = '123456'
-
-const configPath = join(tmp, 'bot.config.json')
-writeFileSync(
-  configPath,
-  JSON.stringify(
-    {
-      repos: [{ id: 'app', name: 'test', path: project }],
-      dshBin: fakeDsh,
-      profile: 'qqbot',
-      bot: { qq: '10000', name: '产品同学' },
-      onebot: { ws: mock.url },
-      limits: { maxMessagesPerMinute: 60, chunkChars: 400, maxChunksPerTurn: 12 },
-      upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
-      turnTimeoutMs: 60_000,
-      heartbeat: { enabled: false },
-      // 端口 0 = 系统分配，避免和本机正在跑的 bot 撞车
-      panel: { enabled: true, port: 0, publicPort: 0, token: '' },
-      verbose: true,
-    },
-    null,
-    2,
-  ),
-)
-
-const logs = []
-const child = spawn(process.execPath, [join(ROOT, 'src', 'index.js'), `--config=${configPath}`], {
-  cwd: ROOT,
-  env: { ...process.env },
-  stdio: ['ignore', 'pipe', 'pipe'],
+const b = await boot({
+  name: 'rerun',
+  turnTimeoutMs: 60_000,
+  config: { dshBin: fakeDsh },
 })
-child.stdout.on('data', (d) => logs.push(d.toString()))
-child.stderr.on('data', (d) => logs.push('[err] ' + d.toString()))
 
-const waitFor = async (pred, timeoutMs = 20_000) => {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeoutMs) {
-    if (pred()) return true
-    await sleep(150)
-  }
-  return false
+/** 假 dsh 每被调起一次就记一行，值是它收到的 prompt */
+const prompts = () => {
+  if (!existsSync(promptsLog)) return []
+  return readFileSync(promptsLog, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l).prompt
+      } catch {
+        return ''
+      }
+    })
 }
-const calls = () => (existsSync(dshLog) ? readFileSync(dshLog, 'utf8').trim().split('\n').filter(Boolean).length : 0)
 
 try {
-  check('bridge 连上 OneBot', await waitFor(() => logs.join('').includes('已连接 OneBot')))
+  await b.register('测试管理员', 'pass1234')
 
-  // 第一条：起一个回合
-  mock.sendGroupAt({ groupId, text: '首页加个欢迎弹窗' })
-  check('第一回合已开始', await waitFor(() => logs.join('').includes('v2 回合：')))
-  check('假 dsh 被调起 1 次', (await waitFor(() => calls() >= 1, 10_000)) && calls() === 1, `实际 ${calls()}`)
+  const { threadId } = await b.createThread('首页加个欢迎弹窗')
+  check('需求已创建', Boolean(threadId))
+  check('第一回合已开始', await b.waitFor(() => prompts().length >= 1, 20_000))
+  check('第一轮 prompt 里有需求原话', prompts()[0]?.includes('首页加个欢迎弹窗'), '')
 
-  // 第二条：插在回合中途
-  mock.sendGroupAt({ groupId, text: '顺便把按钮改成蓝色' })
-  const queuedAck = await waitFor(() =>
-    mock.sentTexts().some((t) => t.includes('排队') || t.includes('上一回合')),
+  // 插在回合中途：这时 machine.isRunning 为真，应当进队列
+  await b.say(threadId, '顺便把按钮改成蓝色')
+
+  check(
+    '插话被排队并回了回执',
+    await b.waitFor(async () => {
+      const texts = await b.texts(threadId)
+      return texts.some((t) => t.includes('排队') || t.includes('上一回合'))
+    }, 15_000),
+    JSON.stringify((await b.texts(threadId)).slice(-3)),
   )
-  check('插话被排队并回执', queuedAck, JSON.stringify(mock.sentTexts().slice(-3)))
 
-  // 第一回合结束后应当自动补跑第二条
-  const rerun = await waitFor(() => logs.join('').includes('补跑排队消息'), 25_000)
-  check('回合结束后补跑排队消息', rerun)
-  check('假 dsh 被调起 2 次', (await waitFor(() => calls() >= 2, 15_000)) && calls() === 2, `实际 ${calls()}`)
-  check('日志没有「丢弃」', !logs.join('').includes('排队消息补跑失败'))
+  // 关键断言：排队的话必须出现在后续某个回合的 prompt 里。
+  // 只出现"有第二个回合"是不够的——v2 自己会连续跑多个 checkpoint，
+  // 那种续跑的 prompt 里没有用户新说的话。
+  const reached = await b.waitFor(
+    () => prompts().slice(1).some((p) => p.includes('按钮改成蓝色')),
+    40_000,
+  )
+  check('排队的话进了后续回合的 prompt', reached, `共 ${prompts().length} 轮`)
+
+  check('没有静默丢弃的报错', !b.logs().includes('排队消息处理失败'))
+
+  // 用户视角：自己说的话和回执都要在消息流里，否则界面看起来仍是没反应
+  const texts = await b.texts(threadId)
+  check('排队回执进了消息流', texts.some((t) => t.includes('排队')), JSON.stringify(texts))
+  check('用户自己说的话也落了库', texts.some((t) => t.includes('按钮改成蓝色')))
 } finally {
   if (fail > 0) {
     console.log('\n--- bridge 日志尾部 ---')
-    console.log(logs.join('').split('\n').slice(-25).join('\n'))
+    console.log(b.logs().split('\n').slice(-30).join('\n'))
   }
-  child.kill('SIGTERM')
-  await sleep(300)
-  if (child.exitCode === null) child.kill('SIGKILL')
-  await mock.close()
-  rmSync(tmp, { recursive: true, force: true })
+  await b.stop()
+  rmSync(work, { recursive: true, force: true })
 }
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)

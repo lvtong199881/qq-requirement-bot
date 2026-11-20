@@ -1,21 +1,19 @@
 /**
- * 全链路测试：真的把 src/index.js 当进程跑起来，注入群消息，
- * 看它是否 spawn dsh、是否把结果发回群。
+ * 全链路测试：真的把 src/index.js 当进程跑起来，从 App API 提一个需求，
+ * 看它是否 spawn dsh、是否把回合结果落成 App 能看见的消息。
  *
- *   node test/full.js          真跑 dsh（消耗 token）
- *   node test/full.js --no-llm 不发真实需求，只验证握手与路由
+ * 历史上这个测试靠 mock OneBot 注入群消息、从假群里收回复。QQ 通道删掉后
+ * 改成走 App HTTP API——顺带把「用户点了 App 里那个按钮」这条真实路径也覆盖了。
+ *
+ *   node test/full.js          跑真 dsh（消耗 token）
+ *   node test/full.js --no-llm 不跑真 dsh，只验证进程、路由、账号、消息落库
  */
-import { spawn } from 'node:child_process'
-import { writeFileSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { startMockOneBot } from './mock-onebot.js'
+import { join } from 'node:path'
+import { boot } from './helpers/bridge.js'
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const ROOT = join(HERE, '..')
 const noLlm = process.argv.includes('--no-llm')
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 let pass = 0
 let fail = 0
@@ -24,109 +22,123 @@ const check = (name, cond, extra = '') => {
   cond ? pass++ : fail++
 }
 
-const mock = await startMockOneBot({ port: 0, selfId: 10000 })
+// --no-llm 用一个不存在的 dsh 路径：真需求会在 spawn 阶段就失败，
+// 但进程必须活着、必须把失败播报出来。这比"什么都不发生"更能验证错误路径。
+const work = mkdtempSync(join(tmpdir(), 'qqrs-dsh-'))
+const missingDsh = join(work, 'definitely-not-a-real-dsh')
 
-const tmpProject = mkdtempSync(join(tmpdir(), 'qqrs-full-'))
-mkdirSync(join(tmpProject, 'docs', 'requirements'), { recursive: true })
-
-const configPath = join(tmpProject, 'bot.config.json')
-writeFileSync(
-  configPath,
-  JSON.stringify(
-    {
-      repos: [{ id: 'app', name: 'test', path: tmpProject }],
-      dshBin: 'dsh',
-      profile: 'qqbot',
-      bot: { qq: '10000', name: '产品同学' },
-      onebot: { ws: mock.url },
-      // 故意不填 groups：群号靠 bot 自己发现，验证 auto 策略
-      limits: { maxMessagesPerMinute: 60, chunkChars: 400, maxChunksPerTurn: 12 },
-      upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
-      turnTimeoutMs: 240_000,
-      // 端口 0 = 让系统分配，避免和本机正在跑的 bot（7878）撞车
-      panel: { enabled: true, port: 0, publicPort: 0, token: '' },
-      verbose: true,
-    },
-    null,
-    2,
-  ),
-)
-
-console.log('\n启动 bridge 进程…')
-const logs = []
-const child = spawn(process.execPath, [join(ROOT, 'src', 'index.js'), `--config=${configPath}`], {
-  cwd: ROOT,
-  env: { ...process.env },
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-child.stdout.on('data', (d) => {
-  const s = d.toString()
-  logs.push(s)
-  process.stdout.write('    ' + s.replace(/\n(?=.)/g, '\n    '))
-})
-child.stderr.on('data', (d) => {
-  const s = d.toString()
-  logs.push('[err] ' + s)
-  process.stdout.write('    [err] ' + s)
+const b = await boot({
+  name: 'full',
+  turnTimeoutMs: 60_000,
+  config: noLlm ? { dshBin: missingDsh } : {},
 })
 
-// 等 bridge 连上 mock
-await sleep(1500)
-check('bridge 进程存活', child.exitCode === null)
-
-if (noLlm) {
-  console.log('\n--no-llm：只验证进程与握手')
-  check('日志显示已连接', logs.join('').includes('已连接 OneBot'))
-  // 发一条会被忽略的消息（非 @）
-  mock.sendGroupAt({ groupId: '123456', text: '这条没 @ 你', atBot: false })
-  await sleep(500)
-  check('未 @ 的消息被忽略', !mock.sentTexts().length)
-  // 发 @ 的 /stop，验证指令通道（v2 只认斜杠指令，自然语言「停」已不再处理）
-  mock.sendGroupAt({ groupId: '123456', text: '/stop' })
-  await sleep(800)
-  check('「停」有回复', mock.sentTexts().some((t) => t.includes('没有在跑')))
-} else {
-  console.log('\n注入真实需求（会跑 dsh）…')
-  mock.sendGroupAt({
-    groupId: '123456',
-    text: '只回答四个字：产品同学你好。不要调用任何工具。',
-  })
-
-  // 最多等 3 分钟
-  const deadline = Date.now() + 180_000
-  while (Date.now() < deadline) {
-    await sleep(2000)
-    if (mock.sentTexts().length >= 2) break
-    if (child.exitCode !== null) break
+try {
+  console.log('\n== 启动与健康检查 ==')
+  {
+    check('进程存活', b.child.exitCode === null)
+    const hz = await b.call('GET', '/healthz')
+    check('/healthz 返回 200', hz.status === 200 && hz.body?.ok === true, JSON.stringify(hz.body))
+    const st = await b.call('GET', '/api/auth/status')
+    check('全新实例需要第一个管理员', st.body?.needsFirstAdmin === true, JSON.stringify(st.body))
   }
 
-  const texts = mock.sentTexts()
-  console.log('\n  群收到的消息：')
-  texts.forEach((t, i) => console.log(`    [${i}] ${String(t).slice(0, 120).replace(/\n/g, ' ⏎ ')}`))
+  console.log('\n== 账号 ==')
+  {
+    const reg = await b.register('全链路管理员', 'pass1234', '产品同学')
+    check('第一个注册的是管理员', reg.user?.role === 'admin', reg.user?.role)
+    check('注册给了 token', typeof reg.token === 'string' && reg.token.length > 100)
+    check('注册给了提示', typeof reg.notice === 'string' && reg.notice.includes('系统管理员'), reg.notice)
 
-  check('群收到了回复', texts.length > 0, `共 ${texts.length} 条`)
-  check('回复内容正确', texts.some((t) => String(t).includes('产品同学你好')), '未找到期望文本')
-  check('回复带 bot 昵称前缀', texts.some((t) => String(t).includes('产品同学')), '')
-  check('没有残留闸门标记', !texts.some((t) => String(t).includes('[[')), '标记漏到群里了')
-  check('状态文件已落盘', (() => {
-    try {
-      const st = JSON.parse(readFileSync(join(ROOT, '.state', 'group-123456.json'), 'utf8'))
-      return !!st.sessionId
-    } catch {
-      return false
+    const me = await b.call('GET', '/api/auth/me')
+    check('/api/auth/me 返回用户', me.body?.user?.username === '全链路管理员')
+    check('自己可以发起需求', me.body?.can?.startRequirement === true)
+    check('自己可以通过打回', me.body?.can?.confirm === true)
+  }
+
+  console.log('\n== 建需求、驱动回合 ==')
+  {
+    const created = await b.createThread('首页加个欢迎弹窗')
+    const threadId = created.threadId
+    check('接口回了 thread 形状', Boolean(created.thread), JSON.stringify(created.thread)?.slice(0, 120))
+    check('初始阶段是需求澄清', created.thread?.stage === '需求澄清', created.thread?.stage)
+    check('初始阶段状态是进行中', created.thread?.stageStatus === '进行中', created.thread?.stageStatus)
+    check('发起人被记下了', created.thread?.initiator?.nickname === '产品同学', JSON.stringify(created.thread?.initiator))
+
+    const detail = await b.call('GET', `/api/threads/${threadId}`)
+    check('详情立刻可见（不是 404）', detail.status === 200, String(detail.status))
+    check('详情带十个阶段格子', (detail.body?.thread?.stages ?? []).length === 10, String((detail.body?.thread?.stages ?? []).length))
+
+    const list = await b.call('GET', '/api/threads')
+    const ids = (list.body?.threads ?? []).map((t) => t.threadId)
+    check('列表里有这个需求', ids.includes(threadId), JSON.stringify(ids))
+    check('列表里没有纯数字的旧群号', !ids.some((id) => /^\d+$/.test(id)), JSON.stringify(ids))
+
+    // 需求开跑，落第一条播报（"收到，开始处理"）
+    check(
+      '有 bot 播报落库',
+      await b.waitFor(async () => {
+        const page = await b.messages(threadId)
+        return (page?.messages ?? []).some((m) => m.role === 'bot')
+      }, 30_000),
+      JSON.stringify(await b.texts(threadId)),
+    )
+
+    const first = await b.messages(threadId)
+    check('第一条是用户说的话', first.messages?.[0]?.role === 'user', JSON.stringify(first.messages?.[0]))
+    check('第一条内容是需求原话', String(first.messages?.[0]?.payload?.text).includes('欢迎弹窗'))
+    check('seq 从 1 起连续', first.messages.every((m, i) => m.seq === i + 1))
+
+    const lastSeq = first.lastSeq
+    const empty = await b.call('GET', `/api/threads/${threadId}/messages?since=${lastSeq}`)
+    check('since 拉增量是空的', (empty.body?.messages ?? []).length === 0, String((empty.body?.messages ?? []).length))
+  }
+
+  if (noLlm) {
+    console.log('\n== dsh 起不来时：进程活着，并把失败播报出来 ==')
+    {
+      const threadId = (await b.call('GET', '/api/threads')).body.threads[0].threadId
+      // 缺失的 dsh 会在 spawn 时 ENOENT，编排层应当把原因说给用户听，
+      // 而不是默默卡住——"界面上没反应"是这套系统最难查的故障
+      check(
+        '失败原因进了消息流',
+        await b.waitFor(async () => {
+          const texts = await b.texts(threadId)
+          return texts.some((t) => /异常|失败|卡住|打不开|ENOENT|找不到/.test(t))
+        }, 40_000),
+        JSON.stringify(await b.texts(threadId)),
+      )
+      check('进程没有被一次回合失败带走', b.child.exitCode === null)
     }
-  })(), 'sessionId 未持久化')
-  check('配置里没填群号也能工作', true) // 上面的配置确实没有 groups 字段，能跑到这里即证明
+  } else {
+    console.log('\n== 真 dsh 跑完一整轮 ==')
+    {
+      const threadId = (await b.call('GET', '/api/threads')).body.threads[0].threadId
+      // 真 dsh 要几十秒到几分钟。等到阶段推进（stage 变了）或出现决策播报
+      const advanced = await b.waitFor(async () => {
+        const d = await b.call('GET', `/api/threads/${threadId}`)
+        const t = d.body?.thread
+        return Boolean(t) && (t.stage !== '需求澄清' || t.needsMe === true || t.stageStatus === '卡住')
+      }, 300_000)
+      const d = await b.call('GET', `/api/threads/${threadId}`)
+      console.log(`    当前：阶段=${d.body?.thread?.stage} 状态=${d.body?.thread?.stageStatus} 轮次=${d.body?.thread?.turn}`)
+      check('回合推进了状态（不是原地不动）', advanced, JSON.stringify(d.body?.thread)?.slice(0, 200))
+
+      const texts = await b.texts(threadId)
+      console.log('    App 收到的消息：')
+      texts.forEach((t, i) => console.log(`      [${i}] ${String(t).slice(0, 100).replace(/\n/g, ' ⏎ ')}`))
+      check('有真实的 bot 输出', texts.some((t) => t && t.length > 20), '消息太少')
+      check('没有残留闸门标记', !texts.some((t) => String(t).includes('[[')), '标记漏出来了')
+    }
+  }
+} finally {
+  if (fail > 0) {
+    console.log('\n--- bridge 日志尾部 ---')
+    console.log(b.logs().split('\n').slice(-40).join('\n'))
+  }
+  await b.stop()
+  rmSync(work, { recursive: true, force: true })
 }
-
-// 群号自动发现：验证启动日志里报了群名
-check('启动时自动拉到群列表', logs.join('').includes('测试需求群'), '未看到群名日志')
-check('日志显示 bot 已在群里', /bot 已在 \d+ 个群里/.test(logs.join('')), '')
-
-child.kill('SIGTERM')
-await sleep(500)
-if (child.exitCode === null) child.kill('SIGKILL')
-await mock.close()
 
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)
 process.exit(fail === 0 ? 0 : 1)

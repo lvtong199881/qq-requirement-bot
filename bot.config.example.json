@@ -10,21 +10,12 @@
   "dshBin": "dsh",
   "profile": "qqbot",
   "bot": {
-    "qq": "",
     "name": "产品同学"
-  },
-  "onebot": {
-    "ws": "ws://127.0.0.1:3001",
-    "token": ""
-  },
-  "groupPolicy": {
-    "mode": "auto"
   },
   "approval": "manual",
   "limits": {
-    "maxMessagesPerMinute": 10,
-    "chunkChars": 3000,
-    "maxChunksPerTurn": 4
+    "maxConcurrentTurns": 2,
+    "maxWorktrees": 12
   },
   "heartbeat": {
     "enabled": true,
@@ -45,16 +36,10 @@
     "token": ""
   },
   "api": {
-    "enabled": false,
+    "enabled": true,
     "port": 7881,
     "host": "0.0.0.0",
     "allowedOrigin": "",
     "maxBodyBytes": 1000000
-  },
-  "superAdmin": [
-    "你的QQ号"
-  ],
-  "adminUsers": [
-    "你的QQ号"
-  ]
+  }
 }

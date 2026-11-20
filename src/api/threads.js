@@ -10,7 +10,6 @@
  * 翻译成 App 要的形状。所有真正的逻辑仍然在 flow-bridge 里。
  */
 import { newSecret } from '../account/auth.js'
-import { isAppThread } from '../transport/transport.js'
 import { CHECKPOINTS } from '../flow/flow.js'
 import { makeReqName } from '../flow-bridge.js'
 
@@ -23,6 +22,22 @@ import { makeReqName } from '../flow-bridge.js'
  */
 export function newThreadId() {
   return `t${newSecret().replace(/[^a-z0-9]/gi, '').slice(0, 11)}`
+}
+
+/**
+ * 判断一个 .state 里的键是不是 App 建的 thread。
+ *
+ * 判据是「t 开头且不是纯数字」，而不是「有没有 flow」：QQ 通道删掉了，
+ * 但跑过 QQ 的老机器上 .state/ 里还留着 group-<群号>.json，那些有 flow、
+ * 也能被当会话跑起来。要是列表里漏出它们，用户在 App 里发言会真的
+ * 写进那个群号对应的状态文件和消息库——一个已经不存在的群。
+ *
+ * 前缀后至少还要 2 个字符：单独一个 't' 更像笔误或脏数据，
+ * 不该被当成合法会话放过去。
+ */
+export function isAppThread(threadId) {
+  const s = String(threadId ?? '')
+  return s.length > 2 && s.startsWith('t') && !/^\d+$/.test(s)
 }
 
 /**
@@ -179,9 +194,11 @@ export function createThreadService({ machine, flowBridge, messages, buildSnapsh
       at: Date.now(),
     })
 
+    // resolveGroup 现在无条件放行，peek 不会返回 null；留着这道判断是为了
+    // 将来真按需求类型分项目时，这里能体面地拒绝而不是抛 TypeError。
     const st = machine.peek(threadId)
     if (!st) {
-      return { ok: false, error: '这个项目当前不接受新需求（检查 groupPolicy 配置）' }
+      return { ok: false, error: '这个项目当前不接受新需求' }
     }
 
     const initiator = {

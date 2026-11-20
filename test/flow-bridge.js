@@ -389,34 +389,44 @@ console.log('\n== 空消息：提示怎么说需求 ==')
 }
 
 // ────────────────────────────── 权限：发起需求 ──────────────────────────────
-console.log('\n== 权限：只有群主能发起需求 ==')
+console.log('\n== 权限：只有系统管理员能发起需求 ==')
 {
   const { deps, saved, sent } = makeDeps()
   const bridge = createFlowBridge(deps)
   const st = newState()
 
-  // 群管理员（群里是 admin，但不在系统白名单）
+  // 普通成员：能看能说，但不能开新需求
   await bridge.handleMessage({
     groupId: 'g1',
     text: '首页加个欢迎弹窗',
     replyTo: 1,
     st,
-    initiator: { userId: 'u-admin', nickname: '管理员' },
-    can: async () => ({ ok: false, role: 'admin', need: ['owner'] }),
+    initiator: { userId: 'u-member', nickname: '开发小明' },
+    can: async () => ({ ok: false, role: 'member', roleLabel: '普通成员', need: ['admin'] }),
   })
-  check('群管理员被拒', !saved.get('g1'), '不应该建 flow')
-  check('提示需要群主', sent.some((t) => t.includes('需要群主权限')), sent.join(' / '))
+  check('普通成员被拒', !saved.get('g1'), '不应该建 flow')
+  check(
+    '提示需要系统管理员权限',
+    sent.some((t) => t.includes('需要系统管理员权限')),
+    sent.join(' / '),
+  )
+  // 拒绝时要说人话，不能把内部的 role 枚举丢给用户看
+  check(
+    '提示里带的是中文角色名',
+    sent.some((t) => t.includes('普通成员')),
+    sent.join(' / '),
+  )
 
-  // 群主
+  // 系统管理员
   await bridge.handleMessage({
     groupId: 'g1',
     text: '首页加个欢迎弹窗',
     replyTo: 2,
     st,
-    initiator: { userId: 'u-owner', nickname: '群主' },
-    can: async () => ({ ok: true, role: 'owner' }),
+    initiator: { userId: 'u-admin', nickname: '产品阿宝' },
+    can: async () => ({ ok: true, role: 'admin', roleLabel: '系统管理员' }),
   })
-  check('群主可以发起', !!saved.get('g1')?.flow, '应该建 flow')
+  check('系统管理员可以发起', !!saved.get('g1')?.flow, '应该建 flow')
 }
 
 console.log('\n== 权限：没有 can 时不影响内部调用 ==')

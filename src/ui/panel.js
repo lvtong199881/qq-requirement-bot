@@ -102,35 +102,6 @@ async function dispatch(instances, groupId, action, token) {
   return { ok: false, error: `没有实例在服务群 ${groupId}` }
 }
 
-/**
- * 解析用户输入的 QQ 白名单。
- * 允许中英文逗号、空格、换行分隔；容忍空值（= 清空白名单）。
- * 返回 { ok, list } 或 { ok:false, error }。
- */
-export function parseAdminUsers(raw) {
-  if (raw == null) return { ok: true, list: [] }
-  const text = String(raw).trim()
-  if (!text) return { ok: true, list: [] }
-
-  const parts = text
-    .split(/[,，\s]+/)
-    .map((x) => x.trim())
-    .filter(Boolean)
-
-  const bad = parts.filter((x) => !/^\d{4,12}$/.test(x))
-  if (bad.length) {
-    return {
-      ok: false,
-      error: `这些不是合法的 QQ 号（只能是 4~12 位数字）：${bad.join('、')}`,
-    }
-  }
-
-  // 去重但保留顺序
-  const list = [...new Set(parts)]
-  if (list.length > 50) return { ok: false, error: `最多 50 个，当前 ${list.length} 个` }
-  return { ok: true, list }
-}
-
 /** 读 bot.config.json 里的可编辑项 */
 /** 面板只提供这几档；传入别的值一律拒绝，避免手改成 3 分钟把回合切成碎片 */
 const TIMEOUT_OPTIONS = [10, 15, 30, 60]
@@ -155,10 +126,7 @@ function readSettings(repoRoot) {
     const raw = JSON.parse(readFileSync(file, 'utf8'))
     return {
       ok: true,
-      adminUsers: raw.adminUsers ?? [],
-      // 超级管理员只读展示，面板不提供编辑（避免把自己锁出去）
-      superAdmin: raw.superAdmin ?? [],
-      // 群消息文案：每条带默认值、当前值、是否自定义
+      // 消息文案：每条带默认值、当前值、是否自定义
       messages: Object.entries(MESSAGE_TEMPLATES).map(([key, def]) => ({
         key,
         group: def.group,
@@ -193,7 +161,7 @@ function readSettings(repoRoot) {
       },
     }
   } catch (err) {
-    return { ok: false, error: `读配置失败：${err.message}`, adminUsers: [], superAdmin: [] }
+    return { ok: false, error: `读配置失败：${err.message}` }
   }
 }
 
@@ -206,10 +174,6 @@ function writeSettings(repoRoot, patch) {
   } catch (err) {
     return { ok: false, error: `读配置失败：${err.message}` }
   }
-  if (patch.superAdmin !== undefined) {
-    return { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' }
-  }
-  if (patch.adminUsers !== undefined) raw.adminUsers = patch.adminUsers
   if (patch.stageTimeouts !== undefined) {
     raw.stageTimeouts = {
       default: patch.stageTimeouts.default,
@@ -293,7 +257,7 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         // 单独收一份给前端画总览，行里只带这个群自己的排队信息。
         const pools = []
         for (const s of statuses) {
-          if (s.unreachable || (s.onebot && s.onebot.connected === false)) alerts += 1
+          if (s.unreachable) alerts += 1
           if (s.pools && !s.unreachable) {
             pools.push({ pid: s.instance?.pid ?? null, ...s.pools })
           }
@@ -331,7 +295,6 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         return json(res, 200, {
           instance: full.instance,
           config: full.config,
-          onebot: full.onebot,
           resources: full.resources,
           // 只回这一行对应的群，前端不用再从 groups 里翻
           group: (full.groups ?? []).find((g) => String(g.groupId) === String(groupId)) ?? null,
@@ -359,19 +322,14 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
         const body = await readJsonBody(req)
         if (body === null) return json(res, 400, { ok: false, error: '请求体不是合法 JSON' })
 
-        // superAdmin 只能在配置文件里改，面板拒绝
-        if (body.superAdmin !== undefined) {
-          return json(res, 400, { ok: false, error: 'superAdmin 只能在 bot.config.json 里手动修改' })
-        }
         if (
-          body.adminUsers === undefined &&
           body.messageTemplates === undefined &&
           body.stageTimeouts === undefined &&
           body.tools === undefined
         ) {
           return json(res, 400, {
             ok: false,
-            error: '没有要保存的字段（adminUsers / messageTemplates / stageTimeouts / tools）',
+            error: '没有要保存的字段（messageTemplates / stageTimeouts / tools）',
           })
         }
 
@@ -381,12 +339,6 @@ export function startPanel({ repoRoot, port = 7879, token, config = {} }) {
           const v = parseStageTimeouts(body.stageTimeouts)
           if (!v.ok) return json(res, 400, { ok: false, error: v.error })
           patch.stageTimeouts = v.value
-        }
-
-        if (body.adminUsers !== undefined) {
-          const parsed = parseAdminUsers(body.adminUsers)
-          if (!parsed.ok) return json(res, 400, { ok: false, error: parsed.error })
-          patch.adminUsers = parsed.list
         }
 
         if (body.messageTemplates !== undefined) {

@@ -1,14 +1,12 @@
 /**
- * 传输层分流测试。
+ * 传输层测试。
  *
- * 这是整个 App 化改造最容易出静默故障的一处：编排层把「会话标识」
- * 当不透明字符串用，QQ 群号和 App 的 threadId 走同一个参数。
- * 如果分流判错，threadId 会走 OneBot，而 onebot.js 里是
- * `group_id: Number(groupId)` —— Number('t123abc') 是 NaN，
- * JSON 序列化后变 null，于是消息**不报错地**发到一个不存在的群。
- * 用户看到的是「App 里没反应」，日志里却没有一行错误。
+ * 这一层现在只有一条路：App 通道。历史上的 QQ 分流（群号 vs threadId 判定、
+ * base64 内联图片、uploadGroupFile 上传）已经随 OneBot 一起删掉了，对应
+ * 的二十多条断言也一并删掉——留着测不存在的分支只会让后来人以为还有 QQ。
  *
- * 所以这里逐条钉死：谁该走哪条路、落库什么、不落库什么。
+ * 会话类型判定（isAppThread）挪到 src/api/threads.js 了，它的测试在
+ * test/app-api.js 里，因为那边本来就要造 threadId。
  *
  *   node test/transport.js
  */
@@ -17,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MessageStore } from '../src/store/messages.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
-import { createTransport, isAppThread } from '../src/transport/transport.js'
+import { createTransport } from '../src/transport/transport.js'
 import { newThreadId } from '../src/api/threads.js'
 
 let pass = 0
@@ -31,68 +29,37 @@ const tmp = mkdtempSync(join(tmpdir(), 'qq-transport-'))
 const messages = new MessageStore(join(tmp, 'messages'))
 const artifacts = new ArtifactStore(join(tmp, 'artifacts'))
 
-/** 记录假 bot 收到了什么 */
-const botCalls = []
-const bot = {
-  sendGroupMsg: async (id, content) => {
-    botCalls.push({ kind: 'msg', id, content })
-  },
-  uploadGroupFile: async (id, path, name) => {
-    botCalls.push({ kind: 'file', id, path, name })
-  },
-}
-
 const logs = []
-const transport = createTransport({
-  bot,
-  messages,
-  artifacts,
-  log: (m) => logs.push(m),
-})
+const transport = createTransport({ messages, artifacts, log: (m) => logs.push(m) })
 
-console.log('\n== 会话类型判定 ==')
+console.log('\n== 发文本 ==')
 {
-  check('QQ 群号是数字', isAppThread('123456') === false)
-  check('长群号也是数字', isAppThread('98765432109') === false)
-  check('threadId 是 App 会话', isAppThread(newThreadId()) === true)
-  check('t 开头短串算 App', isAppThread('tabc') === true)
-  check('单独一个 t 不算（更像脏数据）', isAppThread('t') === false)
-  check('空值是 QQ（保持老行为）', isAppThread('') === false)
-  check('null 是 QQ（保持老行为）', isAppThread(null) === false)
-  check('纯数字不因为长度被误判', isAppThread('12') === false)
-  check('生成 100 个 id 都不重复', new Set(Array.from({ length: 100 }, newThreadId)).size === 100)
-}
-
-console.log('\n== 发文本：App 落库，不走 bot ==')
-{
-  const before = botCalls.length
   const tid = newThreadId()
   await transport.sendText(tid, '需求澄清通过了')
-  check('bot 没收到', botCalls.length === before, `${botCalls.length} vs ${before}`)
   const list = messages.list(tid)
   check('落了一条', list.messages.length === 1)
   check('角色是 bot', list.messages[0].role === 'bot')
   check('kind 是 text', list.messages[0].kind === 'text')
   check('文本原样', list.messages[0].payload.text === '需求澄清通过了')
+  check('seq 从 1 开始', list.messages[0].seq === 1)
 }
 
-console.log('\n== 发文本：QQ 群走 bot，不落库 ==')
+console.log('\n== 连发多条按顺序落库 ==')
 {
-  const before = botCalls.length
-  await transport.sendText('123456', '阶段播报')
-  check('bot 收到了', botCalls.length === before + 1)
-  check('发给了正确的群', botCalls.at(-1).id === '123456')
-  check('内容是原文', botCalls.at(-1).content === '阶段播报')
-  check('QQ 群没有落库', messages.list('123456').messages.length === 0)
+  const tid = newThreadId()
+  await transport.sendText(tid, '第一条')
+  await transport.sendText(tid, '第二条')
+  const list = messages.list(tid)
+  check('两条都在', list.messages.length === 2)
+  check('顺序正确', list.messages[0].payload.text === '第一条' && list.messages[1].payload.text === '第二条')
+  check('seq 递增', list.messages[0].seq < list.messages[1].seq)
 }
 
 console.log('\n== 发图片 ==')
 {
   const tid = newThreadId()
-  const buf = Buffer.from('PNGDATA')
-  await transport.sendImage(tid, { buffer: buf, name: '首页.png' })
+  await transport.sendImage(tid, { buffer: Buffer.from('PNGDATA'), name: '首页.png' })
 
-  check('App 不调 bot', !botCalls.some((c) => c.kind === 'msg' && c.id === tid))
   const list = messages.list(tid)
   check('落了一条图片消息', list.messages.length === 1)
   check('kind 是 image', list.messages[0].kind === 'image')
@@ -105,16 +72,6 @@ console.log('\n== 发图片 ==')
   const hit = artifacts.resolve(tid, token)
   check('url 里的 token 能解析到文件', Boolean(hit), url)
   check('文件名保留了中文', hit?.name === '首页.png', hit?.name)
-}
-
-console.log('\n== 发图片：QQ 走 base64 ==')
-{
-  const before = botCalls.length
-  await transport.sendImage('123456', { buffer: Buffer.from('X'), name: 'a.png' })
-  check('bot 收到了', botCalls.length === before + 1)
-  const call = botCalls.at(-1)
-  check('是图片段', call.content?.[0]?.type === 'image')
-  check('用 base64 内联（NapCat 可能看不到宿主机路径）', String(call.content?.[0]?.data?.file).startsWith('base64://'))
 }
 
 console.log('\n== 发文件 ==')
@@ -135,18 +92,6 @@ console.log('\n== 发文件 ==')
   check('能解析到文件', Boolean(hit))
 }
 
-console.log('\n== 发文件：QQ 走 uploadGroupFile ==')
-{
-  const before = botCalls.length
-  const src = join(tmp, 'pkg.zip')
-  writeFileSync(src, 'ZIPDATA')
-  await transport.sendFile('123456', src, 'pkg.zip')
-  check('bot 收到了', botCalls.length === before + 1)
-  check('用的是上传接口', botCalls.at(-1).kind === 'file')
-  check('带了原路径', botCalls.at(-1).path === src)
-  check('带了文件名', botCalls.at(-1).name === 'pkg.zip')
-}
-
 console.log('\n== 发文件：源文件不存在时退化成提示，不抛错 ==')
 {
   const tid = newThreadId()
@@ -162,7 +107,7 @@ console.log('\n== 发文件：源文件不存在时退化成提示，不抛错 =
   check('说明里提到发送失败', /失败/.test(list.messages[0].payload.text ?? ''))
 }
 
-console.log('\n== 结构化事件：只对 App 落库 ==')
+console.log('\n== 结构化事件 ==')
 {
   const tid = newThreadId()
   transport.event(tid, 'stage', { stage: '开发', status: '进行中' })
@@ -170,10 +115,6 @@ console.log('\n== 结构化事件：只对 App 落库 ==')
   check('落了一条', list.messages.length === 1)
   check('kind 是 stage', list.messages[0].kind === 'stage')
   check('带了阶段名', list.messages[0].payload.stage === '开发')
-
-  const before = botCalls.length
-  transport.event('123456', 'stage', { stage: '开发', status: '进行中' })
-  check('QQ 群不落库也不调 bot', botCalls.length === before && messages.list('123456').messages.length === 0)
 }
 
 console.log('\n== 落库失败时不影响发送主流程 ==')
@@ -185,7 +126,7 @@ console.log('\n== 落库失败时不影响发送主流程 ==')
     },
     list: () => ({ messages: [], lastSeq: 0 }),
   }
-  const t2 = createTransport({ bot, messages: brokenMessages, artifacts, log: (m) => logs.push(m) })
+  const t2 = createTransport({ messages: brokenMessages, artifacts, log: (m) => logs.push(m) })
   let threw = false
   try {
     await t2.sendText(newThreadId(), '会写失败的消息')
@@ -204,6 +145,19 @@ console.log('\n== 消息里没有跨会话污染 ==')
   await transport.sendText(b, '属于 B')
   check('A 只有自己的', messages.list(a).messages.length === 1 && messages.list(a).messages[0].payload.text === '属于 A')
   check('B 只有自己的', messages.list(b).messages.length === 1 && messages.list(b).messages[0].payload.text === '属于 B')
+}
+
+console.log('\n== 文件系统里只有 thread 自己的产物 ==')
+{
+  const tid = newThreadId()
+  await transport.sendImage(tid, { buffer: Buffer.from('X'), name: 'a.png' })
+  const other = newThreadId()
+  await transport.sendImage(other, { buffer: Buffer.from('Y'), name: 'b.png' })
+  const aFiles = artifacts.listDir ?? null
+  const tokenA = messages.list(tid).messages[0].payload.url.split('/artifacts/')[1]
+  const tokenB = messages.list(other).messages[0].payload.url.split('/artifacts/')[1]
+  check('A 的 token 在 B 的会话里解析不到', artifacts.resolve(other, tokenA) === null, String(aFiles))
+  check('各自的 token 都能解析', Boolean(artifacts.resolve(tid, tokenA)) && Boolean(artifacts.resolve(other, tokenB)))
 }
 
 rmSync(tmp, { recursive: true, force: true })

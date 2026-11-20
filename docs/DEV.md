@@ -7,7 +7,7 @@
 ## 会消耗 token 的两个
 
 ```bash
-node test/full.js             # 全链路：注入群消息 → 跑 dsh → 收回复
+node test/full.js             # 全链路：从 App API 提需求 → 跑 dsh → 在消息流里收到回复
 node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 ```
 
@@ -17,30 +17,27 @@ node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 
 ```bash
 node test/full.js --no-llm    # 起真实 bridge 进程，验证握手与路由
-node test/resilience.js       # NapCat 没起来 / 中途断开时，bridge 必须活着并自愈
 node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参、错误码
-node test/app-api.js          # App 公网 API：注册登录、权限、消息顺序、通过/打回
-node test/transport.js        # 通道分流：threadId 必须走 App 通道，群号必须走 QQ
+node test/app-api.js          # App API：注册登录、权限、消息顺序、通过/打回
+node test/transport.js        # 传输层：文本/图片/文件落库、失败不抛、跨会话不串
 node test/messages.js         # 消息 JSONL：seq 递增、增量窗口、坏行容错
 ```
 
-`test/transport.js` 值得单独提一句：编排层把「会话标识」当不透明字符串传，
-QQ 群号和 App 的 threadId 共用同一个参数。如果分流判错，`onebot.js` 里的
-`group_id: Number(groupId)` 会把 `Number('t123abc')` 算成 `NaN`，
-JSON 序列化后变 `null`——消息**不报错地**发到一个不存在的群，
-日志里一行错误都没有。所以这个测试逐条钉死了两边各自的路径。
+`test/full.js` 与 `test/queue-rerun.js` 都通过 `test/helpers/bridge.js` 起真进程、
+走真实 HTTP API 驱动。`--no-llm` 用一个不存在的 `dshBin`，验证 spawn 失败时
+进程活着且把原因播报进消息流——「界面上没反应」是这套系统最难查的故障。
 
 
 ## 代码结构
 
 ```
 src/
-  index.js          入口：连 OneBot、权限闸门、面板 API、App API
+  index.js          入口：权限闸门、面板 API、App API
   flow-bridge.js    消息入口 + 播报 + feature 分支 + 合并
   account/          账号：auth.js（scrypt + HS256 token）、store.js（用户表）
-  api/              公网 API：server.js（路由）、threads.js（thread 与编排层接线）
+  api/              App API：server.js（路由）、threads.js（thread 与编排层接线）
   store/            消息 JSONL 落库、产物文件
-  transport/        onebot.js（QQ）、transport.js（按会话类型分流）
+  transport/        transport.js（把发送变成落库，编排层不关心存哪）
   flow/
     flow.js         阶段定义与状态机（纯函数，不碰 fs）
     orchestrator.js 任务包组装、回执校验、产物核对
@@ -60,6 +57,12 @@ test/               独立测试脚本，没有框架
 依赖方向是单向的：`index` → `flow-bridge` → `flow/*` → `infra/`。`flow/*` 不 import `ui/`
 和 `transport/`，副作用全部由 `flow-bridge` 注入，所以状态机可以纯函数测试。
 
+会话标识这个参数在代码里仍叫 `groupId`，文件名仍是 `.state/group-<id>.json`。
+这是 QQ 时代留下的命名，现在装的是 App 的 threadId：改名要动上百处、跨十几个
+文件、零行为收益，所以**留名改语义**。判据只有一处——`src/api/threads.js` 的
+`isAppThread()`（`t` 开头且非纯数字），用来把老数据里 `group-<群号>.json` 挡在
+App 列表之外。
+
 ## 仓库配置
 
 只有一个入口：`repos` 数组。单仓库就写一项——不需要第二个配置项。
@@ -75,8 +78,7 @@ test/               独立测试脚本，没有框架
 
 - `primary` 标主仓库；不标就是第一个。只能有一个
 - 代码里的 `config.projectDir` 是主仓库路径的派生值，不是独立配置
-- 群级可以用 `"repo": "ui-kit"` 指向另一个已配置的仓库（不同群服务不同产品线），
-  指向未配置的 id 会直接报错
+- 一个实例服务一个项目目录；要跑多个产品线，起多个实例（各自的 `api.port` 错开）
 
 ## Flutter App
 
@@ -175,11 +177,11 @@ node src/migrate.js --apply    # 真的执行（幂等，可重复跑）
 
 | 脚本 | 覆盖什么 |
 | --- | --- |
-| `badge.js` | 面板徽章判断：群状态 `waiting` ≠ 阶段完成 |
-| `commands.js` | 指令解析、白名单、`/help` 文案 |
+| `badge.js` | 面板徽章判断：会话状态 `waiting` ≠ 阶段完成 |
+| `commands.js` | 指令解析：斜杠形式、大小写、参数切分、未知指令 |
 | `messages.js` | 文案模板的渲染、校验、自定义覆盖 |
 | `queue.js` | 排队消息的持久化 |
-| `settings.js` | 白名单输入解析、校验、边界 |
+| `settings.js` | 文案模板渲染与校验（占位符、长度、未知 key、覆盖优先级） |
 | `timeline.js` | 心跳 / 回执话术边界：别把「刚开始」播成「已进行 0 分钟」 |
 
 ## 编排（状态机驱动）
@@ -199,6 +201,14 @@ node src/migrate.js --apply    # 真的执行（幂等，可重复跑）
 它挂了就别往下改，后面的循环都是按这张表走的。
 
 
-## Mock OneBot
+## 测试脚手架
 
-`test/mock-onebot.js` 是一个手写的极简 OneBot 服务端，自带 WS 帧编解码，**不需要真的连 QQ 就能测**。`full.js`、`resilience.js`、`queue-rerun.js` 都靠它造群消息和断线场景。
+`test/helpers/bridge.js` 负责起一个真 bridge 进程、等 App API 就绪、
+用 HTTP API 驱动它。`full.js` 和 `queue-rerun.js` 都用它，所以它们测的是
+「用户真的在 App 里点了那个按钮」这条路径，不是内部函数的单测。
+
+两个约定：
+
+- 临时目录用 `mkdtempSync`，配置里显式传 `stateDir`——否则测试会写进仓库自己的
+  `.state/`，把真实的用户表和需求进度污染掉
+- `api.port` 写 `0` 让内核分配端口，从启动日志里正则捞出来，避免撞上本机在跑的那个

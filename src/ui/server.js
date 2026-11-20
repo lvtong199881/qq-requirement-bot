@@ -34,8 +34,8 @@ async function readBody(req) {
  * @param {object} o.config
  * @param {() => object} o.snapshot  组装本实例完整状态的函数（由 index.js 提供）
  * @param {() => object=} o.summary  精简版快照，只含面板列表要画的字段
- * @param {(groupId: string) => Promise<object>} o.stopGroup
- * @param {(groupId: string) => Promise<object>} o.restartGroup
+ * @param {(groupId: string) => Promise<object>} o.stopGroup 终止某会话正在跑的回合
+ * @param {(groupId: string) => Promise<object>} o.restartGroup 重启某会话的回合
  * @param {string=} o.token  写操作需要的令牌；不给则只允许本机无 token
  */
 export function createBridgeServer({
@@ -81,17 +81,19 @@ export function createBridgeServer({
       }
 
       // 健康检查：给 systemd / 反向代理 / 监控用。
-      // 不只看「进程活着」，还要看 OneBot 连接——连不上就处理不了消息，
-      // 这时候把实例从负载里摘掉比让它继续挂着更有意义。
+      //
+      // 以前这里把「OneBot 连上了吗」当成存活判据——连不上就摘流量。
+      // QQ 通道删掉后就没有「外部依赖是否可达」这回事了：进程活着、
+      // HTTP 能应答，就是健康的。反向判据会带来麻烦——App API 没开
+      // （api.enabled=false）时返回 503 会让监控一直报假警。
       if (method === 'GET' && path === '/healthz') {
         const snap = summary ? await summary() : await snapshot()
-        const connected = snap.onebot?.connected === true
         const busy = snap.pools?.turns ?? null
-        return json(res, connected ? 200 : 503, {
-          ok: connected,
+        return json(res, 200, {
+          ok: true,
           pid: process.pid,
-          onebot: connected,
-          groups: (snap.groups ?? []).length,
+          appApiPort: snap.instance?.appApiPort ?? 0,
+          threads: (snap.groups ?? []).length,
           pools: busy,
           uptimeSec: Math.round((Date.now() - snap.instance.startedAt) / 1000),
         })
@@ -108,12 +110,12 @@ export function createBridgeServer({
           return json(res, result.ok ? 200 : 400, result)
         }
 
-        const m = path.match(/^\/api\/groups\/(stop|restart)$/)
+        const m = path.match(/^\/api\/threads\/(stop|restart)$/)
         if (m) {
           const action = m[1]
           const body = await readBody(req)
-          const groupId = String(body.groupId ?? '')
-          if (!groupId) return json(res, 400, { ok: false, error: '缺少 groupId' })
+          const groupId = String(body.threadId ?? body.groupId ?? '')
+          if (!groupId) return json(res, 400, { ok: false, error: '缺少 threadId' })
           const result = action === 'stop' ? await stopGroup(groupId) : await restartGroup(groupId)
           runtime.info(`[面板] ${action} ${groupId} → ${result.ok ? '成功' : '失败'}：${result.message ?? ''}`)
           return json(res, result.ok ? 200 : 400, result)

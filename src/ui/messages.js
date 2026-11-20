@@ -1,10 +1,13 @@
 /**
- * bot 发给群的文案模板——面板里可改。
+ * bot 发出的话术模板——面板里可改。
  *
  * 注意和另外两个模块的区别：
- *   prompt.js   → 注入给 agent 的群聊协议（agent 读的）
+ *   prompt.js   → 注入给 agent 的对话协议（agent 读的）
  *   routes.js   → 每条用户消息转成 agent 的 prompt（agent 读的）
- *   messages.js → bot 在群里说的话（用户读的）← 就是这里
+ *   messages.js → bot 在对话框里说的话（用户读的）← 就是这里
+ *
+ * 表里还留着几条 QQ 时代的 key（ack*、groupTaken、releaseAsk 等）：
+ * 面板允许用户逐条改文案，删 key 会让已经存下的覆盖配置对不上号。
  *
  * 变量渲染时会替换，未知占位符校验时拒绝。
  */
@@ -153,8 +156,8 @@ export const MESSAGE_TEMPLATES = {
   },
   ackKickoff: {
     group: '回执（消息 1）',
-    label: '空群 · 用户提了新需求',
-    desc: '新群第一次说需求，别回成「没有进行中的阶段」，要说清已经接下了',
+    label: '新会话 · 用户提了新需求',
+    desc: '新对话第一次说需求，别回成「没有进行中的阶段」，要说清已经接下了',
     vars: [],
     template: '收到，这个需求我接下了，先做产品需求梳理。',
   },
@@ -198,7 +201,7 @@ export const MESSAGE_TEMPLATES = {
     label: '心跳（消息 3）· 阶段都收尾了但还在跑',
     desc: '阶段全完成后 agent 仍在干活时用，比如验收后又追加修 bug',
     vars: ['duration'],
-    template: '还在处理中，已进行 {{duration}}，有结论就发群里。',
+    template: '还在处理中，已进行 {{duration}}，有结论就发出来。',
   },
 
   // ── 消息 4：异常 ──
@@ -226,7 +229,7 @@ export const MESSAGE_TEMPLATES = {
   idleHint: {
     group: '交互提示',
     label: '空消息引导',
-    desc: '用户只 @ 了 bot 什么都没说、且这个群还没开始任何需求时',
+    desc: '用户什么都没说、且这个对话还没开始任何需求时',
     vars: [],
     template: '直接把需求说给我就行，比如「首页加个欢迎弹窗，手动批准」。',
   },
@@ -234,7 +237,7 @@ export const MESSAGE_TEMPLATES = {
     group: '交互提示',
     label: '需求全部完成',
     vars: [],
-    template: '这个需求跑完了。要新需求直接 @我 说。',
+    template: '这个需求跑完了。新需求点右上角 + 新建一个。',
   },
   decisionInvalid: {
     group: '交互提示',
@@ -245,17 +248,17 @@ export const MESSAGE_TEMPLATES = {
   },
   groupTaken: {
     group: '交互提示',
-    label: '群里已有需求，不能再开新的',
-    desc: '一个群只做一个需求，做完也占着这个群',
+    label: '会话里已有需求，不能再开新的',
+    desc: '一个对话只做一个需求，做完仍留着看过程',
     vars: ['reqId'],
-    template: '这个群已经绑定了需求「{{reqId}}」，一个群只做一个需求（做完也算）。\n新需求请另开一个群，把 bot 拉进去再 @ 它。',
+    template: '这个对话已经绑定了需求「{{reqId}}」，一个对话只做一个需求。\n新需求请新建一个对话。',
   },
   allDone: {
     group: '交互提示',
     label: '需求已全部完成',
     desc: '需求收尾后，用户再发任何消息（新需求除外）都回这句',
     vars: ['reqId'],
-    template: '本需求{{reqIdPad}}已全部完成，新需求请开新群。',
+    template: '本需求{{reqIdPad}}已全部完成，新需求请新建一个对话。',
   },
   ambiguous: {
     group: '交互提示',
@@ -276,7 +279,7 @@ export const MESSAGE_TEMPLATES = {
     group: '指令与操作',
     label: '无权限使用指令',
     vars: ['cmd'],
-    template: '/{{cmd}} 需要群主权限（群管理员不能执行）。要放开请把 QQ 号加进 adminUsers。',
+    template: '/{{cmd}} 需要系统管理员权限。要放开请让管理员在 App 的「账号管理」里改角色。',
   },
   help: {
     group: '指令与操作',
@@ -313,7 +316,7 @@ export const MESSAGE_TEMPLATES = {
     group: '指令与操作',
     label: '释放确认（二次确认）',
     vars: ['target', 'stage'],
-    template: '确认要释放{{target}}的会话与进程吗？\n\n会做三件事：\n· 打断当前正在跑的回合（如果有）\n· 清空这个群的会话上下文\n· 当前阶段「{{stage}}」的进度只保留在编排记录里\n\n之后需要重新发需求或「继续」才能接上。\n回复「确认」执行，回别的就取消。',
+    template: '确认要释放{{target}}的会话与进程吗？\n\n会做三件事：\n· 打断当前正在跑的回合（如果有）\n· 清空这个对话的会话上下文\n· 当前阶段「{{stage}}」的进度只保留在编排记录里\n\n之后需要重新发需求或「继续」才能接上。\n回复「确认」执行，回别的就取消。',
   },
   releaseAlready: {
     group: '指令与操作',

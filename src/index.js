@@ -1,26 +1,27 @@
 #!/usr/bin/env node
 /**
- * 入口：连接 OneBot，把群里 @产品同学 的消息变成一回合 dsh headless。
+ * 入口：把 App 里发来的需求变成一回合 dsh headless。
  *
  * 消息流：
- *   QQ 群 → NapCat → WebSocket → 这里 → spawn dsh → 解析 NDJSON
- *   → 分条推送回群 → 检测 [[WAITING]] → 保存 sessionId 等下一次 @
+ *   App（Flutter）→ HTTP → 这里 → spawn dsh → 解析 NDJSON
+ *   → 分条写进消息库 → 检测 [[WAITING]] → 保存 sessionId 等用户下次发言
+ *
+ * QQ / NapCat / OneBot 那条链路已经整个删掉了：App 自己就是前端，
+ * 不再需要中间人。
  */
 import { loadConfig, reloadConfigInto, resolveModelEnv } from './config.js'
-import { OneBot } from './transport/onebot.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
 import { getCheckpoint, CHECKPOINTS } from './flow/flow.js'
 import { readReceipt } from './flow/orchestrator.js'
-import { RateLimiter, sleep } from './ui/format.js'
+import { sleep } from './ui/format.js'
 import { Runtime } from './runtime.js'
-import { renderMessage } from './ui/messages.js'
 import { InstanceRegistry } from './instances.js'
 import { createBridgeServer } from './ui/server.js'
 import { join as pathJoin } from 'node:path'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { UserStore } from './account/store.js'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { UserStore, roleLabelOf } from './account/store.js'
 import { MessageStore } from './store/messages.js'
 import { ArtifactStore } from './store/artifacts.js'
 import { createTransport } from './transport/transport.js'
@@ -54,10 +55,8 @@ if (!Object.keys(modelEnv).length) {
   process.exit(1)
 }
 
-const store = new SessionStore(config.repoRoot)
+const store = new SessionStore(config.repoRoot, config.stateDir)
 const machine = new GroupStateMachine(config, store)
-const limiter = new RateLimiter(config.limits.maxMessagesPerMinute)
-const bot = new OneBot(config.onebot)
 
 // 运行时状态中心：日志、回合、资源都从这里出去（面板 /api/status 的数据源）
 const runtime = new Runtime({
@@ -75,9 +74,8 @@ const users = new UserStore(store.dir)
 const messages = new MessageStore(pathJoin(store.dir, 'messages'))
 const artifacts = new ArtifactStore(pathJoin(store.dir, 'artifacts'))
 
-// 传输门面：QQ 群号和 App 的 threadId 从这里分流。
-// 编排层只认「会话标识」，分流的职责全在这个对象里，见 transport/transport.js。
-const transport = createTransport({ bot, messages, artifacts, log })
+// 投递门面：编排层只说「说给谁听」，存储细节全在这里，见 transport/transport.js
+const transport = createTransport({ messages, artifacts, log })
 
 // v2 编排接入层。createFlowBridge 只捕获依赖，不立刻执行任何动作；
 // sendPlain 是函数声明会提升，所以这里引用它不会碰到 TDZ。
@@ -88,7 +86,6 @@ const flowBridge = createFlowBridge({
   log,
   sendPlain,
   runTurn,
-  bot,
   transport,
   modelEnv,
   repoRoot: config.repoRoot,
@@ -99,106 +96,44 @@ if (config.model?.provider) {
   log(`模型：${config.model.provider}/${config.model.model ?? '默认'}`)
 }
 log(`项目目录：${config.projectDir ?? '（未配置，接需求前先在面板添加仓库）'}`)
-log(`群策略：${config.groupPolicy.mode}${config.groupPolicy.mode === 'auto' ? '（拉进哪个群就服务哪个群）' : ''}`)
-
-/** 群成员角色缓存：`groupId:userId` → {role, at}。群管判定每条消息都要，缓存 5 分钟 */
-const memberRoles = new Map()
-const ROLE_TTL_MS = 5 * 60 * 1000
-
-async function memberRole(groupId, userId) {
-  if (!userId) return null
-  const key = `${groupId}:${userId}`
-  const hit = memberRoles.get(key)
-  if (hit && Date.now() - hit.at < ROLE_TTL_MS) return hit.role
-  const role = await bot.getMemberRole(groupId, userId)
-  if (role) memberRoles.set(key, { role, at: Date.now() })
-  return role
-}
 
 /**
- * 动作级权限。不同动作对角色要求不同：
+ * 动作级权限。
  *
- *   | 动作              | 群主 | 群管理员 | 系统管理员 | 普通成员 |
- *   | ----------------- | ---- | -------- | ---------- | -------- |
- *   | 发起需求          |  ✅  |    ❌    |     ✅     |    ❌    |
- *   | 阶段确认/斜杠指令 |  ✅  |    ✅    |     ✅     |    ❌    |
- *   | 交付（release）   |  ❌  |    ❌    |     ✅     |    ❌    |
+ * 身份只有一个来源：.state/users.json 里的用户表（见 account/store.js）。
+ * 以前这里还有一路「问 NapCat 这个 QQ 号在群里是什么角色」，App 化之后
+ * 那个问题不再有意义——没有群，也没有 QQ 号。
  *
- * 注意区分两类「管理员」：
- *   - 群管理员（admin）：QQ 群里的管理员，只能管本群
- *   - 系统管理员（adminUsers）：这套系统的白名单，相当于上帝，任何群任何动作
- */
-const ACTION_ROLES = {
-  startRequirement: ['owner'],
-  confirm: ['owner', 'admin'],
-  command: ['owner', 'admin'],
-  release: [],
-}
-
-/**
- * 判断某人能否在本群执行某个动作。
- * 系统管理员必须在群角色判定之前短路——否则一个不是群管理的系统管理员会被拒绝。
- *
- * App 的 thread 走另一套身份：那边的 userId 是用户表里的 id，不是 QQ 号，
- * config.superAdmin/adminUsers 里配的 QQ 号永远匹配不上，而 memberRole()
- * 会拿 txxx 去问 NapCat（`Number('txxx')`→NaN），拿回 null。
- * 所以必须显式分流，否则 App 里没人能批需求。
+ * @param {string} action startRequirement | confirm | command | release | read | comment
+ * @param {string} groupId 会话标识（保留参数是为了不改 296 处调用点）
+ * @param {string} userId  用户表里的 id
  */
 async function can(action, groupId, userId) {
   const uid = String(userId ?? '')
-  if (!uid) return { ok: false, role: null, need: ACTION_ROLES[action] ?? [] }
-
-  if (transport.isAppThread(groupId)) {
-    const user = users.findById(uid)
-    // 已停用的账号当作不存在：token 可能还没过期，但人已经被撤了
-    if (!user || user.disabled) return { ok: false, role: null, need: [] }
-    const r = users.can(action, user)
-    return { ok: r.ok, role: user.role, need: r.need }
-  }
-
-  if (config.superAdmin.includes(uid)) return { ok: true, role: 'superadmin' }
-  if (config.adminUsers.includes(uid)) return { ok: true, role: 'systemAdmin' }
-  const role = await memberRole(groupId, uid)
-  const need = ACTION_ROLES[action] ?? []
-  if (role && need.includes(role)) return { ok: true, role }
-  return { ok: false, role, need }
+  if (!uid) return { ok: false, role: null, need: [] }
+  const user = users.findById(uid)
+  // 已停用的账号当作不存在：token 可能还没过期，但人已经被撤了
+  if (!user || user.disabled) return { ok: false, role: null, roleLabel: null, need: [] }
+  const r = users.can(action, user)
+  // roleLabel 也一并带出去：拒绝时用户看到的是「普通成员」而不是裸的 member
+  return { ok: r.ok, role: user.role, roleLabel: roleLabelOf(user.role), need: r.need }
 }
-
-/** 运行期发现的群：群号 → {name, memberCount}，用于日志和「本群」查询 */
-const knownGroups = new Map()
 
 // ────────────────────────────── 发消息 ──────────────────────────────
 
 /**
- * 构造一条「引用回复」消息段。
- * @param {number|string} messageId 被引用的消息 id
- * @returns {object|null}
- */
-/**
- * 发消息。replyTo 有值时以「引用回复」形式发出，跟真人回消息一样。
- * @param {string} groupId
+ * 发消息。
+ *
+ * replyTo 以前是 QQ 的引用回复消息 id，现在没有引用回复这回事了，
+ * 但参数保留：编排层有 26 处调用都带着它，删掉纯属改签名玩，
+ * 行为上一点差别都没有。
+ *
+ * @param {string} groupId 会话标识（App 的 threadId）
  * @param {string} text 纯文本
- * @param {{replyTo?: number|string}} [opts]
  */
-// 长任务阶段进展的最小间隔：够久才不会刷屏，够短才不会让人干等
-// 距上次「群里收到消息」的时间——agent 内部活动不算，只由 sendText 成功发送后刷新。
-// 模块级：sendText 与各群的心跳共用（bridge 当前只服务少数群，共享一个计时够用）。
-let lastActivityAt = Date.now()
-
 async function sendText(groupId, text) {
-  // 限速只对 QQ 有意义：那是防封号的风控。App 走自己的 HTTP 通道，
-  // 每 3~5 秒轮询一次，限速只会让阶段播报排队、看起来像卡住了。
-  if (!transport.isAppThread(groupId)) {
-    const wait = limiter.delayFor()
-    if (wait > 0) await sleep(wait)
-  }
-
-  // 不引用用户消息、不 @ 人：引用会把一条普通播报变成一串嵌套卡片，
-  // 群里刷起来更乱，而且 reply 段在某些客户端上会折叠正文。
   try {
-    // transport 内部按会话类型分流：QQ 群 → OneBot，App thread → 落库
     await transport.sendText(groupId, text)
-    lastActivityAt = Date.now() // 收到消息了，心跳重新计时
   } catch (err) {
     log(`发送失败（${groupId}）：${err.message}`)
   }
@@ -208,213 +143,13 @@ async function sendPlain(groupId, text, { replyTo } = {}) {
   await sendText(groupId, text, { replyTo })
 }
 
-// ────────────────────────────── 一回合 ──────────────────────────────
-
-/** 从 OneBot 消息段里取纯文本 */
-function extractText(message) {
-  if (typeof message === 'string') return message
-  if (!Array.isArray(message)) return ''
-  return message
-    .filter((seg) => seg.type === 'text')
-    .map((seg) => seg.data?.text ?? '')
-    .join('')
-}
-
-/** 是否 @ 了本 bot */
-function isAtMe(message, selfId) {
-  if (!Array.isArray(message)) return false
-  return message.some((seg) => seg.type === 'at' && String(seg.data?.qq) === String(selfId))
-}
-
-/** 去掉 @段，只留正文 */
-function stripAt(message) {
-  if (!Array.isArray(message)) return String(message ?? '')
-  return message
-    .filter((seg) => seg.type !== 'at')
-    .map((seg) => (seg.type === 'text' ? seg.data?.text ?? '' : ''))
-    .join('')
-    .trim()
-}
-
-const STOP_WORDS = new Set(['停', '停止', '中断', '停一下', '取消'])
-const HELP_WORDS = new Set(['帮助', 'help', '?', '？', '怎么用'])
-
-// bot 的 QQ 真实昵称（get_login_info 拿），和配置里的自称 bot.name 是两回事
-let botNickname = null
-
-bot.on('connected', async () => {
-  // 拉 bot 自己的 QQ 资料：面板要显示真实昵称，而不是配置里的自称
-  const login = await bot.getLoginInfo()
-  if (login?.nickname) {
-    botNickname = login.nickname
-    detail(`bot 真实昵称：${botNickname}`)
-  }
-  log(`已连接 OneBot：${config.onebot.ws}（bot=${config.bot.name} / ${botNickname ?? '昵称未知'}）`)
-  // 连上就拉一次群列表：群号由 bot 自己报，配置里不用填
-  try {
-    const list = await bot.call('get_group_list', {}, 8000)
-    if (Array.isArray(list) && list.length) {
-      for (const g of list) {
-        knownGroups.set(String(g.group_id), { name: g.group_name, memberCount: g.member_count })
-      }
-      const excluded = config.excludeGroups ?? []
-      const usable = list.filter((g) => !excluded.includes(String(g.group_id)))
-      log(`bot 已在 ${list.length} 个群里，服务其中 ${usable.length} 个：`)
-      for (const g of list) {
-        const skip = excluded.includes(String(g.group_id))
-        log(`  ${skip ? '· [已排除]' : '·'} ${g.group_name}（${g.group_id}）`)
-      }
-      if (excluded.length) log(`排除名单：${excluded.join(', ')}（写在 bot.config.json 的 excludeGroups）`)
-    } else {
-      log('bot 还不在任何群里，把它拉进群后 @ 它就行。')
-    }
-    // 上次退出时还排在队列里的消息，bridge 重启不会自动补跑——
-    // 明确告诉用户是哪几条，让人自己决定要不要重发。
-    // 用 list（本次拉到的群），排除名单之外的群不打扰。
-    for (const g of Array.isArray(list) ? list : []) {
-      if ((config.excludeGroups ?? []).includes(String(g.group_id))) continue
-      const pending = machine.pendingQueued(g.group_id)
-      if (!pending.length) continue
-      log(`[${g.group_id}] 有 ${pending.length} 条重启前未执行的消息，已提示用户重发`)
-      bot
-        .sendGroupMsg(
-          g.group_id,
-          renderMessage(
-            'queuedLost',
-            { count: pending.length, list: pending.map((t) => `· ${t}`).join('\n') },
-            config.messageTemplates,
-          ),
-        )
-        .catch(() => {})
-      machine.clearQueued(g.group_id)
-    }
-  } catch (err) {
-    log(`拉取群列表失败（不影响使用，收到消息时会自动识别）：${err.message}`)
-  }
-})
-
-bot.on('disconnected', () => {
-  log('OneBot 断开，自动重连中…')
-})
-
-// 连接失败给明确诊断，并做节流，避免重连时空刷屏
-let lastDiagAt = 0
-let diagHints = 0
-bot.on('connection-error', (info) => {
-  // 探测阶段先不打印，等结论出来
-  if (info.probing) return
-
-  const now = Date.now()
-  if (now - lastDiagAt < 10000) return
-  lastDiagAt = now
-
-  log(`连不上 OneBot（第 ${info.failures} 次）：${info.reason ?? '未知原因'}`)
-  if (diagHints++ === 0) {
-    log(
-      'NapCat 侧要开「WebSocket 服务端」：设置 → 网络配置 → 新建 WS 服务端，' +
-        '端口与 onebot.ws 一致；有 token 就填到 onebot.token。',
-    )
-  }
-})
-
-/** 群里第一次见到这个名字时补登记，让日志和「本群」能显示群名 */
-async function ensureGroupInfo(groupId) {
-  if (knownGroups.has(groupId)) return knownGroups.get(groupId)
-  try {
-    const info = await bot.call('get_group_info', { group_id: Number(groupId), no_cache: false }, 5000)
-    if (info?.group_id) {
-      const v = { name: info.group_name, memberCount: info.member_count }
-      knownGroups.set(groupId, v)
-      log(`发现新群：${info.group_name}（${groupId}）`)
-      return v
-    }
-  } catch {
-    /* 拿不到就用作匿名群，不影响功能 */
-  }
-  knownGroups.set(groupId, { name: `群${groupId}`, memberCount: 0 })
-  return knownGroups.get(groupId)
-}
-
-bot.on('message', async (frame) => {
-  if (frame.message_type !== 'group') return
-  const groupId = String(frame.group_id)
-
-  // 群策略判定：auto 模式下这里永远放行，不需要预先填群号
-  const resolved = machine.resolveGroup(groupId)
-  if (!resolved.ok) {
-    detail(`忽略群 ${groupId}：${resolved.reason}`)
-    return
-  }
-  const st = machine.peek(groupId)
-  if (!st) return
-
-  // 只响应 @ 本 bot
-  if (!isAtMe(frame.message, frame.self_id ?? bot.selfId)) return
-
-  await ensureGroupInfo(groupId)
-
-  // ── 权限闸门：只服务群主/群管理员，其他人的 @ 一律静默忽略 ──
-  // 静默是有意的：群成员发消息时 bot 不做任何回应，避免刷屏和误触发。
-  const speaker = frame.sender ?? {}
-  const speakerId = String(speaker.user_id ?? frame.user_id ?? '')
-  const gatePerm = await can('confirm', groupId, speakerId)
-  if (!gatePerm.ok) {
-    detail(`忽略 ${speakerId}（角色=${gatePerm.role ?? '未知'}）在群 ${groupId} 的消息`)
-    return
-  }
-
-  // 回复时引用用户这条消息，比 @ 自己更像真人
-  const replyTo = frame.message_id
-  let text = stripAt(frame.message)
-
-  // 记录发起人（面板列表要显示「谁提的需求」）
-  const sender = speaker
-  const initiator = {
-    userId: String(sender.user_id ?? frame.user_id ?? ''),
-    nickname: sender.card || sender.nickname || String(sender.user_id ?? ''),
-    at: Date.now(),
-  }
-  if (initiator.userId && st.initiator?.userId !== initiator.userId) {
-    st.initiator = initiator
-    store.save(groupId, { ...st, initiator })
-  } else if (initiator.userId && !st.initiator) {
-    st.initiator = initiator
-    store.save(groupId, { ...st, initiator })
-  }
-  log(`[${groupId}] 收到：${text.slice(0, 80)}`)
-
-  // ── v2 编排：状态机是唯一真相源，不走下面的意图路由 ──
-  // 分流点放在这里而不是更早，是因为权限、群信息、initiator 都已经就位。
-  // v2 自己处理 /stop 和 /release，其余消息按「新需求 / 回答 / 排队」三态处理。
-  // 状态机是唯一真相源：v2 自己处理 /stop 和 /release，
-  // 其余消息按「新需求 / 回答 / 排队」三态处理。
-  return flowBridge.handleMessage({
-    groupId,
-    text,
-    replyTo,
-    st,
-    initiator,
-    can: (action, uid) => can(action, groupId, uid),
-  })
-})
 
 // ────────────────────────────── 启动 ──────────────────────────────
 
-if (config.groupPolicy.mode === 'deny') {
-  console.error('[启动失败] groupPolicy.mode=deny，不会服务任何群。')
-  process.exit(1)
-}
-if (config.groupPolicy.mode === 'allowlist' && !config.groups.length) {
-  console.error('[启动失败] groupPolicy.mode=allowlist 但 groups 为空，请在 groups 里列出允许的群。')
-  process.exit(1)
-}
-
 // 启动时清理脏状态：bridge 上一次退出时若有回合在跑，.state 里会留下
 // status=running 但 sessionId=null 的孤儿（正常 running 必有 sessionId）。
-// 置回 waiting 并告知群里，防止用户的新消息被「上一个回合还在跑」卡住。
+// 置回 waiting，防止用户的新消息被「上一个回合还在跑」卡住。
 function cleanupOrphanStates() {
-  // 遍历 .state 下所有群状态文件——groupPolicy=auto 时 config.groups 可能为空，
-  // 按 config 遍历会漏掉自动发现群的状态
   for (const groupId of store.allGroupIds()) {
     const st = store.get(groupId)
     if (!st || st.status !== 'running' || st.sessionId) continue
@@ -472,7 +207,7 @@ function recoverInterruptedFlows() {
     }
   }
 }
-// 延后一点：等 OneBot 连接建立后再往群里发言
+// 延后一点：等 App API 起来、状态机就绪后再补发提示
 setTimeout(recoverInterruptedFlows, 5000)
 
 // ─────────────────── 管理面板的 HTTP API ───────────────────
@@ -523,7 +258,7 @@ async function buildSnapshot({ full = true } = {}) {
         { running: '进行中', waiting_user: '等你确认', blocked: '卡住', done: '已完成' }[flow.status] ?? '未开始'
       const item = {
         groupId: g.groupId,
-        groupName: knownGroups.get(g.groupId)?.name ?? null,
+        groupName: null,
         reqId: flow.reqId ?? null,
         name: flow.name ?? null,
         stage: cp?.label ?? (flow.status === 'done' ? '已交付' : null),
@@ -554,7 +289,7 @@ async function buildSnapshot({ full = true } = {}) {
     // 留着会让整个 /api/status 抛 groupStageTable is not defined。
     const item = {
       groupId: g.groupId,
-      groupName: knownGroups.get(g.groupId)?.name ?? null,
+      groupName: null,
       reqId: g.reqId ?? null,
       stage: null,
       stageStatus: '旧版需求',
@@ -578,35 +313,26 @@ async function buildSnapshot({ full = true } = {}) {
       pid: process.pid,
       port: apiPort,
       // App API 的端口，0=没启用。面板上要能看出「App 那条路通不通」，
-      // 否则用户配了 api.enabled 却连不上时无从下手。
+      // 否则用户配了 api 却连不上时无从下手。
       appApiPort,
       startedAt: runtime.startedAt,
       nodeVersion: process.version,
       cwd: process.cwd(),
-      // QQ 真实昵称（get_login_info），和 config.botName（对外自称）区分开
-      botNickname: botNickname ?? null,
     },
     config: {
       profile: config.profile,
-      botQQ: config.bot.qq,
       botName: config.bot.name,
-      // 群不再绑死项目：改哪个仓库由每条需求的内容决定（见 pickRepoFor）
+      // 项目不再绑死：改哪个仓库由每条需求的内容决定（见 pickRepoFor）
       projectDir: null,
       // 团队化改造后新增的三处路径与并发上限，面板要能看到实际用的是哪
       repoDir: config.repoDir,
       worktreeRoot: config.worktreeRoot,
       dataRoot: config.dataRoot,
       limits: config.limits,
-      groupPolicy: config.groupPolicy.mode,
       model: config.modelLabel ?? null,
       heartbeatMinutes: config.heartbeat?.idleMinutes ?? 5,
       turnTimeoutMin: Math.round(config.turnTimeoutMs / 60000),
       stageTimeouts: config.stageTimeouts ?? null,
-    },
-    onebot: {
-      url: config.onebot.ws,
-      connected: bot.connected === true,
-      selfId: bot.selfId ?? null,
     },
     groups,
     resources: runtime.resources(),
@@ -725,10 +451,6 @@ function startApi() {
             `开发 ${config.stageTimeouts.dev}、测试 ${config.stageTimeouts.test}、验收 ${config.stageTimeouts.acceptance}`,
         )
       }
-      if (Array.isArray(patch?.adminUsers)) {
-        config.adminUsers = patch.adminUsers.map((x) => String(x))
-        runtime.info(`[面板] 白名单已更新：${config.adminUsers.join(', ') || '（空）'}`)
-      }
       // 项目（仓库）增删改：写回配置文件，再就地刷新内存里的 config，
       // 不用重启 bridge。新建/改名后模拟器服务那边要重新问一次能力。
       if (Array.isArray(patch?.repos) || patch?.platform !== undefined) {
@@ -822,7 +544,7 @@ function startAppApi() {
   })
 
   server.once('error', (err) => {
-    // 公网 API 起不来不该带走整个 bridge：QQ 通道还能用
+    // 起不来不该带走整个进程：别的端口可能还能用
     runtime.error(`App API 启动失败（端口 ${config.api.port}）：${err.message}`)
   })
 
@@ -830,9 +552,16 @@ function startAppApi() {
     const { port, address } = server.address()
     appApiPort = port
     runtime.info(`App API：http://${address}:${port}/healthz`)
-    // 第一次用的人需要知道「谁先注册谁是管理员」，否则会以为要手工建账号
+    // 没有账号时，第一个能访问到这个端口的人就会成为管理员。
+    // 对着全网开的部署（host=0.0.0.0）必须把这句话说清楚，
+    // 否则抢注这件事在日志里一点痕迹都没有。
     if (users.needsFirstAdmin()) {
-      runtime.info('App 还没有账号——第一个注册的人会自动成为系统管理员')
+      if (address === '0.0.0.0' || address === '::') {
+        runtime.warn('App 还没有账号——现在任何一个能访问这个端口的人注册都会成为系统管理员')
+        runtime.warn('先自己注册一个，或临时把 api.host 改成 127.0.0.1 注册完再放开')
+      } else {
+        runtime.info('App 还没有账号——第一个注册的人会自动成为系统管理员')
+      }
     }
   })
 }
@@ -841,17 +570,17 @@ startApi()
 startAppApi()
 
 await ensureCheckouts()
-bot.connect()
 
 const shutdown = () => {
   log('正在退出…')
-  // 有回合在跑时告知群里，避免「发了消息没下文」
+  // 有回合在跑时留一条消息，用户下次打开 App 能知道发生了什么，
+  // 而不是看着一个永远「进行中」的卡片干等。
   try {
     for (const groupId of machine.active.keys()) {
       if (machine.isRunning(groupId)) {
-        // 尽力而为：连接可能已断
-        bot
-          .sendGroupMsg(groupId, renderMessage('restartNotice', {}, config.messageTemplates))
+        // 尽力而为：写盘本身也可能失败
+        transport
+          .sendText(groupId, '服务正在重启，这一回合被打断了。回来发一条消息就能接上。')
           .catch(() => {})
       }
     }
@@ -864,7 +593,6 @@ const shutdown = () => {
     /* ignore */
   }
   runtime.close()
-  bot.close()
   process.exit(0)
 }
 process.on('SIGINT', shutdown)

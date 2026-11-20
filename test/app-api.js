@@ -18,7 +18,7 @@ import { MessageStore } from '../src/store/messages.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { createApiServer } from '../src/api/server.js'
 import { createThreadService, newThreadId } from '../src/api/threads.js'
-import { isAppThread } from '../src/transport/transport.js'
+import { isAppThread } from '../src/api/threads.js'
 
 let pass = 0
 let fail = 0
@@ -33,9 +33,9 @@ const machines = new Map()
 /**
  * 假状态机。
  *
- * peek 的关键行为必须和真的一致：src/state.js:146 的 peek 在
- * 状态文件还不存在时会按 groupPolicy 懒初始化**返回一个新对象**
- * （而不是 null）。createThread 就靠这一点拿 st，假实现如果返回 null，
+ * peek 的关键行为必须和真的一致：src/state.js 的 peek 在状态文件
+ * 还不存在时会懒初始化**返回一个新对象**（而不是 null）。
+ * createThread 就靠这一点拿 st，假实现如果返回 null，
  * 「新建需求」这条链在测试里根本跑不起来——而线上是好的。
  */
 const machine = {

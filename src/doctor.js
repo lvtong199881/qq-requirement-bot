@@ -1,10 +1,11 @@
 /**
- * 自检：不连 QQ，只验证本机这条链路能不能跑通。
+ * 自检：验证本机这条链路能不能跑通，不连任何外部协议端。
  *
- *   node src/doctor.js            检查配置 / 密钥 / dsh / OneBot 连通性
+ *   node src/doctor.js            检查配置 / 密钥 / dsh / App API
  *   node src/doctor.js --turn     额外真跑一个回合（会消耗 token）
  */
 import { existsSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { loadConfig, resolveModelEnv } from './config.js'
 import { runTurn } from './runner.js'
 
@@ -26,21 +27,24 @@ let config
 try {
   config = loadConfig(configPath)
   ok(`配置文件：${config.configPath}`)
-  ok(`项目目录：${config.projectDir ?? '（未配置，接需求前先在面板添加仓库）'}`)
+  ok(`项目目录：${config.projectDir ?? '（未配置，接需求前先填 repos）'}`)
   ok(`profile：${config.profile}｜bot 昵称：${config.bot.name}`)
-  if (!config.bot.qq) warn('bot.qq 未填（不影响接收消息，但填了能识别自发消息）')
 
-  const mode = config.groupPolicy.mode
-  if (mode === 'auto') {
-    ok(`群策略：auto —— 拉进哪个群就服务哪个群，不用填群号`)
-  } else if (mode === 'allowlist') {
-    ok(`群策略：allowlist —— 只服务 ${config.groups.length} 个群`)
-    if (!config.groups.length) fail('allowlist 模式但 groups 为空')
-  } else {
-    fail('群策略：deny —— 不会服务任何群')
+  if (config.repos?.length) {
+    for (const r of config.repos) {
+      if (!existsSync(r.path)) fail(`仓库 ${r.id} 的路径不存在：${r.path}`)
+    }
+    ok(`仓库：${config.repos.map((r) => r.id).join('、')}`)
   }
-  for (const g of config.groups) {
-    if (g.projectDir && !existsSync(g.projectDir)) fail(`群 ${g.groupId} 的项目目录不存在：${g.projectDir}`)
+
+  if (config.api?.enabled !== true) {
+    // App 是唯一入口，关掉等于整个服务没有前端
+    fail('api.enabled 不是 true——App 会连不上')
+  } else {
+    ok(`App API：${config.api.host}:${config.api.port}`)
+    if (config.api.host === '0.0.0.0' || config.api.host === '::') {
+      warn('App API 监听在 0.0.0.0，同网络的人都能访问')
+    }
   }
 } catch (err) {
   fail(err.message)
@@ -53,7 +57,8 @@ console.log('\n2. 模型凭证')
 // 这里只确认至少有一个能用的 key。
 const envKeys = resolveModelEnv(config)
 const keyNames = Object.keys(envKeys)
-if (keyNames.length) {
+const apiKey = envKeys[keyNames[0]]
+if (keyNames.length && apiKey) {
   ok(`可用凭证：${keyNames.join('、')}`)
 } else {
   const wanted = config.model?.apiKeyEnv ?? 'DEEPSEEK_API_KEY'
@@ -73,81 +78,29 @@ const which = await new Promise((resolve) => {
 if (which) ok(`${config.dshBin} --version → ${which}`)
 else warn(`无法执行 ${config.dshBin}，确认在 PATH 里（headless 执行会用到）`)
 
-console.log('\n4. OneBot 连通性')
-const wsUrl = config.onebot.ws
-const reachable = await new Promise((resolve) => {
-  let settled = false
-  const done = (v) => {
-    if (!settled) {
-      settled = true
-      resolve(v)
-    }
-  }
-  try {
-    const ws = new WebSocket(
-      config.onebot.token
-        ? `${wsUrl}${wsUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(config.onebot.token)}`
-        : wsUrl,
-    )
-    const timer = setTimeout(() => {
-      ws.close()
-      done(false)
-    }, 4000)
-    ws.addEventListener('open', () => {
-      clearTimeout(timer)
-      ws.close()
-      done(true)
-    })
-    ws.addEventListener('error', () => {
-      clearTimeout(timer)
-      done(false)
-    })
-  } catch {
-    done(false)
-  }
+console.log('\n4. App API 端口')
+// 只探端口占不占用，不发请求：这里还没启动，真起了 bridge 之后端口当然是被占的，
+// 所以这条只在「端口已被别的进程占着」时才有价值，用 warn 提示而不是 fail。
+const portFree = await new Promise((resolve) => {
+  const srv = createServer()
+  srv.once('error', () => resolve(false))
+  srv.once('listening', () => {
+    srv.close(() => resolve(true))
+  })
+  srv.listen(config.api?.port ?? 7881, config.api?.host === '0.0.0.0' ? undefined : config.api?.host)
 })
-if (reachable) {
-  ok(`能连上 ${wsUrl}`)
-} else {
-  // 连不上时给出具体原因，别只丢一句「连不上」
-  const { explainProbe } = await import('./transport/onebot.js')
-  let probe = 'unknown'
-  try {
-    const net = await import('node:net')
-    const u = new URL(wsUrl)
-    probe = await new Promise((resolve) => {
-      const sock = net.connect({ host: u.hostname, port: Number(u.port || 80) })
-      const t = setTimeout(() => {
-        sock.destroy()
-        resolve('timeout')
-      }, 2000)
-      sock.on('connect', () => {
-        clearTimeout(t)
-        sock.destroy()
-        resolve('open')
-      })
-      sock.on('error', (e) => {
-        clearTimeout(t)
-        resolve(e.code === 'ECONNREFUSED' ? 'refused' : e.code === 'ENOTFOUND' ? 'unreachable' : 'unknown')
-      })
-    })
-  } catch {
-    /* keep unknown */
-  }
-  warn(explainProbe(probe, wsUrl))
-  console.log('     —— 不影响 --turn 自检，但启动 bridge 前必须解决')
-}
+if (portFree) ok(`端口 ${config.api?.port} 可用`)
+else warn(`端口 ${config.api?.port} 已被占用——bridge 已经在跑？还是别的程序占了`)
 
 if (runRealTurn) {
   console.log('\n5. 真实回合（会消耗 token）')
-  const group = config.groups[0]
   const started = Date.now()
   const res = await runTurn({
     dshBin: config.dshBin,
     profile: config.profile,
-    projectDir: group?.projectDir || config.projectDir || process.cwd(),
+    projectDir: config.projectDir || process.cwd(),
     prompt: '只回答两个字：收到。不要调用任何工具，也不要输出 [[WAITING]]。',
-    env: { ...process.env, DEEPSEEK_API_KEY: key },
+    env: { ...process.env, ...(apiKey ? { [keyNames[0]]: apiKey } : {}) },
     timeoutMs: 120_000,
     onEvent: () => {},
   })

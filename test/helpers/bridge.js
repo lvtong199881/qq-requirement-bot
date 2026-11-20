@@ -1,0 +1,175 @@
+/**
+ * 全链路测试的公共脚手架：起一个真的 bridge 进程，通过 App HTTP API 驱动它。
+ *
+ * 历史背景：这套测试原来靠 test/mock-onebot.js（手写的极简 OneBot 服务端）
+ * 注入群消息。QQ 通道删掉之后那条路不存在了，改成直接打 App API——
+ * 好处是顺手把「用户在 App 里点一下」这条真实路径也覆盖了，
+ * 而原来的做法绕过了 API 层，等于测的是一个用户永远不会走的入口。
+ *
+ *   const b = await boot({ config: {...}, logPrefix: 'rerun' })
+ *   await b.register('测试管理员', 'pass1234')   // 第一个注册的自动当管理员
+ *   await b.createThread('首页加个欢迎弹窗')
+ *   b.logs()   b.child()   await b.stop()
+ */
+import { spawn } from 'node:child_process'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+// 本文件在 test/helpers/ 下，仓库根要上两级
+export const ROOT = join(HERE, '..', '..')
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * 起 bridge，等 App API 就绪。
+ *
+ * api.port 固定写 0 让系统分配：本机可能正跑着一个占着 7881 的 bot，
+ * 写死端口在开发机上会随机撞车。
+ */
+export async function boot({
+  name = 'full',
+  config = {},
+  turnTimeoutMs = 240_000,
+  extraRepos = [],
+  heartbeat = false,
+} = {}) {
+  const tmp = mkdtempSync(join(tmpdir(), `qqrs-${name}-`))
+  const project = join(tmp, 'project')
+  mkdirSync(join(project, 'docs', 'requirements'), { recursive: true })
+
+  // 状态目录必须挪进临时目录：这里会注册账号、建需求、落消息，
+  // 共用仓库根的 .state/ 会把开发机上自己的用户表和会话搅乱
+  // （第一次跑就踩到了：真实 users.json 里多出一个「测试管理员」）。
+  const stateDir = join(tmp, '.state')
+
+  const configPath = join(tmp, 'bot.config.json')
+  writeFileSync(
+    configPath,
+    JSON.stringify(
+      {
+        stateDir,
+        repos: [{ id: 'app', name: 'test', path: project }, ...extraRepos],
+        dshBin: 'dsh',
+        profile: 'qqbot',
+        bot: { name: '产品同学' },
+        limits: { maxConcurrentTurns: 2, maxWorktrees: 4 },
+        upload: { enabled: false, maxFiles: 4, maxFileMB: 20 },
+        turnTimeoutMs,
+        heartbeat: { enabled: heartbeat },
+        api: { enabled: true, port: 0, host: '127.0.0.1' },
+        panel: { enabled: false },
+        verbose: true,
+        ...config,
+      },
+      null,
+      2,
+    ),
+  )
+
+  const logs = []
+  const child = spawn(process.execPath, [join(ROOT, 'src', 'index.js'), `--config=${configPath}`], {
+    cwd: ROOT,
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  const push = (d) => {
+    const s = d.toString()
+    logs.push(s)
+    if (process.env.VERBOSE_CHILD) process.stdout.write('    ' + s.replace(/\n(?=.)/g, '\n    '))
+  }
+  child.stdout.on('data', push)
+  child.stderr.on('data', (d) => push('[err] ' + d.toString()))
+
+  const joined = () => logs.join('')
+  // pred 允许返回 Promise：不少判据要打接口才知道（比如「消息流里有没有排队回执」）
+  const waitFor = async (pred, timeoutMs = 20_000) => {
+    const t0 = Date.now()
+    while (Date.now() - t0 < timeoutMs) {
+      if (await pred()) return true
+      if (child.exitCode !== null) return false
+      await sleep(100)
+    }
+    return false
+  }
+
+  // 端口从启动日志里捞：config 里写 0，实际端口由内核分配
+  const ok = await waitFor(() => /App API：http:\/\/[\d.]+:\d+\/healthz/.test(joined()), 30_000)
+  if (!ok) {
+    throw new Error(`bridge 没起来，日志：\n${joined()}`)
+  }
+  const baseUrl = joined().match(/App API：(http:\/\/[\d.]+:\d+)\/healthz/)[1]
+
+  let token = null
+
+  /** 打一次 API，返回 { status, body } */
+  const call = async (method, path, body) => {
+    const res = await fetch(baseUrl + path, {
+      method,
+      headers: {
+        ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    })
+    let parsed = null
+    try {
+      parsed = await res.json()
+    } catch {
+      parsed = null
+    }
+    return { status: res.status, body: parsed }
+  }
+
+  const api = {
+    baseUrl,
+    tmp,
+    project,
+    configPath,
+    stateDir,
+    logs: joined,
+    child,
+    waitFor,
+    call,
+
+    async register(username = '测试管理员', password = 'pass1234', nickname) {
+      const r = await call('POST', '/api/auth/register', { username, password, nickname })
+      if (!r.body?.ok) throw new Error(`注册失败：${JSON.stringify(r.body)}`)
+      token = r.body.token
+      return r.body
+    },
+    async login(username = '测试管理员', password = 'pass1234') {
+      const r = await call('POST', '/api/auth/login', { username, password })
+      if (!r.body?.ok) throw new Error(`登录失败：${JSON.stringify(r.body)}`)
+      token = r.body.token
+      return r.body
+    },
+    async createThread(text) {
+      const r = await call('POST', '/api/threads', { text })
+      if (!r.body?.ok) throw new Error(`建需求失败：${JSON.stringify(r.body)}`)
+      return r.body
+    },
+    async say(threadId, text) {
+      const r = await call('POST', `/api/threads/${threadId}/messages`, { text })
+      if (!r.body?.ok) throw new Error(`发言失败：${JSON.stringify(r.body)}`)
+      return r.body
+    },
+    async messages(threadId, since = 0) {
+      const r = await call('GET', `/api/threads/${threadId}/messages?since=${since}`)
+      return r.body
+    },
+    async texts(threadId) {
+      const page = await api.messages(threadId)
+      return (page?.messages ?? []).map((m) => m.payload?.text ?? '')
+    },
+
+    async stop() {
+      if (child.exitCode === null) child.kill('SIGTERM')
+      await sleep(400)
+      if (child.exitCode === null) child.kill('SIGKILL')
+    },
+  }
+
+  return api
+}

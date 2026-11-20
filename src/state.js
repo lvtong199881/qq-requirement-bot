@@ -1,8 +1,13 @@
 /**
- * 状态机：一个群 = 一个需求会话。
+ * 状态机：一个会话（App 里的一个需求）= 一份状态。
+ *
+ * 变量名里还带着 group（groupId/allGroupIds）是历史包袱：这套机器原本是按
+ * QQ 群号索引的，后来 App 的 threadId 直接复用同一个字段（它自始至终只是
+ * 一个不透明的字符串键）。改名要动 296 处、跨 14 个文件，纯属给 review
+ * 添噪音，行为收益为零——所以留着名字，改的是语义。
  *
  * 关键约束：
- * - 同一群同一时刻只允许一个回合在跑（否则两个回合会抢写同一份技术方案）
+ * - 同一会话同一时刻只允许一个回合在跑（否则两个回合会抢写同一份技术方案）
  * - 续跑必须带同一个 sessionId，否则上下文全丢
  * - 状态落盘到 .state/，bridge 重启后还能接着聊
  */
@@ -14,8 +19,12 @@ const RUNNING = 'running'
 const WAITING = 'waiting'
 
 export class SessionStore {
-  constructor(repoRoot) {
-    this.dir = join(repoRoot, '.state')
+  /**
+   * @param {string} repoRoot  仓库根，默认把状态放在 <repoRoot>/.state
+   * @param {string} [dir]     显式指定状态目录（测试用：不能往真实 .state 里写账号）
+   */
+  constructor(repoRoot, dir) {
+    this.dir = dir || join(repoRoot, '.state')
     this.#ensureDir()
   }
 
@@ -91,34 +100,17 @@ export class GroupStateMachine {
   }
 
   /**
-   * 解析一个群该不该处理、用哪个项目。
-   * 群号不用手填：auto 模式下任何群都接受，路径用顶层 projectDir；
-   * 想排除个别群用 excludeGroups，不必退回 allowlist。
-   * @returns {{ok: boolean, reason?: string, groupId: string, projectDir?: string, approval?: string}}
+   * 解析一个会话用哪个项目、什么批准方式。
+   *
+   * 以前这里有三种群策略（auto/allowlist/deny）加一份 groups 白名单，
+   * 都是为了回答「这个群该不该服务」。现在会话由 App 创建、身份由用户表
+   * 决定，没有「陌生群」这回事，策略层整个不需要了。
+   * 保留这个方法是给编排层一个统一的入口：将来若要按需求类型分项目，
+   * 改这里就够，不用再翻 flow-bridge。
+   *
+   * @returns {{ok: boolean, groupId: string, projectDir?: string, approval?: string}}
    */
   resolveGroup(groupId) {
-    const policy = this.config.groupPolicy?.mode ?? 'auto'
-
-    if (policy === 'deny') {
-      return { ok: false, reason: 'groupPolicy.mode=deny，已拒绝所有群', groupId }
-    }
-
-    // 排除名单优先于任何策略：个人闲聊群不该被 bot 掺和
-    if (this.config.excludeGroups?.includes(groupId)) {
-      return { ok: false, reason: '在 excludeGroups 排除名单里', groupId }
-    }
-
-    const listed = this.config.groups.find((x) => x.groupId === groupId)
-
-    if (listed) {
-      return { ok: true, groupId, projectDir: listed.projectDir, approval: listed.approval }
-    }
-
-    if (policy === 'allowlist') {
-      return { ok: false, reason: '不在 groups 白名单里', groupId }
-    }
-
-    // auto：未在 groups 中列出的群沿用顶层配置
     return {
       ok: true,
       groupId,
@@ -127,15 +119,10 @@ export class GroupStateMachine {
     }
   }
 
-  /**
-   * 列出所有「落过盘」的群状态——面板要遍历的就是这些。
-   * 外加 config.groups 里显式配置但还没产生状态的群。
-   */
+  /** 列出所有「落过盘」的会话状态——面板要遍历的就是这些。 */
   listAll() {
-    const ids = new Set(this.store.allGroupIds())
-    for (const g of this.config.groups ?? []) ids.add(String(g.groupId))
     const out = []
-    for (const id of ids) {
+    for (const id of this.store.allGroupIds()) {
       const st = this.peek(id)
       if (st) out.push(st)
     }

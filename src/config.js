@@ -160,6 +160,10 @@ export function loadConfig(configPath) {
     ...raw,
     configPath: path,
     repoRoot: REPO_ROOT,
+    // 落盘根目录。默认就是仓库根的 .state/，和以前一样。
+    // 单独拎出来是为了让集成测试能把状态挪进临时目录：测试会注册账号、
+    // 建需求，共用真实 .state 的话会把开发机上自己的用户表和会话搅乱。
+    stateDir: typeof raw.stateDir === 'string' && raw.stateDir.trim() ? raw.stateDir.trim() : null,
     projectDir,
     repos,
     primaryRepo,
@@ -176,46 +180,17 @@ export function loadConfig(configPath) {
             apiKeyEnv: typeof raw.model.apiKeyEnv === 'string' ? raw.model.apiKeyEnv : null,
           }
         : null,
+    // 对外自称。以前还有 bot.qq，那是给 OneBot 认群管理员用的；
+    // 现在身份来自用户表，「谁是谁」由账号决定，这里只剩一个显示名。
     bot: {
-      qq: String(raw.bot?.qq ?? ''),
       name: raw.bot?.name || '产品同学',
     },
-    onebot: {
-      ws: raw.onebot?.ws || 'ws://127.0.0.1:3001',
-      token: raw.onebot?.token || process.env.ONEBOT_TOKEN || '',
-      reconnectMs: raw.onebot?.reconnectMs ?? 3000,
-    },
-    // 群不再手填：默认自动发现 bot 所在的所有群。
-    // 想限制范围时才写 groups，留空表示「全自动」。
-    groups: (raw.groups ?? []).map((g) => ({
-      groupId: String(g.groupId),
-      // 群级可以指向另一个已配置的仓库（不同群服务不同产品线），
-      // 但必须出现在 repos 里——不允许凭空多出一个仓库
-      projectDir: g.repo
-        ? (repos.find((r) => r.id === String(g.repo))?.path ??
-          (() => {
-            throw new Error(`群 ${g.groupId} 指定了未配置的仓库：${g.repo}`)
-          })())
-        : g.projectDir
-          ? resolve(expandHome(g.projectDir))
-          : projectDir,
-      approval: g.approval === 'auto' ? 'auto' : 'manual',
-    })),
-    groupPolicy: normalizeGroupPolicy(raw.groupPolicy),
-    // 排除名单：auto 模式下也不服务的群（个人闲聊群之类）。
-    // 这是 auto 模式的补丁，填了就不用为了排除几个群而改用 allowlist。
-    excludeGroups: (raw.excludeGroups ?? []).map((x) => String(x)),
-    // 顶层 approval 是 auto 模式下所有群的默认批准方式
+    // 顶层 approval 是所有需求的默认批准方式
     approval: raw.approval === 'auto' ? 'auto' : 'manual',
-    // 所有限流/并发上限收在这一个对象里。
-    // 以前有人复制出第二个 limits 定义，后一个把前一个整个覆盖掉，
-    // 结果 maxMessagesPerMinute 变成 undefined —— 每条群消息都白等 60 秒。
+    // 并发上限。以前这里还有三个消息限速字段（maxMessagesPerMinute /
+    // chunkChars / maxChunksPerTurn），都是为 QQ 单条 4500 字上限和防封号
+    // 服务的；现在消息走 App，长度和频率都不再有平台约束，留着只会误导。
     limits: {
-      maxMessagesPerMinute: raw.limits?.maxMessagesPerMinute ?? 10,
-      // QQ 单条消息的实际上限约 4500 字（含转义余量），
-      // 超出才拆条；正常情况下一条发完，别让用户收到 N 条。
-      chunkChars: raw.limits?.chunkChars ?? 3000,
-      maxChunksPerTurn: raw.limits?.maxChunksPerTurn ?? 4,
       // 并发上限：执行槽 = 同时跑的回合数；worktree 池 = 同时开发中的需求数
       maxConcurrentTurns: posInt(raw.limits?.maxConcurrentTurns, 2),
       maxWorktrees: posInt(raw.limits?.maxWorktrees, 12),
@@ -255,17 +230,6 @@ export function loadConfig(configPath) {
               .map(([k, v]) => [k, v]),
           )
         : {},
-    // 超级管理员：不受群角色与白名单限制，任何群都能驱动 bot。
-    // 只能改配置文件——面板不提供编辑入口，避免把自己锁出去。
-    superAdmin: (Array.isArray(raw.superAdmin) ? raw.superAdmin : raw.superAdmin ? [raw.superAdmin] : []).map(
-      (x) => String(x),
-    ),
-    // 指令白名单：面板可编辑，额外放行非群管的 QQ 号
-    adminUsers: Array.isArray(raw.adminUsers)
-      ? raw.adminUsers.map((x) => String(x))
-      : raw.adminUsers
-        ? [String(raw.adminUsers)]
-        : [],
     // 面板展示用的模型名：配置优先，否则从 profile 的 agent-default-model 推断
     modelLabel: raw.modelLabel ?? readModelLabel(raw.profile),
     // ── 仓库与工作区 ──
@@ -343,20 +307,6 @@ export function loadConfig(configPath) {
       maxBodyBytes: Number(raw.api?.maxBodyBytes ?? 1_000_000),
     },
   }
-}
-
-/**
- * 群策略。三种模式：
- *   auto     —— bot 被拉进的任何群都接受（默认，推荐）
- *   allowlist —— 只接受 groups 里列出的群
- *   deny      —— 全部拒绝
- */
-function normalizeGroupPolicy(policy) {
-  const p = policy?.mode
-  if (p === 'allowlist') return { mode: 'allowlist' }
-  if (p === 'deny') return { mode: 'deny' }
-  if (p === 'auto') return { mode: 'auto' }
-  return { mode: 'auto' }
 }
 
 /**
