@@ -24,6 +24,23 @@ node src/doctor.js
 | App 里看不到刚建的需求 | 列表只认 App 建的 thread；老机器上 QQ 时代的 `group-<群号>.json` 会被过滤掉，这是有意的 |
 | 产物点开是 404 | 产物存在 `.state/artifacts/<thread>/` 下，清过 `.state` 就没了 |
 | 面板显示「旧版需求」 | 那个会话绑的是早期版本的需求，v2 不接管，重新提一个就行 |
+| 启动时警告「这些键已经失效」 | 老配置里还写着 `onebot` / `superAdmin` / `groupPolicy` 这些 QQ 时代的段落。它们现在完全不读，删掉即可，或照 `bot.config.example.json` 重生成一份 |
+
+## 从 QQ 版本升级上来
+
+老机器上的 `bot.config.json` 里有一批键现在不读了（启动会逐个列出来）：
+
+| 已失效 | 原来干什么 | 现在怎么办 |
+| --- | --- | --- |
+| `onebot` | 连 NapCat 的 WebSocket 地址 | 不需要，App 直接调 API |
+| `bot.qq` | 认 QQ 群里的管理员用 | 身份来自用户表，第一个注册的是管理员 |
+| `groups` | 手动指定服务哪些群 | 不需要，App 里点「+」新建就行 |
+| `groupPolicy` / `excludeGroups` | 哪些群能用、哪些不能用 | 权限只看账号（系统管理员 / 普通成员） |
+| `superAdmin` / `adminUsers` | QQ 号白名单 | 在 App 的「账号管理」里改角色 |
+| `limits.maxMessagesPerMinute` 等三项 | 防 QQ 风控的限速 | App 没有平台限速，删掉 |
+
+留着不会报错，只是不生效。`.state/` 里的老群状态文件也还认得（用 `group-` 前缀区分），
+App 列表会把它们过滤掉，不会误显示成你自己建的需求。
 
 ## 卡在哪一步
 

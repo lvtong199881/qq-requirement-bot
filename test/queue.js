@@ -17,7 +17,7 @@ const check = (n, c, e = '') => {
 }
 
 const root = mkdtempSync(join(tmpdir(), 'queue-'))
-const cfg = { repoRoot: root, projectDir: root, groupPolicy: { mode: 'auto' }, approval: 'manual' }
+const cfg = { repoRoot: root, projectDir: root, approval: 'manual' }
 const store = new SessionStore(root)
 const machine = new GroupStateMachine(cfg, store)
 const G = '123456'

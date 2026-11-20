@@ -306,6 +306,19 @@ export function loadConfig(configPath) {
       // 单个请求体上限（字节）。发需求文本用不到这么大，但留点余量给以后的附件。
       maxBodyBytes: Number(raw.api?.maxBodyBytes ?? 1_000_000),
     },
+
+    // 配置里还写着删掉 QQ 时移除的那些键。
+    // 不报错（老配置直接启动会更好，否则升级即挂），但要让用户知道
+    // 「你配的 superAdmin 现在一点作用都没有」，否则他会以为权限没生效是 bug。
+    obsoleteKeys: [
+      raw.onebot ? 'onebot' : null,
+      raw.bot?.qq ? 'bot.qq' : null,
+      raw.groups ? 'groups' : null,
+      raw.groupPolicy ? 'groupPolicy' : null,
+      raw.excludeGroups ? 'excludeGroups' : null,
+      raw.superAdmin ? 'superAdmin' : null,
+      raw.adminUsers ? 'adminUsers' : null,
+    ].filter(Boolean),
   }
 }
 

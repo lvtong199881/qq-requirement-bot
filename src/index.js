@@ -97,6 +97,13 @@ if (config.model?.provider) {
 }
 log(`项目目录：${config.projectDir ?? '（未配置，接需求前先在面板添加仓库）'}`)
 
+// 老配置里还写着 QQ 时代的段落。这些键现在完全不读，静默忽略比报错友好，
+// 但如果一个字都不提，用户会以为「superAdmin 配了却不生效」是 bug。
+if (config.obsoleteKeys?.length) {
+  runtime.warn(`配置里这些键已经失效（QQ 通道已删除）：${config.obsoleteKeys.join('、')}`)
+  runtime.warn('可以只删掉它们，或者照 bot.config.example.json 重新生成一份')
+}
+
 /**
  * 动作级权限。
  *

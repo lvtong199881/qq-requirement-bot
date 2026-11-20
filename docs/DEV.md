@@ -179,6 +179,7 @@ node src/migrate.js --apply    # 真的执行（幂等，可重复跑）
 | --- | --- |
 | `badge.js` | 面板徽章判断：会话状态 `waiting` ≠ 阶段完成 |
 | `commands.js` | 指令解析：斜杠形式、大小写、参数切分、未知指令 |
+| `config.js` | 配置加载：老配置兼容、已删的 QQ 段落能识别出来但不报错 |
 | `messages.js` | 文案模板的渲染、校验、自定义覆盖 |
 | `queue.js` | 排队消息的持久化 |
 | `settings.js` | 文案模板渲染与校验（占位符、长度、未知 key、覆盖优先级） |
