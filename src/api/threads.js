@@ -10,6 +10,9 @@
  * 翻译成 App 要的形状。所有真正的逻辑仍然在 flow-bridge 里。
  */
 import { newSecret } from '../account/auth.js'
+import { isAppThread } from '../transport/transport.js'
+import { CHECKPOINTS } from '../flow/flow.js'
+import { makeReqName } from '../flow-bridge.js'
 
 /**
  * 生成 threadId。
@@ -62,21 +65,97 @@ export function createThreadService({ machine, flowBridge, messages, buildSnapsh
     featureBranch: g.featureBranch ?? null,
   })
 
-  /** 需求列表。过滤掉没有 flow 的历史残留（旧版 QQ 群数据） */
+  /**
+   * 刚建出来、编排层还没生成 flow 时的临时形状。
+   *
+   * 为什么需要它：buildSnapshot 对「有状态但还没有 flow」的会话返回的是
+   * 「旧版需求」占位项（src/index.js 的 legacy 分支），那是给面板看历史
+   * 残留用的。App 侧把它当 null 处理的话，新建需求后立刻 GET 详情会 404，
+   * 前端只能靠盲轮询——所以这里按状态机定义自己拼一份完整的初始形状。
+   */
+  const initialThread = ({ threadId, name, initiator, lastActiveAt }) => {
+    const main = CHECKPOINTS.filter((c) => !['fix', 're-review', 'merge-fix'].includes(c.id))
+    return {
+      threadId,
+      name: name ?? null,
+      reqId: null,
+      stage: main[0]?.label ?? null,
+      stageStatus: '进行中',
+      status: 'waiting',
+      waitingLabel: '',
+      turn: 0,
+      initiator: initiator
+        ? { userId: initiator.userId, nickname: initiator.nickname }
+        : null,
+      lastActiveAt: lastActiveAt ?? Date.now(),
+      running: false,
+      needsMe: false,
+      stages: main.map((c, i) => ({ name: c.label, status: i === 0 ? '进行中' : '未开始' })),
+      featureBranch: null,
+    }
+  }
+
+  /**
+   * 需求列表。
+   *
+   * 只列 App 建的 thread。判据用 isAppThread 而不是 `!g.legacy`：
+   * 历史上跑过 QQ 群的机器，.state 里躺着一堆真实群记录（有 flow、
+   * legacy 是 undefined），按 legacy 过滤会把它们全带出来——App 用户
+   * 会看到自己从没建过的需求，点进去发言还会发到那个 QQ 群里。
+   *
+   * 另外要把「已落盘但快照里还是 legacy 占位」的补回来：新建需求后
+   * 编排层要先解析项目、建目录才写 flow，这几十毫秒里快照返回的是
+   * 「旧版需求」占位项。App 建完需求跳回列表，会发现自己刚建的不见了。
+   */
   async function listThreads() {
     const snap = await buildSnapshot({ full: true })
-    return (snap.groups ?? [])
-      .filter((g) => !g.legacy)
-      .map(toThread)
-      .sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
+    const threads = new Map()
+    for (const g of snap.groups ?? []) {
+      if (!isAppThread(g.groupId) || g.legacy) continue
+      threads.set(g.groupId, toThread(g))
+    }
+
+    const store = machine.store
+    if (typeof store?.allGroupIds === 'function' && typeof store?.get === 'function') {
+      for (const id of store.allGroupIds()) {
+        if (!isAppThread(id) || threads.has(id)) continue
+        const saved = store.get(id)
+        if (!saved || Object.keys(saved).length === 0) continue
+        threads.set(id, {
+          ...initialThread({
+            threadId: id,
+            name: saved.name ?? null,
+            initiator: saved.initiator,
+            lastActiveAt: saved.lastActiveAt,
+          }),
+          // 列表里要显示未读数，兜底项也得带上
+          lastSeq: messages.lastSeq(id),
+        })
+      }
+    }
+
+    return [...threads.values()].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
   }
 
   /** 单条需求详情 */
   async function threadInfo(threadId) {
+    // 非 App 的会话（QQ 群号）一律当不存在，不给 App 探进 QQ 群的口子
+    if (!isAppThread(threadId)) return null
     const snap = await buildSnapshot({ full: true })
     const g = (snap.groups ?? []).find((x) => x.groupId === threadId)
-    if (!g || g.legacy) return null
-    return toThread(g)
+    if (g && !g.legacy) return toThread(g)
+    // 还没生成 flow：退回到状态里存的东西，别让详情页 404。
+    // 用 store.get 而不是 machine.peek——peek 对任何 id 都会凭空造一份初始状态，
+    // 拿它判断「存在与否」等于永远存在，未知 thread 也就永远返回 200 了。
+    const saved = typeof machine.store?.get === 'function' ? machine.store.get(threadId) : null
+    // clear() 留下的是 `{}`，那不叫存在
+    if (!saved || Object.keys(saved).length === 0) return null
+    return initialThread({
+      threadId,
+      name: saved.name ?? null,
+      initiator: saved.initiator,
+      lastActiveAt: saved.lastActiveAt,
+    })
   }
 
   /**
@@ -139,7 +218,15 @@ export function createThreadService({ machine, flowBridge, messages, buildSnapsh
         }
       })
 
-    return { ok: true, threadId, thread: await threadInfo(threadId) }
+    // 直接返回自己拼的初始形状，不回查快照。
+    // 快照是异步回合跑了以后才会有 flow 的，回查大概率还是空——
+    // 而且 name 用 makeReqName 算，和编排层给 flow 起名是同一个函数，不会不一致。
+    return {
+      ok: true,
+      threadId,
+      thread: initialThread({ threadId, name: makeReqName(text), initiator }),
+    }
+
   }
 
   /**

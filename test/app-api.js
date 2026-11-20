@@ -46,7 +46,14 @@ const machine = {
     }
     return machines.get(id)
   },
-  store: { save: (id, st) => machines.set(id, st) },
+  store: {
+    save: (id, st) => machines.set(id, st),
+    // 和 src/state.js 的 SessionStore.get 一样：文件不存在返回 null。
+    // 测试里必须区分「落过盘」和「压根没有」——threadInfo 就靠这个判 404，
+    // 全用 peek 的话任何 id 都算存在，未知需求永远返回 200。
+    get: (id) => machines.get(id) ?? null,
+    allGroupIds: () => [...machines.keys()],
+  },
 }
 
 /** 假的编排层：记录被投递了什么，不真的跑回合 */
@@ -61,23 +68,45 @@ const users = new UserStore(tmp)
 const messages = new MessageStore(join(tmp, 'messages'))
 const artifacts = new ArtifactStore(join(tmp, 'artifacts'))
 
-// 面板快照的形状要和真的一样：threads.js 的 toThread 就按这些字段取值
+// 面板快照的形状要和真的一样：threads.js 的 toThread 就按这些字段取值。
+// 特别注意 legacy 分支——src/index.js 的 buildSnapshot 对「有状态但还没 flow」
+// 的会话返回的是「旧版需求」占位项。刚建出来的 thread 就处在这个窗口里，
+// mock 如果不复现这一点，新建需求的可见性问题在测试里永远暴露不出来。
 const buildSnapshot = async () => ({
-  groups: [...machines.values()].map((st) => ({
-    groupId: st.groupId,
-    name: st.name ?? null,
-    reqId: st.reqId ?? null,
-    stage: st.stage ?? '需求澄清',
-    stageStatus: st.stageStatus ?? '进行中',
-    status: 'waiting',
-    waitingLabel: '',
-    turn: st.turn ?? 0,
-    initiator: st.initiator ?? null,
-    lastActiveAt: st.lastActiveAt ?? Date.now(),
-    activeTurn: false,
-    stages: [],
-    featureBranch: null,
-  })),
+  groups: [...machines.values()].map((st) =>
+    st.flow
+      ? {
+          groupId: st.groupId,
+          name: st.flow.name ?? null,
+          reqId: st.flow.reqId ?? null,
+          stage: st.flow.stage ?? '需求澄清',
+          stageStatus: st.flow.stageStatus ?? '进行中',
+          status: 'waiting',
+          waitingLabel: '',
+          turn: st.turn ?? 0,
+          initiator: st.initiator ?? null,
+          lastActiveAt: st.lastActiveAt ?? Date.now(),
+          activeTurn: false,
+          stages: st.flow.stages ?? [],
+          featureBranch: null,
+        }
+      : {
+          groupId: st.groupId,
+          name: null,
+          reqId: st.reqId ?? null,
+          stage: null,
+          stageStatus: '旧版需求',
+          status: 'idle',
+          waitingLabel: 'v2 不接管旧版绑定的需求',
+          turn: st.turn ?? 0,
+          initiator: st.initiator ?? null,
+          lastActiveAt: st.lastActiveAt ?? null,
+          activeTurn: false,
+          stages: [],
+          featureBranch: null,
+          legacy: true,
+        },
+  ),
 })
 
 /**
@@ -239,6 +268,11 @@ let threadId = ''
   check('返回了 threadId', typeof threadId === 'string' && threadId.startsWith('t'), threadId)
   check('threadId 被识别为 App 会话', isAppThread(threadId) === true)
   check('投递进了编排层', delivered.some((d) => d.groupId === threadId && d.text === '给首页加个欢迎弹窗'))
+  // 新建后立刻要能拿到详情：快照里此时还没有 flow，回退到 initialThread。
+  // 这里返回 null 的话，App 建完需求跳详情页会 404，只能盲轮询。
+  check('新建接口直接返回了 thread 形状', Boolean(ok.data?.thread), JSON.stringify(ok.data).slice(0, 200))
+  check('返回值带了初始阶段', ok.data?.thread?.stage === '需求澄清', ok.data?.thread?.stage)
+  check('返回值带了发起人', ok.data?.thread?.initiator?.nickname != null)
 }
 
 console.log('\n== 消息顺序：用户的话必须在 bot 播报之前 ==')
@@ -338,10 +372,43 @@ console.log('\n== 需求列表：带上未读序号和能否操作 ==')
   check('普通成员 canAct 为 false', item2?.canAct === false)
 }
 
+console.log('\n== 需求列表不混入 QQ 群 ==')
+{
+  // 跑过 QQ 群的机器，.state 里躺着真实群记录（有 flow、legacy 是 undefined）。
+  // 按 `!legacy` 过滤会把它们全带出来——App 用户看到没建过的需求，
+  // 点进去发言还会发进那个 QQ 群。
+  machines.set('1132422327', {
+    groupId: '1132422327',
+    name: 'Instanto 欢迎弹窗',
+    reqId: 'instanto-popup',
+    stage: '已交付',
+    stageStatus: '已完成',
+    turn: 0,
+    lastActiveAt: 0,
+  })
+
+  const r = await api('GET', '/api/threads', { token: adminToken })
+  const ids = (r.data?.threads ?? []).map((t) => t.threadId)
+  check('列表里没有 QQ 群号', !ids.includes('1132422327'), ids.join(','))
+  check('App 需求还在', ids.includes(threadId), ids.join(','))
+
+  const qq = await api('GET', '/api/threads/1132422327', { token: adminToken })
+  check('按 QQ 群号查详情 404', qq.status === 404, String(qq.status))
+  const qqMsg = await api('GET', '/api/threads/1132422327/messages', { token: adminToken })
+  check('按 QQ 群号拉消息 404', qqMsg.status === 404, String(qqMsg.status))
+
+  machines.delete('1132422327')
+}
+
 console.log('\n== 不存在的需求 → 404 ==')
 {
   const r = await api('GET', '/api/threads/tdeadbeef000/messages', { token: adminToken })
   check('未知 thread 返回 404', r.status === 404, String(r.status))
+
+  // peek 对任何 id 都凭空造状态，拿它判断存在性等于永远存在。
+  // threadInfo 必须查已落盘的状态，不能查 peek 的结果。
+  const d = await api('GET', '/api/threads/tdeadbeef000', { token: adminToken })
+  check('未知 thread 查详情 404', d.status === 404, String(d.status))
 }
 
 console.log('\n== 账号管理：只有管理员 ==')
