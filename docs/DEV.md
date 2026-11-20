@@ -21,6 +21,7 @@ node test/resilience.js       # NapCat 没起来 / 中途断开时，bridge 必�
 node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参、错误码
 node test/app-api.js          # App 公网 API：注册登录、权限、消息顺序、通过/打回
 node test/transport.js        # 通道分流：threadId 必须走 App 通道，群号必须走 QQ
+node test/messages.js         # 消息 JSONL：seq 递增、增量窗口、坏行容错
 ```
 
 `test/transport.js` 值得单独提一句：编排层把「会话标识」当不透明字符串传，
@@ -50,9 +51,9 @@ src/
     repo.js         裸仓库与 worktree（每个需求一个工作区）
     lock.js         跨平台文件锁 + 计数信号量
   ui/               panel.js / server.js / messages.js / format.js
-  transport/        onebot.js / transport.js
   config.js  state.js  runner.js  commands.js  doctor.js
 skills/             按阶段拆的角色卡，每回合只加载一张
+app/                Flutter 客户端（需求列表 / 详情 / 登录），见 app/README.md
 test/               独立测试脚本，没有框架
 ```
 
@@ -76,6 +77,34 @@ test/               独立测试脚本，没有框架
 - 代码里的 `config.projectDir` 是主仓库路径的派生值，不是独立配置
 - 群级可以用 `"repo": "ui-kit"` 指向另一个已配置的仓库（不同群服务不同产品线），
   指向未配置的 id 会直接报错
+
+## Flutter App
+
+`app/` 是需求 App 的 Flutter 客户端，独立于 Node 进程，通过 `api.enabled`
+暴露的 `/api/*` 通话。它有自己的工具链和测试：
+
+```bash
+export PATH="$HOME/flutter/bin:$PATH"    # 本机 Flutter 不在 PATH 里
+cd app
+flutter analyze                          # 必须零 issue
+flutter test                             # 单元测试，不需要后端
+
+# 打真后端验契约（后端要在跑）
+dart run tool/smoke.dart http://127.0.0.1:7881 用户名 密码
+```
+
+`tool/smoke.dart` 故意放在 `test/` 外面：它要求后端进程在跑，放进
+`flutter test` 会让没有后端的机器上随机变红。带普通成员账号跑也能过
+——脚本会先看 `/api/auth/me` 的 `perms`，没有 `startRequirement` 就
+改验「建需求被拒」，没有 `confirm` 就验「点通过被拒且文案可展示」。
+
+App 侧的三条测试各管一摊，不重叠：
+
+| 文件 | 管什么 |
+| --- | --- |
+| `app/test/api_test.dart` | 用 `MockClient` 测请求怎么拼、错误怎么映射 |
+| `app/test/auth_test.dart` | 会话状态机：没地址/没 token/退出登录不留脏状态 |
+| `app/tool/smoke.dart` | 后端到底认不认——打真端口 |
 
 ## 三个进程
 

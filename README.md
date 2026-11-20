@@ -64,6 +64,20 @@ QQ 群 → NapCat → WebSocket → bridge
 
 `approval: "manual"`（默认）时每个阶段产出后停下等你；`"auto"` 时只有关键分叉、硬阻塞、不可逆动作才停。两种模式下「合并到主分支」都要你确认。
 
+## 自带 App
+
+不想用 QQ 的话，`app/` 里是一个 Flutter 客户端，直接连本机 bridge 的
+`/api/*`：需求列表、阶段进度、消息流、通过/打回，账号可注册可登录。
+
+```bash
+export PATH="$HOME/flutter/bin:$PATH"
+cd app && flutter run -d macos
+```
+
+后端把 `api.enabled` 设成 `true` 就能用。公网访问走 Cloudflare Tunnel，
+不需要公网 IP、不需要备案（详见 [配置说明](docs/CONFIG.md) 的「App API」一节）。
+App 自己的说明在 [app/README.md](app/README.md)。
+
 ## 文档
 
 最快一条命令：`./install.sh` —— 环境检查、profile、配置、Docker、NapCat 容器全都备好，只剩扫码登录。详见 **[安装指南](docs/INSTALL.md)**。其余按需查阅：
@@ -76,7 +90,7 @@ QQ 群 → NapCat → WebSocket → bridge
 | [管理面板](docs/PANEL.md) | 需求大盘 / 实例 / 设置三页、进程架构、日志 |
 | [API 参考](docs/API.md) | 每个接口的参数、响应字段、错误码 |
 | [排错](docs/TROUBLESHOOTING.md) | 常见现象与排查路径 |
-| [开发与测试](docs/DEV.md) | 测试脚本清单、哪些会消耗 token、mock OneBot |
+| [开发与测试](docs/DEV.md) | 测试脚本清单、哪些会消耗 token、mock OneBot、Flutter App 怎么测 |
 
 ## 已知限制
 

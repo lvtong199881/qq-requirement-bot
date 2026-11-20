@@ -1,0 +1,29 @@
+name: qqbot_app
+description: "需求全流程的移动端：看需求、拍板、打回。"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  # 只有三个直接依赖，都是「不引就得自己写一套」的：
+  # - http：标准库没有 HTTP 客户端
+  # - flutter_secure_storage：token 等价于密码，不能明文躺在 prefs 里
+  # - intl：相对时间/日期的中文本地化
+  http: ^1.6.0
+  flutter_secure_storage: ^11.2.0
+  intl: ^0.20.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
