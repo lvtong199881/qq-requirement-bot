@@ -60,33 +60,46 @@ abstract final class AppText {
 
 /// 语义色：状态、失败、成功。
 ///
-/// 深浅色分开取值——同一个橙色放在白底上要够暗（对比度 ≥ 4.5），
-/// 放在深色底上要够亮，一个常量满足不了两边。
+/// 主色是蓝色系；状态这类「一眼要分清」的地方用糖果色——粉、橙、薄荷、青。
+/// 糖果色在浅色底上太浅（对比度到不了 4.5），所以浅色模式取同一个色相的
+/// 深一档，深色模式取亮一档：色相不变，亮度各走各的。
 abstract final class AppColors {
-  static const brand = Color(0xFF4A6FA5);
+  /// 主题色：蓝。浅色模式用够深的一档（正文对比度 ≥ 4.5）。
+  static const brand = Color(0xFF2563EB);
+
+  /// 深色模式的蓝：同一个色相提亮，放在深底上才够亮。
+  static const brandDark = Color(0xFF8FB4FF);
+
+  /// 糖果色板：只做点缀（徽章圆点、图标、选中态），不拿去做大面积底色。
+  static const candySky = Color(0xFF38BDF8);
+  static const candyMint = Color(0xFF34D399);
+  static const candyLemon = Color(0xFFFFD166);
+  static const candyPeach = Color(0xFFFFA45B);
+  static const candyPink = Color(0xFFFF7EB0);
+  static const candyLilac = Color(0xFFA78BFA);
 
   static Color _pick(BuildContext context, Color light, Color dark) =>
       Theme.of(context).brightness == Brightness.dark ? dark : light;
 
-  /// 等你确认（橙）。
+  /// 等你确认（糖果橙）。
   static Color waiting(BuildContext context) =>
-      _pick(context, const Color(0xFF8A5200), const Color(0xFFF0B574));
+      _pick(context, const Color(0xFFC2410C), const Color(0xFFFFB870));
 
-  /// 进行中（蓝）。
+  /// 进行中（糖果青）。
   static Color running(BuildContext context) =>
-      _pick(context, const Color(0xFF1B5AA8), const Color(0xFF92BDF7));
+      _pick(context, const Color(0xFF0E7490), const Color(0xFF6FE0F0));
 
-  /// 卡住、打回（红）。
+  /// 卡住、打回（糖果粉）。
   static Color blocked(BuildContext context) =>
-      _pick(context, const Color(0xFFA82A22), const Color(0xFFF3A39C));
+      _pick(context, const Color(0xFFC2185B), const Color(0xFFFF9BBF));
 
-  /// 已完成（绿）。
+  /// 已完成（糖果薄荷）。
   static Color done(BuildContext context) =>
-      _pick(context, const Color(0xFF1C6A45), const Color(0xFF8CD6AE));
+      _pick(context, const Color(0xFF15803D), const Color(0xFF7DE9A8));
 
-  /// 空闲、停用（灰）。
+  /// 空闲、停用（偏蓝的冷灰，别跟品牌蓝抢注意力）。
   static Color idle(BuildContext context) =>
-      _pick(context, const Color(0xFF5A6068), const Color(0xFFA8AEB6));
+      _pick(context, const Color(0xFF5B6472), const Color(0xFFAEB6C4));
 
   /// 阶段状态 → 颜色。
   static Color stage(BuildContext context, String? status) {
@@ -100,9 +113,75 @@ abstract final class AppColors {
   }
 }
 
+/// 蓝色主题的完整色板。
+///
+/// `fromSeed` 只负责生成「没显式给的」那些角色（比如 onSurface 的中性色），
+/// 主色、容器色、背景色都自己给：种子色算出来的蓝偏灰，做出来的界面
+/// 看着不像「蓝色系」，也不够糖果。
+ColorScheme _blueScheme(Brightness brightness) {
+  final base = ColorScheme.fromSeed(seedColor: AppColors.brand, brightness: brightness);
+  if (brightness == Brightness.dark) {
+    return base.copyWith(
+      primary: AppColors.brandDark,
+      onPrimary: const Color(0xFF0A1B3D),
+      primaryContainer: const Color(0xFF1E3B7A),
+      onPrimaryContainer: const Color(0xFFDCE7FF),
+      secondary: const Color(0xFF9DBBFF),
+      onSecondary: const Color(0xFF0A1B3D),
+      secondaryContainer: const Color(0xFF22335C),
+      onSecondaryContainer: const Color(0xFFDCE7FF),
+      tertiary: AppColors.candyLilac,
+      onTertiary: const Color(0xFF23124F),
+      tertiaryContainer: const Color(0xFF3B2B6E),
+      onTertiaryContainer: const Color(0xFFEDE7FF),
+      error: const Color(0xFFFF9BBF),
+      onError: const Color(0xFF4A0F24),
+      errorContainer: const Color(0xFF6B1436),
+      onErrorContainer: const Color(0xFFFFE1EA),
+      surface: const Color(0xFF0F1420),
+      onSurface: const Color(0xFFE6EAF4),
+      onSurfaceVariant: const Color(0xFFB2BCD2),
+      surfaceContainerLowest: const Color(0xFF0B0F19),
+      surfaceContainerLow: const Color(0xFF151B29),
+      surfaceContainer: const Color(0xFF1A2132),
+      surfaceContainerHigh: const Color(0xFF202839),
+      surfaceContainerHighest: const Color(0xFF263044),
+      outline: const Color(0xFF6B7690),
+      outlineVariant: const Color(0xFF333D52),
+    );
+  }
+  return base.copyWith(
+    primary: AppColors.brand,
+    onPrimary: const Color(0xFFFFFFFF),
+    primaryContainer: const Color(0xFFDCE7FF),
+    onPrimaryContainer: const Color(0xFF0B2A66),
+    secondary: const Color(0xFF2F6FED),
+    onSecondary: const Color(0xFFFFFFFF),
+    secondaryContainer: const Color(0xFFE3ECFF),
+    onSecondaryContainer: const Color(0xFF0A2A6B),
+    tertiary: const Color(0xFF7C5CFF),
+    onTertiary: const Color(0xFFFFFFFF),
+    tertiaryContainer: const Color(0xFFEDE7FF),
+    onTertiaryContainer: const Color(0xFF2A1170),
+    // 错误色用糖果粉偏红：和「卡住」的粉是同一族，但不至于撞色
+    error: const Color(0xFFD92D5C),
+    onError: const Color(0xFFFFFFFF),
+    errorContainer: const Color(0xFFFFE1EA),
+    onErrorContainer: const Color(0xFF5C0A24),
+    surface: const Color(0xFFF7F9FF),
+    surfaceContainerLowest: const Color(0xFFFFFFFF),
+    surfaceContainerLow: const Color(0xFFEAF0FD),
+    surfaceContainer: const Color(0xFFE2EAFB),
+    surfaceContainerHigh: const Color(0xFFDAE4F8),
+    surfaceContainerHighest: const Color(0xFFD2DEF5),
+    outline: const Color(0xFF8E9AB3),
+    outlineVariant: const Color(0xFFD5DEEC),
+  );
+}
+
 ThemeData buildTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
-  final scheme = ColorScheme.fromSeed(seedColor: AppColors.brand, brightness: brightness);
+  final scheme = _blueScheme(brightness);
 
   final textTheme = TextTheme(
     displayLarge: AppText.display,

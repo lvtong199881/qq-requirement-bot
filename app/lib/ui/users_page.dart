@@ -307,8 +307,9 @@ class _RoleChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 管理员用主题蓝（它是「身份」，不是状态），停用才用糖果粉
     final color = switch (role) {
-      'admin' => AppColors.running(context),
+      'admin' => Theme.of(context).colorScheme.primary,
       'disabled' => AppColors.blocked(context),
       _ => AppColors.idle(context),
     };
