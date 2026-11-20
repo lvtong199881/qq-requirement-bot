@@ -12,6 +12,8 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "im": "node src/im.js",
+    "engine": "node src/engine.js",
     "doctor": "node src/doctor.js"
   },
   "dependencies": {

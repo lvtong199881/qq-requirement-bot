@@ -35,8 +35,8 @@ const machines = new Map()
  *
  * peek 的关键行为必须和真的一致：src/state.js 的 peek 在状态文件
  * 还不存在时会懒初始化**返回一个新对象**（而不是 null）。
- * createThread 就靠这一点拿 st，假实现如果返回 null，
- * 「新建需求」这条链在测试里根本跑不起来——而线上是好的。
+ * createGroup 就靠这一点拿 st，假实现如果返回 null，
+ * 「建群」这条链在测试里根本跑不起来——而线上是好的。
  */
 const machine = {
   peek: (id) => {
@@ -56,12 +56,23 @@ const machine = {
   },
 }
 
-/** 假的编排层：记录被投递了什么，不真的跑回合 */
+/** 假的引擎：记录被投递了什么，不真的跑回合 */
 const delivered = []
-const flowBridge = {
-  handleMessage: async (o) => {
-    delivered.push({ groupId: o.groupId, text: o.text })
-  },
+const dispatch = async (ev) => {
+  delivered.push({ type: ev.type, groupId: ev.threadId, text: ev.text, mentions: ev.mentions ?? [] })
+  // 真引擎在 startNewRequirement 里绑 reqId 并开始推进阶段。
+  // 不补这一步，群会一直停在「待提需求」，断言就看不出区别。
+  const st = machines.get(ev.threadId)
+  if (st && ev.type === 'start') {
+    st.reqId = `req-${ev.threadId}`
+    st.flow = {
+      name: ev.text.slice(0, 30),
+      reqId: st.reqId,
+      stage: '需求澄清',
+      stageStatus: '进行中',
+      stages: [],
+    }
+  }
 }
 
 const users = new UserStore(tmp)
@@ -126,9 +137,10 @@ const can = async (action, threadId, userId) => {
 
 const threads = createThreadService({
   machine,
-  flowBridge,
+  store: machine.store,
   messages,
   buildSnapshot,
+  dispatch,
   can,
   log: () => {},
 })
@@ -140,7 +152,7 @@ const server = createApiServer({
   threadInfo: threads.threadInfo,
   listThreads: threads.listThreads,
   deliver: threads.deliver,
-  createThread: threads.createThread,
+  createGroup: threads.createGroup,
   log: () => {},
 })
 
@@ -186,7 +198,7 @@ console.log('\n== 首屏：有没改过密码的预设账号时给出账号和�
     threadInfo: threads.threadInfo,
     listThreads: threads.listThreads,
     deliver: threads.deliver,
-    createThread: threads.createThread,
+    createGroup: threads.createGroup,
     log: () => {},
   })
   await new Promise((r) => presetSrv.listen(0, '127.0.0.1', r))
@@ -283,68 +295,163 @@ console.log('\n== /api/auth/me 告诉前端能做什么 ==')
   check('普通成员 startRequirement 为 false', m.data?.can?.startRequirement === false)
 }
 
-console.log('\n== 新建需求：只有管理员能发起 ==')
+console.log('\n== 建群：只有管理员能建 ==')
 let threadId = ''
 {
   const denied = await api('POST', '/api/threads', {
     token: memberToken,
-    body: { text: '给首页加个欢迎弹窗' },
+    body: { name: '首页改版' },
   })
   check('普通成员被拒 403', denied.status === 403, String(denied.status))
   check('说明了需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
 
   const ok = await api('POST', '/api/threads', {
     token: adminToken,
-    body: { text: '给首页加个欢迎弹窗' },
+    body: { name: '首页改版' },
   })
-  check('管理员能新建', ok.status === 200 && ok.data?.ok === true, JSON.stringify(ok.data).slice(0, 200))
+  check('管理员能建群', ok.status === 200 && ok.data?.ok === true, JSON.stringify(ok.data).slice(0, 200))
   threadId = ok.data?.threadId
   check('返回了 threadId', typeof threadId === 'string' && threadId.startsWith('t'), threadId)
   check('threadId 被识别为 App 会话', isAppThread(threadId) === true)
-  check('投递进了编排层', delivered.some((d) => d.groupId === threadId && d.text === '给首页加个欢迎弹窗'))
-  // 新建后立刻要能拿到详情：快照里此时还没有 flow，回退到 initialThread。
-  // 这里返回 null 的话，App 建完需求跳详情页会 404，只能盲轮询。
+  // 建群只是建容器：不投递、不落用户消息。需求等群里第一句话——
+  // 建群接口要是顺手把需求跑起来，流程又退回「先填需求再建群」了。
+  check('建群没有投递需求', !delivered.some((d) => d.groupId === threadId))
+  check('建群没往群里塞用户消息', messages.list(threadId, { limit: 10 }).messages.length === 0)
+  // 新建后立刻要能拿到详情：快照里此时还没有 flow，回退到落盘状态。
+  // 这里返回 null 的话，App 建完群跳详情页会 404，只能盲轮询。
   check('新建接口直接返回了 thread 形状', Boolean(ok.data?.thread), JSON.stringify(ok.data).slice(0, 200))
-  check('返回值带了初始阶段', ok.data?.thread?.stage === '需求澄清', ok.data?.thread?.stage)
+  check(
+    '刚建好的群标着待提需求',
+    ok.data?.thread?.pending === true && ok.data?.thread?.stageStatus === '待提需求',
+    JSON.stringify(ok.data?.thread),
+  )
+  check('群名存下来了', ok.data?.thread?.groupName === '首页改版', ok.data?.thread?.groupName)
   check('返回值带了发起人', ok.data?.thread?.initiator?.nickname != null)
+
+  const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
+  check(
+    '空群查详情不是 404',
+    detail.status === 200 && detail.data?.thread?.groupName === '首页改版',
+    `${detail.status} ${JSON.stringify(detail.data?.thread)?.slice(0, 120)}`,
+  )
+
+  const list = await api('GET', '/api/threads', { token: adminToken })
+  check(
+    '空群出现在列表里且带群名',
+    (list.data?.threads ?? []).some((t) => t.threadId === threadId && t.groupName === '首页改版'),
+  )
+}
+
+console.log('\n== 群里不 @ 就是普通聊天 ==')
+{
+  // 这条是「当普通 IM 用」的核心：没 @ 需求 bot，就只是聊天——
+  // 引擎不该被打扰，群也不该变成需求群
+  const r = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: { text: '今天几点上线？' },
+  })
+  check('普通成员能在群里聊天', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data))
+  check('聊天不投给引擎', r.data?.action === 'chat' && delivered.length === 0, JSON.stringify(delivered))
+  check(
+    '聊天消息也落库',
+    messages.list(threadId, { limit: 10 }).messages.some((m) => m.payload?.text === '今天几点上线？'),
+  )
+
+  const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
+  check('群还是聊天模式', detail.data?.thread?.mode === 'chat', detail.data?.thread?.mode)
+  check('群里还没有需求', detail.data?.thread?.pending === true)
+}
+
+console.log('\n== @需求bot 才算提需求 ==')
+{
+  // 普通成员 @ 一下也要被拒，否则 startRequirement 就被绕过去了
+  const before = messages.list(threadId, { limit: 100 }).messages.length
+  const denied = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: { text: '@需求bot 给首页加个欢迎弹窗', mentions: ['bot'] },
+  })
+  check('普通成员提需求被拒 403', denied.status === 403, String(denied.status))
+  check('提示需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
+  check('被拒的话没有落库', messages.list(threadId, { limit: 100 }).messages.length === before)
+
+  const r = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: adminToken,
+    body: { text: '@需求bot 给首页加个欢迎弹窗', mentions: ['bot'] },
+  })
+  check('管理员能提需求', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data))
+  check(
+    '交给引擎的是 start，且 @ 已经去掉',
+    delivered.some((d) => d.type === 'start' && d.text === '给首页加个欢迎弹窗'),
+    JSON.stringify(delivered),
+  )
+  check(
+    '@ 的痕迹留在消息里（气泡要能高亮）',
+    messages.list(threadId, { limit: 100 }).messages.some((m) => (m.payload?.mentions ?? []).includes('bot')),
+  )
+
+  const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
+  check('群变成需求模式', detail.data?.thread?.mode === 'requirement', detail.data?.thread?.mode)
+  check('不再是待提需求', detail.data?.thread?.pending === false)
 }
 
 console.log('\n== 消息顺序：用户的话必须在 bot 播报之前 ==')
 {
-  // 模拟编排层开始播报
+  // 模拟引擎开始播报
   messages.append(threadId, { role: 'bot', kind: 'text', payload: { text: '收到，先做需求澄清：这个弹窗给谁看？' } })
 
   const r = await api('GET', `/api/threads/${threadId}/messages`, { token: memberToken })
-  check('拉到两条', r.data?.messages?.length === 2, String(r.data?.messages?.length))
-  check('第一条是用户说的', r.data?.messages?.[0]?.role === 'user', r.data?.messages?.[0]?.role)
-  check('内容是需求原文', r.data?.messages?.[0]?.payload?.text === '给首页加个欢迎弹窗')
-  check('第二条是 bot', r.data?.messages?.[1]?.role === 'bot')
-  check('seq 递增', r.data?.messages?.[1]?.seq === r.data?.messages?.[0]?.seq + 1)
+  const list = r.data?.messages ?? []
+  check('两条自己说的 + 一条 bot', list.length === 3, String(list.length))
+  check('最后一条是 bot', list.at(-1)?.role === 'bot', list.at(-1)?.role)
+  check('bot 之前是刚提的需求', list.at(-2)?.payload?.text === '@需求bot 给首页加个欢迎弹窗')
+  check('seq 递增', list.every((m, i) => i === 0 || m.seq === list[i - 1].seq + 1))
 }
 
 console.log('\n== 增量拉取：since 只给新消息 ==')
 {
   const all = await api('GET', `/api/threads/${threadId}/messages`, { token: memberToken })
-  const seq = all.data.messages[0].seq
+  const seq = all.data.messages.at(-1).seq - 1
   const r = await api('GET', `/api/threads/${threadId}/messages?since=${seq}`, { token: memberToken })
   check('只返回后面的消息', r.data?.messages?.length === 1, String(r.data?.messages?.length))
   check('lastSeq 是最新序号', r.data?.lastSeq === all.data.lastSeq)
 }
 
-console.log('\n== 发言：用户消息落库且投递 ==')
+console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
 {
-  const r = await api('POST', `/api/threads/${threadId}/messages`, {
+  const plain = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
-    body: { text: '给新用户看，第一次打开的时候弹' },
+    body: { text: '顺便问下这周谁值班' },
   })
-  check('发言成功', r.status === 200 && r.data?.ok === true)
-  check('投递进了编排层', delivered.some((d) => d.text === '给新用户看，第一次打开的时候弹'))
+  check('没 @ 也能发言', plain.status === 200 && plain.data?.action === 'chat', plain.data?.action)
+  check(
+    '没 @ 就不惊动引擎',
+    !delivered.some((d) => d.type === 'message' && d.text === '顺便问下这周谁值班'),
+    JSON.stringify(delivered.slice(-2)),
+  )
+
+  const at = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: { text: '@需求bot 给新用户看，第一次打开的时候弹', mentions: ['bot'] },
+  })
+  check('@ 之后发言成功', at.status === 200 && at.data?.action === 'message', at.data?.action)
+  check(
+    '@ 了才转给引擎',
+    delivered.some((d) => d.type === 'message' && d.text === '给新用户看，第一次打开的时候弹'),
+    JSON.stringify(delivered.slice(-2)),
+  )
 
   const empty = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
     body: { text: '   ' },
   })
   check('空消息被拒', empty.status === 400)
+
+  const rel = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: { text: '@需求bot /release', mentions: ['bot'] },
+  })
+  check('普通成员 /release 被拒 403', rel.status === 403, String(rel.status))
+  check('拒绝原因是权限', rel.data?.error === '只有系统管理员能释放会话', rel.data?.error)
 }
 
 console.log('\n== 通过/打回：普通成员看得见按钮，点了被拒 ==')

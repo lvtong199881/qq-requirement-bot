@@ -309,6 +309,18 @@ export function loadConfig(configPath) {
       allowedOrigin: typeof raw.api?.allowedOrigin === 'string' ? raw.api.allowedOrigin : '',
       // 单个请求体上限（字节）。发需求文本用不到这么大，但留点余量给以后的附件。
       maxBodyBytes: Number(raw.api?.maxBodyBytes ?? 1_000_000),
+      // 需求引擎连进来用的共享密钥。留空时 src/im.js 自动生成一份，
+      // 落 .state/engine-token 并打印一次——拆分部署第一步就得把它抄过去。
+      engineToken: typeof raw.api?.engineToken === 'string' ? raw.api.engineToken.trim() : '',
+    },
+
+    // 需求引擎要去连哪台 IM。只有 src/engine.js 读它；
+    // 单机跑的 index.js 不看这段，行为和以前一样。
+    im: {
+      url: typeof raw.im?.url === 'string' ? raw.im.url.trim().replace(/\/+$/, '') : '',
+      token: typeof raw.im?.token === 'string' ? raw.im.token.trim() : '',
+      // 长轮询挂多久。IM 那边上限 30 秒，这里别超过它
+      pollWaitMs: Number(raw.im?.pollWaitMs ?? 25_000),
     },
 
     // 配置里还写着删掉 QQ 时移除的那些键。

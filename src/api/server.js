@@ -13,37 +13,11 @@
 import { createServer } from 'node:http'
 import { createReadStream } from 'node:fs'
 import { roleLabelOf } from '../account/store.js'
+import { json, readBody } from './http-util.js'
 
 /** 登录/注册的失败次数限制，防暴力破解。按 IP 计 */
 const RATE_WINDOW_MS = 10 * 60 * 1000
 const RATE_MAX_FAILS = 20
-
-function json(res, code, body) {
-  const text = JSON.stringify(body)
-  res.writeHead(code, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(text),
-    'cache-control': 'no-store',
-  })
-  res.end(text)
-}
-
-async function readBody(req, { limit = 1_000_000 } = {}) {
-  const chunks = []
-  let size = 0
-  for await (const c of req) {
-    size += c.length
-    // 不设上限的 body 读取就是内存耗尽攻击的入口
-    if (size > limit) throw new Error('请求体过大')
-    chunks.push(c)
-  }
-  if (!chunks.length) return {}
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    return {}
-  }
-}
 
 /**
  * @param {object} o
@@ -51,9 +25,10 @@ async function readBody(req, { limit = 1_000_000 } = {}) {
  * @param {import('../store/messages.js').MessageStore} o.messages
  * @param {(threadId: string) => object|null} o.threadInfo  取某条需求的完整状态
  * @param {() => Promise<object>} o.listThreads  需求列表（大盘）
- * @param {(o: {threadId:string, text:string, user:object}) => Promise<object>} o.deliver
- *        把一条用户消息投进编排层。QQ 和 App 走同一个入口，行为完全一致
- * @param {(threadId: string) => Promise<object>} o.createThread  新建需求
+ * @param {(o: {threadId:string, text:string, user:object, mentions?:string[]}) => Promise<object>} o.deliver
+ *        把一条用户消息投进群里。普通聊天就地留下，@ 了需求 bot 才交给引擎
+ * @param {(o: {name?:string, user:object}) => Promise<object>} o.createGroup  新建群
+ * @param {{handle:Function, status:Function}=} o.engine  引擎通道（IM 独立部署时才有）
  * @param {(...a:any[]) => void} o.log
  * @param {string=} o.allowedOrigin  CORS 白名单，空则允许所有（Flutter 原生不需要 CORS）
  */
@@ -64,7 +39,8 @@ export function createApiServer({
   threadInfo,
   listThreads,
   deliver,
-  createThread,
+  createGroup,
+  engine = null,
   log,
   allowedOrigin = '',
 }) {
@@ -141,6 +117,12 @@ export function createApiServer({
     }
 
     try {
+      // ── 引擎通道 ──
+      // 走自己的 token，和用户登录是两套：引擎不是某个用户，
+      // 也不该靠某个人的会过期 token 活着。放在登录校验之前是必须的，
+      // 否则引擎的请求会先被这里 401 掉。
+      if (engine && (await engine.handle(req, res, { path, method, url }))) return
+
       // ── 无需登录 ──
 
       if (method === 'GET' && path === '/healthz') {
@@ -228,7 +210,9 @@ export function createApiServer({
           lastSeq: messages.lastSeq(t.threadId),
           canAct: users.can('confirm', user).ok,
         }))
-        return json(res, 200, { ok: true, threads })
+        // 引擎在不在线决定 App 要不要显示「需求暂时不可用」——
+        // 这个状态放列表里，省得前端为一个布尔值再打一次接口
+        return json(res, 200, { ok: true, threads, engine: engine ? engine.status() : null })
       }
 
       if (method === 'POST' && path === '/api/threads') {
@@ -238,7 +222,7 @@ export function createApiServer({
         if (!perm.ok) {
           return json(res, 403, {
             ok: false,
-            error: '发起需求需要系统管理员权限',
+            error: '建群需要系统管理员权限',
             code: 'forbidden',
             role: user.role,
             // 和 approve/reject 的 403 保持同一形状：前端只有一套错误解析
@@ -246,11 +230,12 @@ export function createApiServer({
           })
         }
         const body = await readBody(req)
-        const text = String(body.text ?? '').trim()
-        if (!text) return json(res, 400, { ok: false, error: '说点什么吧' })
-        if (text.length > 5000) return json(res, 400, { ok: false, error: '需求描述太长了' })
+        // 建群只要一个名字。需求不在这一步提：群建好之后在群里说
+        // 第一句话，那句话才是需求描述（见 flow-bridge 的 startNewRequirement）。
+        const name = String(body.name ?? '').trim()
+        if (name.length > 40) return json(res, 400, { ok: false, error: '群名太长了，40 字以内' })
 
-        const result = await createThread({ text, user })
+        const result = await createGroup({ name, user })
         if (!result.ok) return json(res, 400, result)
         return json(res, 200, result)
       }
@@ -294,6 +279,7 @@ export function createApiServer({
           return json(res, 200, {
             ok: true,
             thread: { ...info, canAct: users.can('confirm', user).ok },
+            engine: engine ? engine.status() : null,
           })
         }
 
@@ -313,15 +299,24 @@ export function createApiServer({
           const text = String(body.text ?? '').trim()
           if (!text) return json(res, 400, { ok: false, error: '消息不能为空' })
           if (text.length > 5000) return json(res, 400, { ok: false, error: '消息太长了' })
+          const mentions = Array.isArray(body.mentions) ? body.mentions.map(String).slice(0, 20) : []
 
-          // 落库用户这条：App 刷新后要能看见自己说过什么
-          messages.append(threadId, {
-            role: 'user',
-            kind: 'text',
-            payload: { text },
-            at: Date.now(),
-          })
-          const result = await deliver({ threadId, text, user })
+          // 落库、权限、分发都在 deliver 里：它才知道这个群是聊天还是需求群
+          // （@ 了 bot 才开需求，权限要求和管理员建群一致）。
+          // 被拒的话那句不落库——群里不该多一条自己说、agent 永远不会回的话。
+          const result = await deliver({ threadId, text, user, mentions })
+          if (result?.forbidden) {
+            return json(res, 403, {
+              ok: false,
+              error: result.error,
+              code: 'forbidden',
+              role: user.role,
+              // 和 approve/reject 的 403 保持同一形状：前端只有一套错误解析
+              roleLabel: result.roleLabel ?? roleLabelOf(user.role),
+            })
+          }
+          if (result?.notFound) return json(res, 404, { ok: false, error: result.error })
+          if (result?.ok === false) return json(res, 400, { ok: false, error: result.error })
           return json(res, 200, { ok: true, ...result })
         }
 
@@ -348,14 +343,11 @@ export function createApiServer({
 
           // 通过/打回最终就是一句自然语言，交给编排层理解。
           // 不另造协议：agent 本来就按对话工作，多一层结构化指令反而要维护两套语义。
+          // 落库在 deliver 里统一做，这里不再自己 append（否则会存两条一模一样的）。
+          // force：按钮不是打字，不要求用户再去 @ 一次；权限上面刚判过 confirm。
           const text = action === 'approve' ? '通过' : `打回：${reason}`
-          messages.append(threadId, {
-            role: 'user',
-            kind: 'text',
-            payload: { text },
-            at: Date.now(),
-          })
-          const result = await deliver({ threadId, text, user })
+          const result = await deliver({ threadId, text, user, force: true })
+          if (result?.notFound) return json(res, 404, { ok: false, error: result.error })
           return json(res, 200, { ok: true, ...result })
         }
 

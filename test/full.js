@@ -81,18 +81,24 @@ try {
     check('提权后旧 token 立刻生效', meAgain.body?.can?.startRequirement === true, JSON.stringify(meAgain.body?.can))
   }
 
-  console.log('\n== 建需求、驱动回合 ==')
+  console.log('\n== 建群、在群里提需求、驱动回合 ==')
   {
-    const created = await b.createThread('首页加个欢迎弹窗')
+    const created = await b.createThread('首页加个欢迎弹窗', { name: '欢迎弹窗' })
     const threadId = created.threadId
     check('接口回了 thread 形状', Boolean(created.thread), JSON.stringify(created.thread)?.slice(0, 120))
-    check('初始阶段是需求澄清', created.thread?.stage === '需求澄清', created.thread?.stage)
-    check('初始阶段状态是进行中', created.thread?.stageStatus === '进行中', created.thread?.stageStatus)
+    check('群名是用户起的', created.thread?.groupName === '欢迎弹窗', created.thread?.groupName)
+    // 建群接口本身不带需求：刚建好的群没有任何阶段，需求要等群里第一句话
+    check('刚建好的群标着待提需求', created.thread?.pending === true, JSON.stringify(created.thread)?.slice(0, 160))
     check('发起人被记下了', created.thread?.initiator?.nickname === '产品同学', JSON.stringify(created.thread?.initiator))
 
     const detail = await b.call('GET', `/api/threads/${threadId}`)
     check('详情立刻可见（不是 404）', detail.status === 200, String(detail.status))
-    check('详情带十个阶段格子', (detail.body?.thread?.stages ?? []).length === 10, String((detail.body?.thread?.stages ?? []).length))
+    // 第一句话发出去之后 flow 才被建出来，阶段格子是异步出现的
+    const staged = await b.waitFor(async () => {
+      const d = await b.call('GET', `/api/threads/${threadId}`)
+      return (d.body?.thread?.stages ?? []).length === 10
+    }, 30_000)
+    check('详情带十个阶段格子', staged, '')
 
     const list = await b.call('GET', '/api/threads')
     const ids = (list.body?.threads ?? []).map((t) => t.threadId)

@@ -27,6 +27,19 @@ import { ArtifactStore } from './store/artifacts.js'
 import { createTransport } from './transport/transport.js'
 import { createApiServer } from './api/server.js'
 import { createThreadService } from './api/threads.js'
+import { printQr } from './ui/qr.js'
+import { networkInterfaces } from 'node:os'
+
+/** 这台机器上手机大概能连到的 IPv4；0.0.0.0 监听时用来打印二维码。 */
+function lanUrls(port) {
+  const out = []
+  for (const list of Object.values(networkInterfaces())) {
+    for (const ni of list ?? []) {
+      if (ni.family === 'IPv4' && !ni.internal) out.push(`http://${ni.address}:${port}`)
+    }
+  }
+  return out
+}
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const isDryRun = process.argv.includes('--dry-run')
@@ -249,6 +262,10 @@ async function buildSnapshot({ full = true } = {}) {
     .listAll()
     // 过滤掉项目目录已消失的残留（比如测试用临时目录留下的 state 文件）
     .filter((g) => {
+      // 没配项目仓库时 projectDir 是 null（取自 config.repos[0]）。
+      // 这时群只是「容器」，还没绑需求，不能因为没项目就把它们全过滤掉——
+      // 否则 App 里刚建的群会立刻从列表里消失。
+      if (!g.projectDir) return true
       try {
         return existsSync(g.projectDir)
       } catch {
@@ -408,14 +425,48 @@ let apiPort = 0
 /** App 公网 API 的实际端口，0 表示没起。面板快照会带上它，方便排查连不通 */
 let appApiPort = 0
 
-// App 的 thread 通道：把 API 的请求接到现有编排层上
+// App 的群通道：把 API 的请求接到现有编排层上。
+// 单机形态下 dispatch 直接调 flowBridge；拆分成 IM + 引擎之后只换这一个
+// 函数（见 src/im.js），建群 / 投递 / 列表的逻辑一行都不用改。
 const threads = createThreadService({
-  machine,
-  flowBridge,
+  store: machine.store,
   messages,
   buildSnapshot,
   can,
   log,
+  botName: config.bot?.name,
+  dispatch: async ({ threadId, text, user, replyTo }) => {
+    const st = machine.peek(threadId)
+    if (!st) return { ok: false, error: '这个群当前不接受需求' }
+
+    const initiator = { userId: user.userId, nickname: user.nickname, at: Date.now() }
+    machine.store.save(threadId, { ...st, initiator, lastActiveAt: initiator.at })
+
+    // 不等回合跑完：一条需求可能几十分钟，HTTP 请求等不起。
+    // 失败要让用户看见，否则他只会觉得「agent 不理我」。
+    void flowBridge
+      .handleMessage({
+        groupId: threadId,
+        text,
+        replyTo,
+        st,
+        initiator,
+        can: (action, uid) => can(action, threadId, uid),
+      })
+      .catch((err) => {
+        log(`[api] 群 ${threadId} 处理失败：${err.message}`)
+        try {
+          messages.append(threadId, {
+            role: 'bot',
+            kind: 'text',
+            payload: { text: `处理失败：${err.message}` },
+          })
+        } catch {
+          /* ignore */
+        }
+      })
+    return { ok: true }
+  },
 })
 
 function startApi() {
@@ -545,7 +596,7 @@ function startAppApi() {
     threadInfo: threads.threadInfo,
     listThreads: threads.listThreads,
     deliver: threads.deliver,
-    createThread: threads.createThread,
+    createGroup: threads.createGroup,
     log,
     allowedOrigin: config.api.allowedOrigin ?? '',
   })
@@ -558,7 +609,15 @@ function startAppApi() {
   server.listen(config.api.port, config.api.host, () => {
     const { port, address } = server.address()
     appApiPort = port
-    runtime.info(`App API：http://${address}:${port}/healthz`)
+    // 监听在 0.0.0.0 时 address 本身不能填进手机，换成局域网 IP。
+    // 走隧道的人把 api.publicUrl 填成隧道域名，这里就以那个为准。
+    const urls = config.api.publicUrl
+      ? [config.api.publicUrl]
+      : address === '0.0.0.0' || address === '::'
+        ? lanUrls(port)
+        : [`http://${address}:${port}`]
+    runtime.info(`App API：${(urls[0] ?? `http://${address}:${port}`)}/healthz`)
+    for (const url of urls.slice(0, 3)) printQr(url)
 
     // 预设一个管理员：新装的系统不该要求人先会注册才能进去。
     // 只在用户表完全为空时生效，所以改过密码、加过账号之后它不会再出现。

@@ -1,17 +1,21 @@
 /**
- * App 的 thread 与现有编排层的接线。
+ * App 的「群」与背后的编排层/需求引擎的接线。
  *
- * 核心观察：整个编排层把「会话标识」当不透明字符串用
- * （见 src/state.js:31 `#file(groupId)`），从不把它当数字。
- * 所以 App 的 threadId 可以直接塞进 handleMessage 的 groupId 参数，
- * 状态机、并发槽、worktree 池、产物校验、git 操作一行都不用改。
+ * 名词：App 里的「群」就是这个文件里的 thread，也是编排层的 groupId。
+ * 群是容器，需求是群里跑的那条 flow。一个群先当聊天用，@ 一下需求 bot
+ * 才开始跑需求——见 src/im/router.js 的规则说明。
  *
- * 这个文件只做三件事：生成 threadId、把消息投进编排层、把内部状态
- * 翻译成 App 要的形状。所有真正的逻辑仍然在 flow-bridge 里。
+ * 拆分后的两种运行形态：
+ *   - 单机（src/index.js）：dispatch 直接调 flowBridge，进程内完成；
+ *   - 拆分（src/im.js + src/engine.js）：dispatch 只往事件队列里塞一条，
+ *     远处的引擎长轮询拿到再跑。
+ * 这个文件不关心是哪一种，它只保证「消息落库 + 交给 dispatch」。
+ *
+ * 状态文件（.state/group-<id>.json）在拆分形态下由 IM 独占：群名、模式、
+ * 引擎报回来的阶段都在里面。引擎自己另有一份状态目录存 flow 细节。
  */
 import { newSecret } from '../account/auth.js'
-import { CHECKPOINTS } from '../flow/flow.js'
-import { makeReqName } from '../flow-bridge.js'
+import { mentionsOf, routeMessage, stripBotMention } from '../im/router.js'
 
 /**
  * 生成 threadId。
@@ -31,9 +35,6 @@ export function newThreadId() {
  * 但跑过 QQ 的老机器上 .state/ 里还留着 group-<群号>.json，那些有 flow、
  * 也能被当会话跑起来。要是列表里漏出它们，用户在 App 里发言会真的
  * 写进那个群号对应的状态文件和消息库——一个已经不存在的群。
- *
- * 前缀后至少还要 2 个字符：单独一个 't' 更像笔误或脏数据，
- * 不该被当成合法会话放过去。
  */
 export function isAppThread(threadId) {
   const s = String(threadId ?? '')
@@ -42,24 +43,70 @@ export function isAppThread(threadId) {
 
 /**
  * @param {object} o
- * @param {object} o.machine   GroupStateMachine
- * @param {object} o.flowBridge
+ * @param {object} [o.machine]   GroupStateMachine（单机模式有，拆分模式没有）
+ * @param {import('../state.js').SessionStore} [o.store]  群状态文件（machine.store 的别名）
  * @param {import('../store/messages.js').MessageStore} o.messages
- * @param {(o:object)=>Promise<object>} o.buildSnapshot  index.js 提供的快照函数
- * @param {(action:string, threadId:string, userId:string)=>Promise<{ok:boolean,role:string|null}>} o.can
+ * @param {(o:object)=>Promise<object>} [o.buildSnapshot]  有编排层时才有
+ * @param {(ev:object)=>Promise<object>} o.dispatch  把一条消息交给引擎（进程内或事件队列）
+ * @param {(action:string, threadId:string, userId:string)=>Promise<{ok:boolean,roleLabel?:string}>} o.can
  * @param {(...a:any[])=>void} o.log
+ * @param {string} [o.botName]
  */
-export function createThreadService({ machine, flowBridge, messages, buildSnapshot, can, log }) {
+export function createThreadService({ machine, store, messages, buildSnapshot, dispatch, can, log, botName }) {
+  const groups = store ?? machine?.store ?? null
+  if (!groups) throw new Error('createThreadService 需要 store 或 machine')
+
+  const get = (id) => {
+    try {
+      return groups.get(id)
+    } catch {
+      return null
+    }
+  }
+
+  const exists = (saved) => Boolean(saved) && Object.keys(saved).length > 0
+
   /**
-   * 把 snapshot 里的一条群记录翻译成 App 的 thread 形状。
+   * 把落盘的群状态翻译成 App 的形状。
    *
-   * 为什么不直接用 snapshot 原样返回：那一堆字段名是给管理面板的
-   * （groupName、reqId、workDir…），App 端叫 threadId/name/stage
-   * 更自然，而且面板将来可能改。转一层，两边互不牵连。
+   * 拆分形态下没有编排层快照，阶段信息全靠引擎回写到 st.engine；
+   * 单机形态下用 buildSnapshot 覆盖它（那份更全，还带十个阶段格子）。
    */
-  const toThread = (g) => ({
-    threadId: g.groupId,
+  const fromSaved = (threadId, saved) => {
+    const en = saved?.engine && typeof saved.engine === 'object' ? saved.engine : {}
+    const pending = !en.reqId && !saved?.reqId
+    const stageStatus = pending
+      ? '待提需求'
+      : (en.stageStatus ?? (saved?.reqId ? '旧版需求' : '进行中'))
+    return {
+      threadId,
+      name: en.reqName ?? null,
+      groupName: saved?.name ?? null,
+      mode: saved?.mode ?? 'chat',
+      pending,
+      reqId: en.reqId ?? saved?.reqId ?? null,
+      stage: en.stage ?? null,
+      stageStatus,
+      status: en.running ? (stageStatus === '等你确认' ? 'waiting' : 'running') : 'idle',
+      waitingLabel: en.waitingLabel ?? '',
+      turn: saved?.turn ?? 0,
+      initiator: saved?.initiator
+        ? { userId: saved.initiator.userId, nickname: saved.initiator.nickname }
+        : null,
+      lastActiveAt: saved?.lastActiveAt ?? Date.now(),
+      running: Boolean(en.running),
+      // 「等我确认」——App 列表页要靠它决定置顶和红色角标
+      needsMe: stageStatus === '等你确认',
+      stages: [],
+      featureBranch: en.featureBranch ?? null,
+    }
+  }
+
+  /** 编排层快照的一条（单机模式），补上群名和模式 */
+  const fromSnapshot = (g, saved) => ({
+    ...fromSaved(g.groupId, saved),
     name: g.name ?? null,
+    pending: false,
     reqId: g.reqId ?? null,
     stage: g.stage ?? null,
     stageStatus: g.stageStatus ?? null,
@@ -67,231 +114,193 @@ export function createThreadService({ machine, flowBridge, messages, buildSnapsh
     waitingLabel: g.waitingLabel ?? null,
     turn: g.turn ?? 0,
     initiator: g.initiator
-      ? {
-          userId: g.initiator.userId,
-          nickname: g.initiator.nickname,
-        }
+      ? { userId: g.initiator.userId, nickname: g.initiator.nickname }
       : null,
     lastActiveAt: g.lastActiveAt ?? null,
     running: Boolean(g.activeTurn),
-    // 「等我确认」——App 列表页要靠它决定置顶和红色角标
     needsMe: g.stageStatus === '等你确认',
     stages: g.stages ?? [],
     featureBranch: g.featureBranch ?? null,
   })
 
   /**
-   * 刚建出来、编排层还没生成 flow 时的临时形状。
-   *
-   * 为什么需要它：buildSnapshot 对「有状态但还没有 flow」的会话返回的是
-   * 「旧版需求」占位项（src/index.js 的 legacy 分支），那是给面板看历史
-   * 残留用的。App 侧把它当 null 处理的话，新建需求后立刻 GET 详情会 404，
-   * 前端只能靠盲轮询——所以这里按状态机定义自己拼一份完整的初始形状。
-   */
-  const initialThread = ({ threadId, name, initiator, lastActiveAt }) => {
-    const main = CHECKPOINTS.filter((c) => !['fix', 're-review', 'merge-fix'].includes(c.id))
-    return {
-      threadId,
-      name: name ?? null,
-      reqId: null,
-      stage: main[0]?.label ?? null,
-      stageStatus: '进行中',
-      status: 'waiting',
-      waitingLabel: '',
-      turn: 0,
-      initiator: initiator
-        ? { userId: initiator.userId, nickname: initiator.nickname }
-        : null,
-      lastActiveAt: lastActiveAt ?? Date.now(),
-      running: false,
-      needsMe: false,
-      stages: main.map((c, i) => ({ name: c.label, status: i === 0 ? '进行中' : '未开始' })),
-      featureBranch: null,
-    }
-  }
-
-  /**
    * 需求列表。
    *
-   * 只列 App 建的 thread。判据用 isAppThread 而不是 `!g.legacy`：
-   * 历史上跑过 QQ 群的机器，.state 里躺着一堆真实群记录（有 flow、
-   * legacy 是 undefined），按 legacy 过滤会把它们全带出来——App 用户
-   * 会看到自己从没建过的需求，点进去发言还会发到那个 QQ 群里。
-   *
-   * 另外要把「已落盘但快照里还是 legacy 占位」的补回来：新建需求后
-   * 编排层要先解析项目、建目录才写 flow，这几十毫秒里快照返回的是
-   * 「旧版需求」占位项。App 建完需求跳回列表，会发现自己刚建的不见了。
+   * 只列 App 建的 thread（isAppThread）：跑过 QQ 群的老机器上，.state 里
+   * 躺着一堆真实群记录，带出来用户会看到自己从没建过的群。
    */
   async function listThreads() {
-    const snap = await buildSnapshot({ full: true })
     const threads = new Map()
-    for (const g of snap.groups ?? []) {
-      if (!isAppThread(g.groupId) || g.legacy) continue
-      threads.set(g.groupId, toThread(g))
+    if (typeof buildSnapshot === 'function') {
+      const snap = await buildSnapshot({ full: true })
+      for (const g of snap.groups ?? []) {
+        if (!isAppThread(g.groupId) || g.legacy) continue
+        threads.set(g.groupId, fromSnapshot(g, get(g.groupId)))
+      }
     }
 
-    const store = machine.store
-    if (typeof store?.allGroupIds === 'function' && typeof store?.get === 'function') {
-      for (const id of store.allGroupIds()) {
-        if (!isAppThread(id) || threads.has(id)) continue
-        const saved = store.get(id)
-        if (!saved || Object.keys(saved).length === 0) continue
-        threads.set(id, {
-          ...initialThread({
-            threadId: id,
-            name: saved.name ?? null,
-            initiator: saved.initiator,
-            lastActiveAt: saved.lastActiveAt,
-          }),
-          // 列表里要显示未读数，兜底项也得带上
-          lastSeq: messages.lastSeq(id),
-        })
-      }
+    // 落盘兜底：没有编排层（IM 单独跑）时列表就只有这一条路径；
+    // 单机模式下它负责补上「刚建好、快照里还没 flow」的那几十毫秒窗口。
+    for (const id of groups.allGroupIds?.() ?? []) {
+      if (!isAppThread(id) || threads.has(id)) continue
+      const saved = get(id)
+      if (!exists(saved)) continue
+      threads.set(id, { ...fromSaved(id, saved), lastSeq: messages.lastSeq(id) })
     }
 
     return [...threads.values()].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
   }
 
-  /** 单条需求详情 */
+  /** 单个群的详情 */
   async function threadInfo(threadId) {
-    // 非 App 的会话（QQ 群号）一律当不存在，不给 App 探进 QQ 群的口子
     if (!isAppThread(threadId)) return null
-    const snap = await buildSnapshot({ full: true })
-    const g = (snap.groups ?? []).find((x) => x.groupId === threadId)
-    if (g && !g.legacy) return toThread(g)
-    // 还没生成 flow：退回到状态里存的东西，别让详情页 404。
-    // 用 store.get 而不是 machine.peek——peek 对任何 id 都会凭空造一份初始状态，
-    // 拿它判断「存在与否」等于永远存在，未知 thread 也就永远返回 200 了。
-    const saved = typeof machine.store?.get === 'function' ? machine.store.get(threadId) : null
-    // clear() 留下的是 `{}`，那不叫存在
-    if (!saved || Object.keys(saved).length === 0) return null
-    return initialThread({
-      threadId,
-      name: saved.name ?? null,
-      initiator: saved.initiator,
-      lastActiveAt: saved.lastActiveAt,
-    })
+    const saved = get(threadId)
+    const valid = exists(saved)
+
+    if (typeof buildSnapshot === 'function') {
+      const snap = await buildSnapshot({ full: true })
+      const g = (snap.groups ?? []).find((x) => x.groupId === threadId)
+      if (g && !g.legacy) return fromSnapshot(g, saved)
+    }
+    // 还没有需求、或没有编排层：靠落盘状态兜底，别让详情页 404
+    if (!valid) return null
+    return fromSaved(threadId, saved)
   }
 
   /**
-   * 新建需求。
+   * 建群。
    *
-   * 注意这里是**不等回合跑完**的：一次需求要走完需求→设计→方案→开发…
-   * 好几个阶段，可能几十分钟。HTTP 请求等不起，App 也不该转圈半小时。
-   * 所以立刻返回 threadId，让 App 去轮询消息流看进展——
-   * 这和 QQ 群里「发完就看到进度播报」是同一个体验，只是换了通道。
+   * 只建容器、不建需求：群建好之后在里面 @ 需求 bot 说第一句话，
+   * 那条消息才是需求描述。建群要写盘再返回，App 建完立刻 GET 详情必须能查到。
    */
-  async function createThread({ text, user }) {
+  async function createGroup({ name, user }) {
     const threadId = newThreadId()
-
-    // 先把「用户说了什么」落库，再交给编排层。
-    // 顺序不能反：如果先投递、回合立刻开始播报，App 拉消息时
-    // 会先看到 bot 的回复、后看到自己说的话，对话读起来是颠倒的。
-    messages.append(threadId, {
-      role: 'user',
-      kind: 'text',
-      payload: { text },
-      at: Date.now(),
-    })
-
-    // resolveGroup 现在无条件放行，peek 不会返回 null；留着这道判断是为了
-    // 将来真按需求类型分项目时，这里能体面地拒绝而不是抛 TypeError。
-    const st = machine.peek(threadId)
-    if (!st) {
-      return { ok: false, error: '这个项目当前不接受新需求' }
-    }
-
     const initiator = {
       userId: user.id,
       nickname: user.nickname || user.username,
       at: Date.now(),
     }
-    st.initiator = initiator
-    machine.store.save(threadId, { ...st, initiator })
+    const groupName = String(name ?? '').trim() || '新群'
+    // 显式写全字段，不依赖 machine.peek 的默认值：拆分形态下没有编排层，
+    // 这里存的形状就是 IM 看到的全部。
+    groups.save(threadId, {
+      status: 'idle',
+      mode: 'chat',
+      name: groupName,
+      initiator,
+      lastActiveAt: initiator.at,
+    })
 
-    log(`[api] ${user.username} 新建需求 ${threadId}：${text.slice(0, 60)}`)
+    log(`[api] ${user.username} 新建群 ${threadId}：${groupName}`)
 
-    // fire-and-forget：错误必须自己吞掉并落库，
-    // 否则会变成 unhandledRejection 把整个 bridge 进程带走。
-    void flowBridge
-      .handleMessage({
-        groupId: threadId,
-        text,
-        replyTo: null,
-        st,
-        initiator,
-        can: (action, uid) => can(action, threadId, uid),
-      })
-      .catch((err) => {
-        log(`[api] 需求 ${threadId} 启动失败：${err.message}`)
-        try {
-          messages.append(threadId, {
-            role: 'bot',
-            kind: 'text',
-            payload: { text: `启动失败：${err.message}` },
-          })
-        } catch {
-          /* 落库也失败就只剩日志了 */
-        }
-      })
-
-    // 直接返回自己拼的初始形状，不回查快照。
-    // 快照是异步回合跑了以后才会有 flow 的，回查大概率还是空——
-    // 而且 name 用 makeReqName 算，和编排层给 flow 起名是同一个函数，不会不一致。
     return {
       ok: true,
       threadId,
-      thread: initialThread({ threadId, name: makeReqName(text), initiator }),
+      thread: fromSaved(threadId, {
+        mode: 'chat',
+        name: groupName,
+        initiator,
+        lastActiveAt: initiator.at,
+      }),
     }
-
   }
 
   /**
-   * 往已有需求里投一条消息（普通发言 / 通过 / 打回 都走这里）。
+   * 往群里投一条消息。
    *
-   * 为什么通过/打回也走普通消息通道：agent 是按自然语言工作的，
-   * 「通过」两个字它本来就能理解。为按钮单独造一套结构化协议，
-   * 等于让同一件事有两套语义，将来改流程要同时改两处。
+   * 四种归宿（见 src/im/router.js）：
+   *   chat    —— 普通聊天，落库就完事，不惊动引擎
+   *   start   —— @ 了需求 bot 且群还是聊天模式：开需求，权限同建群
+   *   message —— 需求群里 @ 了 bot 的话，转给引擎
+   *
+   * 唯一的例外是 through=force：通过/打回是界面上的按钮，不是打字，
+   * 不该要求用户再去 @ 一次；权限已经由路由层（confirm）判过了。
    */
-  async function deliver({ threadId, text, user }) {
-    const st = machine.peek(threadId)
-    if (!st) return { ok: false, error: '没有这个需求' }
+  async function deliver({ threadId, text, user, mentions = [], replyTo = null, force = false }) {
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true, error: '没有这个群' }
 
     const initiator = {
       userId: user.id,
       nickname: user.nickname || user.username,
       at: Date.now(),
     }
-    // 记录「最后说话的人」，面板和 App 都靠它显示谁在推动
-    machine.store.save(threadId, { ...st, initiator })
+    const missed = mentionsOf({ mentions, text, botName })
+    const route = force
+      ? { action: 'message', atBot: false, needsStart: false }
+      : routeMessage({ mode: saved.mode ?? 'chat', mentions: missed })
 
-    log(`[api] ${user.username} → ${threadId}：${text.slice(0, 60)}`)
-
-    void flowBridge
-      .handleMessage({
-        groupId: threadId,
-        text,
-        replyTo: null,
-        st,
-        initiator,
-        can: (action, uid) => can(action, threadId, uid),
-      })
-      .catch((err) => {
-        log(`[api] 需求 ${threadId} 投递失败：${err.message}`)
-        try {
-          messages.append(threadId, {
-            role: 'bot',
-            kind: 'text',
-            payload: { text: `处理失败：${err.message}` },
-          })
-        } catch {
-          /* ignore */
+    if (route.action === 'start') {
+      // 权限判断放在落库和发事件之前：被拒的话群里不留痕，引擎也不会跑
+      const perm = await can('startRequirement', threadId, user.id)
+      if (!perm?.ok) {
+        return {
+          ok: false,
+          forbidden: true,
+          error: '提需求需要系统管理员权限',
+          roleLabel: perm?.roleLabel ?? null,
         }
-      })
+      }
+    }
 
-    // 立刻返回，不等回合跑完
-    return { ok: true, accepted: true }
+    // /release 会把工作目录、会话、并发槽一起放掉，文档写的是管理员专属。
+    // 编排层自己不看身份（它按对话工作），所以这道闸必须留在 IM 这边。
+    if (route.action !== 'chat' && /^\/release\b/i.test(stripBotMention(text, botName))) {
+      const perm = await can('confirm', threadId, user.id)
+      if (!perm?.ok) {
+        return {
+          ok: false,
+          forbidden: true,
+          error: '只有系统管理员能释放会话',
+          roleLabel: perm?.roleLabel ?? null,
+        }
+      }
+    }
+
+    // 落库用户这条：App 刷新后要能看见自己说过什么。
+    // 聊天、需求、通过/打回都先落库再分发——用户的输入不该因为引擎挂了而消失。
+    messages.append(threadId, {
+      role: 'user',
+      kind: 'text',
+      payload: { text, ...(missed.length ? { mentions: missed } : {}) },
+      at: initiator.at,
+    })
+
+    if (route.action === 'chat') {
+      // 普通聊天只记「最后说话的人」，不发事件：这条路径是 IM 独立
+      // 部署的核心——没有引擎的时候，群照样能一直聊下去
+      groups.save(threadId, { ...saved, initiator, lastActiveAt: initiator.at })
+      return { ok: true, action: 'chat' }
+    }
+
+    groups.save(threadId, {
+      ...saved,
+      // 群一旦变成需求群就不再变回去：需求跑完还是可以继续聊、
+      // 继续补需求，来回切换只会让「这句话发给谁」变得不可预测。
+      // 但聊天群里的通过/打回不该顺手把它变成需求群，所以只在 start 时置位。
+      mode: route.action === 'start' ? 'requirement' : (saved.mode ?? 'chat'),
+      initiator,
+      lastActiveAt: initiator.at,
+    })
+
+    log(`[api] ${user.username} → ${threadId}（${route.action}）：${text.slice(0, 60)}`)
+
+    try {
+      await dispatch({
+        type: route.action,
+        threadId,
+        // @ 只是触发器，不该进需求名、也不该成为 agent 看到的第一句废话
+        text: stripBotMention(text, botName),        mentions: missed,
+        user: { userId: initiator.userId, nickname: initiator.nickname },
+        replyTo,
+      })
+    } catch (err) {
+      log(`[api] 群 ${threadId} 投递失败：${err.message}`)
+      return { ok: false, error: err.message }
+    }
+
+    return { ok: true, action: route.action, accepted: true }
   }
 
-  return { listThreads, threadInfo, createThread, deliver }
+  return { listThreads, threadInfo, createGroup, deliver }
 }

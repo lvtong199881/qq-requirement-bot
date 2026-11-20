@@ -13,7 +13,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, basename, extname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -185,11 +185,22 @@ console.log('\n== 关键模块能被导入 ==')
     'src/ui/messages.js',
     'src/ui/format.js',
     'src/config.js',
+    // 拆分后的新模块：入口 src/im.js / src/engine.js 有副作用不能导入，
+    // 但它们依赖的这几块都是纯模块
+    'src/api/server.js',
+    'src/api/http-util.js',
+    'src/api/threads.js',
+    'src/api/engine.js',
+    'src/im/router.js',
+    'src/im/events.js',
+    'src/transport/transport.js',
+    'src/transport/http.js',
   ]
   let bad = 0
   for (const rel of mods) {
     try {
-      await import(join(root, rel))
+      // Windows 上 import('C:\...') 会被当成 c: 协议，必须先转成 file:// URL
+      await import(pathToFileURL(join(root, rel)).href)
     } catch (err) {
       bad++
       console.log(`  ❌ ${rel}: ${err.message}`)

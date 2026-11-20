@@ -158,13 +158,21 @@ export async function boot({
       token = r.body.token
       return r.body
     },
-    async createThread(text) {
-      const r = await call('POST', '/api/threads', { text })
-      if (!r.body?.ok) throw new Error(`建需求失败：${JSON.stringify(r.body)}`)
-      return r.body
+    /**
+     * 建群 + @ 需求 bot 说出第一句话。
+     *
+     * App 的流程是两步：先建群，再在群里 @ 需求 bot 提需求（不 @ 只是聊天）。
+     * 调用方只关心「拿到一个跑着需求的 threadId」，所以这里合成一步，名字沿用旧名。
+     */
+    async createThread(text, { name, mentions = ['bot'] } = {}) {
+      const group = await call('POST', '/api/threads', { name })
+      if (!group.body?.ok) throw new Error(`建群失败：${JSON.stringify(group.body)}`)
+      const said = await call('POST', `/api/threads/${group.body.threadId}/messages`, { text, mentions })
+      if (!said.body?.ok) throw new Error(`提需求失败：${JSON.stringify(said.body)}`)
+      return group.body
     },
-    async say(threadId, text) {
-      const r = await call('POST', `/api/threads/${threadId}/messages`, { text })
+    async say(threadId, text, { mentions = [] } = {}) {
+      const r = await call('POST', `/api/threads/${threadId}/messages`, { text, mentions })
       if (!r.body?.ok) throw new Error(`发言失败：${JSON.stringify(r.body)}`)
       return r.body
     },

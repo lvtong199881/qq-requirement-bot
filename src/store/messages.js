@@ -178,10 +178,19 @@ function sanitizePayload(kind, payload) {
   const text = typeof p.text === 'string' ? p.text : ''
   if (text) out.text = text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…（已截断）` : text
 
+  // 提到谁：@需求bot 是「这句话要不要交给引擎」的判据，
+  // 但显示上也用得到（气泡里高亮），所以按文本消息的附加字段放行
+  if (Array.isArray(p.mentions)) {
+    const ids = p.mentions.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 20)
+    if (ids.length) out.mentions = ids
+  }
+
   switch (kind) {
     case 'image':
       if (typeof p.url === 'string') out.url = p.url
       if (typeof p.name === 'string') out.name = p.name
+      // 大小给 App 显示「12.3 MB」，也让「这张图多长」在文本旁能看出来
+      if (typeof p.size === 'number') out.size = p.size
       break
     case 'file':
       if (typeof p.url === 'string') out.url = p.url

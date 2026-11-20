@@ -137,6 +137,13 @@ export class GroupStateMachine {
     const saved = this.store.get(groupId)
     return {
       groupId,
+      // 群名。建群时由 API 写盘，需求名（flow.name）是另一回事：
+      // 群是容器、需求是里面跑的那件事，两者不能混用一个字段。
+      name: saved?.name ?? null,
+      // 群模式：chat 只是聊天，requirement 是「跑过需求」的群（不 @ bot 仍只是聊天）。
+      // 必须在这里回读：编排层每回合都会拿 peek() 的结果整份写回盘，
+      // 少读一个字段就等于「谁最后 save 谁把模式抹成默认值」。
+      mode: saved?.mode ?? 'chat',
       projectDir: saved?.projectDir ?? g.projectDir,
       approval: g.approval,
       // 绑定过的需求标识。以前没回读这一行：写进盘里的 reqId 每次都被丢掉，
