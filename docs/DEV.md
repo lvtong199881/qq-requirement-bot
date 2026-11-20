@@ -19,14 +19,27 @@ node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 node test/full.js --no-llm    # 起真实 bridge 进程，验证握手与路由
 node test/resilience.js       # NapCat 没起来 / 中途断开时，bridge 必须活着并自愈
 node test/panel-api.js        # 面板全部 HTTP 接口：分层、body 传参、错误码
+node test/app-api.js          # App 公网 API：注册登录、权限、消息顺序、通过/打回
+node test/transport.js        # 通道分流：threadId 必须走 App 通道，群号必须走 QQ
 ```
+
+`test/transport.js` 值得单独提一句：编排层把「会话标识」当不透明字符串传，
+QQ 群号和 App 的 threadId 共用同一个参数。如果分流判错，`onebot.js` 里的
+`group_id: Number(groupId)` 会把 `Number('t123abc')` 算成 `NaN`，
+JSON 序列化后变 `null`——消息**不报错地**发到一个不存在的群，
+日志里一行错误都没有。所以这个测试逐条钉死了两边各自的路径。
+
 
 ## 代码结构
 
 ```
 src/
-  index.js          入口：连 OneBot、权限闸门、面板 API
+  index.js          入口：连 OneBot、权限闸门、面板 API、App API
   flow-bridge.js    消息入口 + 播报 + feature 分支 + 合并
+  account/          账号：auth.js（scrypt + HS256 token）、store.js（用户表）
+  api/              公网 API：server.js（路由）、threads.js（thread 与编排层接线）
+  store/            消息 JSONL 落库、产物文件
+  transport/        onebot.js（QQ）、transport.js（按会话类型分流）
   flow/
     flow.js         阶段定义与状态机（纯函数，不碰 fs）
     orchestrator.js 任务包组装、回执校验、产物核对
@@ -37,7 +50,7 @@ src/
     repo.js         裸仓库与 worktree（每个需求一个工作区）
     lock.js         跨平台文件锁 + 计数信号量
   ui/               panel.js / server.js / messages.js / format.js
-  transport/        onebot.js
+  transport/        onebot.js / transport.js
   config.js  state.js  runner.js  commands.js  doctor.js
 skills/             按阶段拆的角色卡，每回合只加载一张
 test/               独立测试脚本，没有框架

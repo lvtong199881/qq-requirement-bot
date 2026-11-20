@@ -44,6 +44,13 @@
     "publicPort": 7879,
     "token": ""
   },
+  "api": {
+    "enabled": false,
+    "port": 7881,
+    "host": "0.0.0.0",
+    "allowedOrigin": "",
+    "maxBodyBytes": 1000000
+  },
   "superAdmin": [
     "你的QQ号"
   ],

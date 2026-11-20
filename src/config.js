@@ -322,6 +322,26 @@ export function loadConfig(configPath) {
       publicPort: Number(raw.panel?.publicPort ?? 7879),
       token: typeof raw.panel?.token === 'string' ? raw.panel.token : '',
     },
+
+    // App 的公网 API。和 panel 是**两个独立的 server**，不是同一份端口：
+    //   panel  有停群、重启、改设置这些能搞坏运行状态的接口，
+    //          而且 token 为空时直接放行（ui/server.js 的 needToken），
+    //          一旦暴露到公网等于把机器交出去。
+    //   api    只做「读需求 + 发消息 + 通过/打回」，全部要过用户身份，
+    //          这才是给手机 App 用的那个。
+    // 默认不开：没配好域名和 HTTPS 就暴露，等于把需求内容和 git 操作放上公网。
+    api: {
+      enabled: raw.api?.enabled === true,
+      port: Number(raw.api?.port ?? 7881),
+      // 只监听这个地址。默认 0.0.0.0 是为了 cloudflared/tailscale 能连进来；
+      // 没有隧道又想更保守，就写 127.0.0.1 然后用本机反代转发。
+      host: typeof raw.api?.host === 'string' && raw.api.host.trim() ? raw.api.host.trim() : '0.0.0.0',
+      // 允许的 CORS 来源。留空则不回 CORS 头——App 和 curl 都不需要，
+      // 只有浏览器里的页面才需要，那属于要单独想清楚的场景。
+      allowedOrigin: typeof raw.api?.allowedOrigin === 'string' ? raw.api.allowedOrigin : '',
+      // 单个请求体上限（字节）。发需求文本用不到这么大，但留点余量给以后的附件。
+      maxBodyBytes: Number(raw.api?.maxBodyBytes ?? 1_000_000),
+    },
   }
 }
 

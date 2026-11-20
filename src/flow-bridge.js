@@ -80,7 +80,18 @@ const worktreeSlots = new Map()
 const deviceSlots = new Map()
 
 export function createFlowBridge(deps) {
-  const { config, store, machine, log, sendPlain, runTurn, bot, modelEnv, repoRoot, gitDiff } = deps
+  const { config, store, machine, log, sendPlain, runTurn, bot, transport, modelEnv, repoRoot, gitDiff } = deps
+
+  // 图片和文件走 transport（它会按会话类型分流到 QQ 或 App 的产物库）。
+  // 没注入时退回只认 QQ 的最小实现：老测试和「只想跑群消息」的场景
+  // 不该因为多了个 App 通道就必须要造一堆 store 出来。
+  const tx = transport ?? {
+    sendImage: (id, { buffer }) =>
+      bot.sendGroupMsg(id, [{ type: 'image', data: { file: `base64://${buffer.toString('base64')}` } }]),
+    sendFile: (id, filePath, name) => bot.uploadGroupFile(id, filePath, name),
+    event: () => {},
+    isAppThread: () => false,
+  }
 
   // 两层并发闸门，都落在磁盘上（进程崩了占位会按 pid 自动清理）：
   //   worktree 池 —— 同时处于开发期的需求数，决定磁盘占用
@@ -746,9 +757,10 @@ export function createFlowBridge(deps) {
   }
 
   /**
-   * 把效果图直接发到群里。QQ 里图片能直接看，zip 得下载解压——
+   * 把效果图发出去。QQ 里图片能直接看，zip 得下载解压——
    * 设计阶段的产出是给人看的，走图片不走文件。
-   * NapCat 可能跑在 Docker 里看不到宿主机路径，所以用 base64 内联。
+   * QQ 那边 NapCat 可能跑在 Docker 里看不到宿主机路径，transport 内部会用 base64；
+   * App 那边会存成产物给 URL。
    */
   async function sendPreviewImages(groupId, dir, replyTo) {
     const pngs = collectPngs(dir).slice(0, 6)
@@ -756,11 +768,10 @@ export function createFlowBridge(deps) {
     await sendPlain(groupId, `设计稿 ${pngs.length} 张：`, { replyTo }).catch(() => {})
     for (const f of pngs) {
       try {
-        const buf = readFileSync(f)
-        await bot.sendGroupMsg(groupId, [
-          { type: 'image', data: { file: `base64://${buf.toString('base64')}` } },
-        ])
-        await new Promise((r) => setTimeout(r, 600)) // 连发太快容易被风控
+        await tx.sendImage(groupId, { buffer: readFileSync(f), name: basename(f) })
+        // 连发太快容易被风控。只对 QQ 节流：App 侧没有风控，
+        // 白白等 3 秒只会让图片一张张慢慢冒出来。
+        if (!tx.isAppThread?.(groupId)) await new Promise((r) => setTimeout(r, 600))
       } catch (err) {
         log(`[${groupId}] 效果图发送失败 ${basename(f)}：${err.message}`)
       }
@@ -781,7 +792,7 @@ export function createFlowBridge(deps) {
         // 目录产物（设计稿）没法直接发，打包成 zip 再传
         const zip = packDirectory(join(reqDir, cp.deliverable), join(reqDir, `${cp.id}.zip`))
         if (zip) {
-          await bot.uploadGroupFile(groupId, zip, basename(zip))
+          await tx.sendFile(groupId, zip, basename(zip))
           log(`[${groupId}] 已投递打包产物：${basename(zip)}`)
         } else {
           // 打包失败就给路径，至少信息不丢
@@ -790,7 +801,7 @@ export function createFlowBridge(deps) {
         return
       }
       if (!statSync(file).isFile()) return
-      await bot.uploadGroupFile(groupId, file, basename(file))
+      await tx.sendFile(groupId, file, basename(file))
       log(`[${groupId}] 已投递产物：${basename(file)}`)
     } catch (err) {
       log(`[${groupId}] 产物投递失败：${err.message}`)

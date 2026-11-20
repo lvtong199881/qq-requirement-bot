@@ -43,9 +43,81 @@
   // 分阶段回合超时（分钟）。开发/测试/验收要跑构建、装包、逐条核对，给足时间；
   // 其余阶段主要是读写文档，30 分钟够。面板「设置 → 阶段超时」可改，只支持 10/15/30/60 四档。
   "stageTimeouts": { "default": 30, "dev": 60, "test": 60, "acceptance": 60 },
-  "turnTimeoutMs": 1800000                        // 兼容旧配置：没有 stageTimeouts 时当作默认值
+  "turnTimeoutMs": 1800000,                       // 兼容旧配置：没有 stageTimeouts 时当作默认值
+
+  // 给 Flutter App 用的公网 API。默认关，见下面「App API」一节
+  "api": {
+    "enabled": false,
+    "port": 7881,
+    "host": "0.0.0.0",
+    "allowedOrigin": "",
+    "maxBodyBytes": 1000000
+  }
 }
 ```
+
+## App API
+
+给手机 App 用的那套 HTTP 服务。**默认关闭**，和面板是两个独立端口，
+接口细节见 [API.md 的 App API 一节](API.md#app-api-im-api)。
+
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 必须显式 `true` 才启动 |
+| `port` | `7881` | 独立端口，别和 `panel.port`(7878) 撞 |
+| `host` | `0.0.0.0` | `cloudflared` / `tailscale` 要能连进来。想更保守就写 `127.0.0.1` 再本机反代 |
+| `allowedOrigin` | `""` | CORS 白名单，留空则按请求的 `Origin` 回显。App 是原生请求，用不到 |
+| `maxBodyBytes` | `1000000` | 单请求体上限 |
+
+### 为什么默认关
+
+这个进程能 spawn dsh 回合、在本地仓库里跑 git。没配好隧道和 HTTPS 就把它开到
+`0.0.0.0`，等于把需求内容和 git 操作权限放上公网。
+
+### 和面板的区别
+
+| | `panel`（7878 / 7879） | `api`（7881） |
+| --- | --- | --- |
+| 只听回环 | ✅ | ❌（要公网） |
+| 鉴权 | token 为空时**直接放行** | 必须用户名密码登录 |
+| 能停群 / 改配置 | ✅ | ❌ |
+
+**绝不能**把 `panel` 那个端口暴露出去。它有 `stop`/`restart`/`applySettings`，
+而 `src/ui/server.js` 的 `needToken` 在没配 token 时直接返回 `true`。
+
+### 账号从哪来
+
+第一个在 App 里注册的人自动成为**系统管理员**，之后注册的都是普通成员。
+没有了找回密码流程——忘了密码让管理员在 App 的「账号管理」里重置。
+
+### 公网怎么通
+
+推荐 Cloudflare Tunnel，不需要公网 IP、不需要备案：
+
+```bash
+# 一次性
+cloudflared tunnel login
+cloudflared tunnel create qq-bot
+cloudflared tunnel route dns qq-bot bot.example.com
+
+# 常驻
+cloudflared tunnel run --url http://127.0.0.1:7881 qq-bot
+```
+
+免费版 `xxx.trycloudflare.com` 每次重启换地址，App 里 baseURL 写死就废了，
+所以得有自己的域名（十来美元一年，DNS 和证书都免费）。
+
+要注意的几点：
+
+- **国内访问质量一般。** 免费版走海外节点，纯文本轮询还行，几个 MB 的设计稿会比较慢
+- **Mac 得常开。** bridge 要 spawn 回合、跑 git、读写本地目录，搬不到 Workers 上去
+- **别用 SSE 长连接。** Cloudflare 对长连接有流式超时。这套本来就是「打开 App 才看消息」，
+  每 3~5 秒轮询一次即可，没有超时也没有重连逻辑
+- **免费版 ToS 限制大量非 HTML 内容分发**，团队内部几十张图和 md 文件没问题
+
+替代方案：香港/新加坡的小 VPS 自建反代（同样免备案），或者用 Tailscale 组私有网——
+后者只在自己设备上装，连域名都不用买。
+
 
 ## 阶段超时
 

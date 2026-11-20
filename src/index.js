@@ -20,6 +20,12 @@ import { createBridgeServer } from './ui/server.js'
 import { join as pathJoin } from 'node:path'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { UserStore } from './account/store.js'
+import { MessageStore } from './store/messages.js'
+import { ArtifactStore } from './store/artifacts.js'
+import { createTransport } from './transport/transport.js'
+import { createApiServer } from './api/server.js'
+import { createThreadService } from './api/threads.js'
 
 const configPath = process.argv.find((a) => a.startsWith('--config='))?.slice(9)
 const isDryRun = process.argv.includes('--dry-run')
@@ -61,6 +67,18 @@ const runtime = new Runtime({
 const log = (...a) => runtime.info(...a)
 const detail = (...a) => config.verbose && runtime.log('debug', ...a)
 
+// ── App 通道的三套存储 ──
+// 全部落在 .state/ 下，和状态机文件同目录，一起被 .gitignore 挡住。
+// 分开建是为了各自能独立演进：消息量会一直涨，用户表基本不动，
+// 混在一个文件里迟早因为写消息把用户表写坏。
+const users = new UserStore(store.dir)
+const messages = new MessageStore(pathJoin(store.dir, 'messages'))
+const artifacts = new ArtifactStore(pathJoin(store.dir, 'artifacts'))
+
+// 传输门面：QQ 群号和 App 的 threadId 从这里分流。
+// 编排层只认「会话标识」，分流的职责全在这个对象里，见 transport/transport.js。
+const transport = createTransport({ bot, messages, artifacts, log })
+
 // v2 编排接入层。createFlowBridge 只捕获依赖，不立刻执行任何动作；
 // sendPlain 是函数声明会提升，所以这里引用它不会碰到 TDZ。
 const flowBridge = createFlowBridge({
@@ -71,6 +89,7 @@ const flowBridge = createFlowBridge({
   sendPlain,
   runTurn,
   bot,
+  transport,
   modelEnv,
   repoRoot: config.repoRoot,
 })
@@ -119,10 +138,24 @@ const ACTION_ROLES = {
 /**
  * 判断某人能否在本群执行某个动作。
  * 系统管理员必须在群角色判定之前短路——否则一个不是群管理的系统管理员会被拒绝。
+ *
+ * App 的 thread 走另一套身份：那边的 userId 是用户表里的 id，不是 QQ 号，
+ * config.superAdmin/adminUsers 里配的 QQ 号永远匹配不上，而 memberRole()
+ * 会拿 txxx 去问 NapCat（`Number('txxx')`→NaN），拿回 null。
+ * 所以必须显式分流，否则 App 里没人能批需求。
  */
 async function can(action, groupId, userId) {
   const uid = String(userId ?? '')
   if (!uid) return { ok: false, role: null, need: ACTION_ROLES[action] ?? [] }
+
+  if (transport.isAppThread(groupId)) {
+    const user = users.findById(uid)
+    // 已停用的账号当作不存在：token 可能还没过期，但人已经被撤了
+    if (!user || user.disabled) return { ok: false, role: null, need: [] }
+    const r = users.can(action, user)
+    return { ok: r.ok, role: user.role, need: r.need }
+  }
+
   if (config.superAdmin.includes(uid)) return { ok: true, role: 'superadmin' }
   if (config.adminUsers.includes(uid)) return { ok: true, role: 'systemAdmin' }
   const role = await memberRole(groupId, uid)
@@ -153,14 +186,19 @@ const knownGroups = new Map()
 let lastActivityAt = Date.now()
 
 async function sendText(groupId, text) {
-  const wait = limiter.delayFor()
-  if (wait > 0) await sleep(wait)
+  // 限速只对 QQ 有意义：那是防封号的风控。App 走自己的 HTTP 通道，
+  // 每 3~5 秒轮询一次，限速只会让阶段播报排队、看起来像卡住了。
+  if (!transport.isAppThread(groupId)) {
+    const wait = limiter.delayFor()
+    if (wait > 0) await sleep(wait)
+  }
 
   // 不引用用户消息、不 @ 人：引用会把一条普通播报变成一串嵌套卡片，
   // 群里刷起来更乱，而且 reply 段在某些客户端上会折叠正文。
   try {
-    await bot.sendGroupMsg(groupId, text)
-    lastActivityAt = Date.now() // 群里收到消息了，心跳重新计时
+    // transport 内部按会话类型分流：QQ 群 → OneBot，App thread → 落库
+    await transport.sendText(groupId, text)
+    lastActivityAt = Date.now() // 收到消息了，心跳重新计时
   } catch (err) {
     log(`发送失败（${groupId}）：${err.message}`)
   }
@@ -539,6 +577,9 @@ async function buildSnapshot({ full = true } = {}) {
     instance: {
       pid: process.pid,
       port: apiPort,
+      // App API 的端口，0=没启用。面板上要能看出「App 那条路通不通」，
+      // 否则用户配了 api.enabled 却连不上时无从下手。
+      appApiPort,
       startedAt: runtime.startedAt,
       nodeVersion: process.version,
       cwd: process.cwd(),
@@ -631,6 +672,18 @@ async function ensureCheckouts() {
 // 实例注册 + HTTP 服务
 const registry = new InstanceRegistry(config.repoRoot)
 let apiPort = 0
+/** App 公网 API 的实际端口，0 表示没起。面板快照会带上它，方便排查连不通 */
+let appApiPort = 0
+
+// App 的 thread 通道：把 API 的请求接到现有编排层上
+const threads = createThreadService({
+  machine,
+  flowBridge,
+  messages,
+  buildSnapshot,
+  can,
+  log,
+})
 
 function startApi() {
   if (config.panel?.enabled === false) return
@@ -741,7 +794,51 @@ function startApi() {
   tryListen(config.panel?.port ?? 7878)
 }
 
+/**
+ * App 的公网 API。
+ *
+ * 和面板是两个独立 server，理由见 config.js 里 api 段的注释：
+ * 面板能停群改配置且 token 为空时放行，绝不能公网可达。
+ *
+ * 默认不启用（config.api.enabled 必须显式 true）。这个进程能 spawn 任意回合、
+ * 在本地仓库里跑 git，没配好隧道和域名就开到 0.0.0.0 等于把机器交出去。
+ */
+function startAppApi() {
+  if (config.api?.enabled !== true) {
+    runtime.info('App API 未启用（bot.config.json 里设 api.enabled=true 才开）')
+    return
+  }
+
+  const server = createApiServer({
+    users,
+    messages,
+    artifacts,
+    threadInfo: threads.threadInfo,
+    listThreads: threads.listThreads,
+    deliver: threads.deliver,
+    createThread: threads.createThread,
+    log,
+    allowedOrigin: config.api.allowedOrigin ?? '',
+  })
+
+  server.once('error', (err) => {
+    // 公网 API 起不来不该带走整个 bridge：QQ 通道还能用
+    runtime.error(`App API 启动失败（端口 ${config.api.port}）：${err.message}`)
+  })
+
+  server.listen(config.api.port, config.api.host, () => {
+    const { port, address } = server.address()
+    appApiPort = port
+    runtime.info(`App API：http://${address}:${port}/healthz`)
+    // 第一次用的人需要知道「谁先注册谁是管理员」，否则会以为要手工建账号
+    if (users.needsFirstAdmin()) {
+      runtime.info('App 还没有账号——第一个注册的人会自动成为系统管理员')
+    }
+  })
+}
+
 startApi()
+startAppApi()
 
 await ensureCheckouts()
 bot.connect()
