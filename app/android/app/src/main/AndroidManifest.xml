@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- release 包必须自己声明，debug 那份只对调试构建生效 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 连接服务器页支持扫二维码；没有相机的设备也允许安装 -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="需求"
         android:name="${applicationName}"
