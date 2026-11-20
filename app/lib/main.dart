@@ -60,13 +60,17 @@ class _QqbotAppState extends State<QqbotApp> {
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       darkTheme: buildTheme(Brightness.dark),
+      // 固定字号：这个 App 的排版（时间、徽章、进度格子）是照 100% 缩放调的，
+      // 跟随系统字号放大后按钮文字会撑破卡片。可访问性靠对比度和语义标签补，
+      // 不靠让布局崩掉。
+      builder: (context, child) => MediaQuery.withNoTextScaling(child: child!),
       home: _home(),
     );
   }
 
   Widget _home() {
     if (!_booted || _auth.stage == AuthStage.booting) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const _Splash();
     }
     switch (_auth.stage) {
       case AuthStage.needServer:
@@ -76,7 +80,7 @@ class _QqbotAppState extends State<QqbotApp> {
       case AuthStage.ready:
         final c = _threads;
         if (c == null) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+          return const _Splash();
         }
         // key 用 baseUrl：换了服务器就是另一份数据，
         // 不复用旧页面的状态（尤其滚动位置和已加载的消息）。
@@ -86,7 +90,43 @@ class _QqbotAppState extends State<QqbotApp> {
           controller: c,
         );
       case AuthStage.booting:
-        return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        return const _Splash();
     }
+  }
+}
+
+/// 启动占位：先留白，超过 1 秒才出转圈。
+/// 恢复会话通常几十毫秒，立刻闪一下 spinner 反而像卡了一下。
+class _Splash extends StatefulWidget {
+  const _Splash();
+
+  @override
+  State<_Splash> createState() => _SplashState();
+}
+
+class _SplashState extends State<_Splash> {
+  bool _show = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _show = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: _show
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              )
+            : null,
+      ),
+    );
   }
 }

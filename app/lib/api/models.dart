@@ -231,6 +231,15 @@ class Message {
 
   bool get isMine => role == 'user';
 
+  /// 谁说的。老数据没有这两个字段，`userId` 为 null 时按「我」处理，
+  /// 免得升级后历史消息全跑到左边去。
+  String? get userId => payload['userId']?.toString();
+  String? get nickname => payload['nickname']?.toString();
+
+  /// 这条是不是 `myId` 说的。群里好几个人说话，只靠 role 分不出左右。
+  bool isMineFor(String? myId) =>
+      role == 'user' && (userId == null || myId == null || userId == myId);
+
   String get text => (payload['text'] ?? '').toString();
   String? get artifactUrl => payload['url']?.toString();
   String? get fileName => payload['name']?.toString();

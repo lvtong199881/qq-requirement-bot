@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../state/auth.dart';
 import 'server_setup_page.dart';
+import 'theme.dart';
 
 /// 设置（二级页）。
 ///
@@ -19,6 +20,7 @@ class SettingsPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
+        padding: const EdgeInsets.only(top: AppSpace.xs, bottom: AppSpace.xl),
         children: [
           ListTile(
             leading: const Icon(Icons.dns_outlined),
@@ -40,11 +42,18 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            padding: const EdgeInsets.fromLTRB(
+              AppInset.form,
+              AppSpace.xs,
+              AppInset.form,
+              0,
+            ),
             child: Text(
-              '换服务器后需要重新登录。',
-              style: theme.textTheme.bodySmall?.copyWith(
+              // 说清后果，否则人不知道自己点完会不会被踢出去
+              '换服务器后需要重新登录。原来那台服务器上的群不会跟着过来。',
+              style: AppText.bodyS.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
+                height: 1.5,
               ),
             ),
           ),

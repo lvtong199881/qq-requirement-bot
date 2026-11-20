@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../state/auth.dart';
 import 'scan_page.dart';
+import 'theme.dart';
+import 'widgets/feedback.dart';
 
 /// 配置服务器地址。
 ///
@@ -43,6 +45,10 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
   }
 
   Future<void> _submit() async {
+    if (_url.text.trim().isEmpty) {
+      setState(() => _error = '先填服务器地址');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
@@ -79,12 +85,23 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('连接服务器')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(AppInset.form),
           children: [
+            Text(
+              '填服务器地址',
+              style: AppText.titleL.copyWith(color: theme.colorScheme.onSurface),
+            ),
+            const SizedBox(height: AppSpace.xs),
+            const HintRow(
+              text: '服务启动日志里会打印地址和二维码。局域网填内网 IP，外网填隧道域名。',
+              icon: Icons.dns_outlined,
+            ),
+            const SizedBox(height: AppSpace.xl),
             TextField(
               controller: _url,
               autofocus: true,
@@ -93,6 +110,7 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
               autocorrect: false,
               minLines: 1,
               maxLines: 4,
+              style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
               textInputAction: TextInputAction.newline,
               decoration: const InputDecoration(
                 labelText: '服务器地址',
@@ -100,10 +118,10 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
               ),
             ),
             if (_error != null) ...[
-              const SizedBox(height: 12),
-              _ErrorBox(message: _error!),
+              const SizedBox(height: AppSpace.sm),
+              ErrorBox(message: _error!),
             ],
-            const SizedBox(height: 20),
+            const SizedBox(height: AppSpace.xl),
             Row(
               children: [
                 Expanded(
@@ -118,47 +136,16 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
                         : const Text('连接'),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: AppSpace.sm),
                 OutlinedButton.icon(
                   onPressed: _busy ? null : _scan,
-                  icon: const Icon(Icons.qr_code_scanner),
+                  icon: const Icon(Icons.qr_code_scanner, size: 20),
                   label: const Text('扫码'),
                 ),
               ],
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ErrorBox extends StatelessWidget {
-  const _ErrorBox({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(color: scheme.onErrorContainer, fontSize: 13),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -262,7 +262,13 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     messages.append(threadId, {
       role: 'user',
       kind: 'text',
-      payload: { text, ...(missed.length ? { mentions: missed } : {}) },
+      payload: {
+        text,
+        ...(missed.length ? { mentions: missed } : {}),
+        // 群里可能有好几个人，App 靠 userId 判断气泡该靠左还是靠右
+        userId: initiator.userId,
+        nickname: initiator.nickname,
+      },
       at: initiator.at,
     })
 

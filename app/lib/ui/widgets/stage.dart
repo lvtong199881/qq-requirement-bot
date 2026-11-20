@@ -1,44 +1,45 @@
 import 'package:flutter/material.dart';
 
-import '../../api/models.dart';
 import '../theme.dart';
+import '../../api/models.dart';
 
-/// 阶段状态小圆点 + 文字。
+/// 阶段徽章：一个小圆点 + 状态词。
 ///
-/// 颜色和文案分开画：用户可能色弱，只靠颜色区分「等你确认」和「卡住」
-/// 是不行的，所以文字一定带上。
+/// 状态不能只靠颜色区分（规范硬约束），所以这里始终带文字，
+/// 圆点只是让人一眼扫到颜色，摘掉文字就失去了一半信息。
 class StageBadge extends StatelessWidget {
   const StageBadge({super.key, required this.status, this.dense = false});
 
   final String? status;
+
+  /// 列表卡片里用密集版，高度少 4。
   final bool dense;
 
   @override
   Widget build(BuildContext context) {
-    if (status == null || status!.isEmpty) return const SizedBox.shrink();
-    final color = statusColor(status);
+    final s = status?.trim() ?? '';
+    if (s.isEmpty) return const SizedBox.shrink();
+    final color = AppColors.stage(context, s);
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: dense ? 7 : 9, vertical: dense ? 2 : 3),
+      padding: EdgeInsets.symmetric(
+        horizontal: AppSpace.xs,
+        vertical: dense ? AppSpace.xxs / 2 : AppSpace.xxs,
+      ),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            width: dense ? 5 : 6,
-            height: dense ? 5 : 6,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 5),
+          _Dot(color: color),
+          const SizedBox(width: AppSpace.xxs),
           Text(
-            status!,
-            style: TextStyle(
-              color: color,
+            s,
+            style: AppText.caption.copyWith(
               fontSize: dense ? 11 : 12,
               fontWeight: FontWeight.w600,
-              height: 1.2,
+              color: color,
             ),
           ),
         ],
@@ -47,71 +48,85 @@ class StageBadge extends StatelessWidget {
   }
 }
 
-/// 阶段进度条：一排小格子，已完成的填色、当前的加粗。
+class _Dot extends StatelessWidget {
+  const _Dot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 6,
+      height: 6,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+  }
+}
+
+/// 一排格子表示十个主阶段，过一格填一格。
 ///
-/// 不用 Stepper：十个阶段竖着排会占满一屏，而用户主要想知道
-/// 「走到哪了 / 还剩几步」，横条更快读懂。
+/// 格子只用颜色区分进度，所以下面紧跟一行文字（当前阶段名 + 已完成/总数），
+/// 色弱用户不看颜色也能知道走到哪了。
 class StageProgress extends StatelessWidget {
   const StageProgress({super.key, required this.stages, this.currentLabel});
 
   final List<Stage> stages;
   final String? currentLabel;
 
+  bool get _empty => stages.isEmpty;
+
+  String get _currentName {
+    if (_empty) return currentLabel ?? '';
+    for (final s in stages) {
+      if (s.active) return s.name;
+    }
+    for (final s in stages.reversed) {
+      if (s.done) return '${s.name} · 已完成';
+    }
+    return currentLabel ?? stages.first.name;
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (stages.isEmpty) {
-      // 刚建出来还没跑起来的情况
-      if (currentLabel == null) return const SizedBox.shrink();
-      return Text(
-        currentLabel!,
-        style: Theme.of(context).textTheme.bodySmall,
-      );
+    final theme = Theme.of(context);
+    if (_empty) {
+      final label = currentLabel?.trim() ?? '';
+      if (label.isEmpty) return const SizedBox.shrink();
+      return Text(label, style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant));
     }
+
+    final finished = stages.where((s) => s.done).length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            for (var i = 0; i < stages.length; i++)
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: i == stages.length - 1 ? 0 : 3),
-                  child: _Cell(stage: stages[i]),
-                ),
-              ),
+            for (var i = 0; i < stages.length; i++) ...[
+              if (i > 0) const SizedBox(width: AppSpace.xxs),
+              Expanded(child: _Cell(stage: stages[i])),
+            ],
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: AppSpace.xs),
         Row(
           children: [
             Expanded(
               child: Text(
-                _currentName(),
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+                _currentName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
             ),
+            const SizedBox(width: AppSpace.xs),
             Text(
-              '${stages.where((s) => s.done).length}/${stages.length}',
-              style: Theme.of(context).textTheme.bodySmall,
+              '$finished / ${stages.length}',
+              style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
           ],
         ),
       ],
     );
-  }
-
-  /// 优先显示「进行中/等待确认」的那个，没有就显示最后一个已完成的。
-  String _currentName() {
-    for (final s in stages) {
-      if (s.active) return s.name;
-    }
-    final done = stages.where((s) => s.done).toList();
-    if (done.isNotEmpty) return '${done.last.name} · 已完成';
-    return stages.first.name;
   }
 }
 
@@ -122,22 +137,22 @@ class _Cell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = statusColor(stage.status);
+    final scheme = Theme.of(context).colorScheme;
+    // 未开始的格子才用底色；跑过的按状态上色——卡住的格子必须能一眼看出来，
+    // 否则「卡在需求澄清」和「还没到需求澄清」长得一模一样
+    final color = stage.status.isEmpty || stage.status == '未开始'
+        ? scheme.onSurface.withValues(alpha: 0.12)
+        : AppColors.stage(context, stage.status);
     return Tooltip(
       message: '${stage.name}：${stage.status}',
+      waitDuration: const Duration(milliseconds: 600),
       child: Container(
-        height: 5,
+        height: 6,
         decoration: BoxDecoration(
-          color: stage.done || stage.active || stage.blocked
-              ? color
-              : Theme.of(context).colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(3),
+          color: color,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
         ),
       ),
     );
   }
 }
-
-/// 中文状态 → 颜色。实现只有一份（theme.dart 的 AppColors），
-/// 这里留个别名是为了让页面只 import 这一个文件。
-Color statusColor(String? status) => AppColors.forStageStatus(status);

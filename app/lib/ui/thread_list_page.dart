@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/models.dart';
@@ -32,10 +34,17 @@ class ThreadListPage extends StatefulWidget {
 }
 
 class _ThreadListPageState extends State<ThreadListPage> {
+  /// 首屏加载超过 1 秒才出转圈：网络快的时候闪一下转圈比什么都不显示更晃眼。
+  bool _slowLoad = false;
+  Timer? _slowTimer;
+
   @override
   void initState() {
     super.initState();
     widget.controller.start();
+    _slowTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted && widget.controller.loading) setState(() => _slowLoad = true);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final notice = widget.auth.flashNotice;
@@ -48,6 +57,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
 
   @override
   void dispose() {
+    _slowTimer?.cancel();
     widget.controller.stop();
     super.dispose();
   }
@@ -67,20 +77,26 @@ class _ThreadListPageState extends State<ThreadListPage> {
   }
 
   /// 建群。只问名字，不问需求：群先当聊天用，@ 需求 bot 才开流程。
+  ///
+  /// 创建动作放在对话框里面做（而不是先关窗再建）：名字被后端拒掉时
+  /// 用户还在原来的输入框里，改了再按一次就行，输入不会丢。
   Future<void> _create() async {
-    final name = await showDialog<String>(
+    Thread? created;
+    final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => const _NewGroupDialog(),
+      builder: (_) => _NewGroupDialog(
+        onCreate: (name) async {
+          try {
+            created = await widget.controller.create(name);
+            return null;
+          } catch (e) {
+            return '$e';
+          }
+        },
+      ),
     );
-    if (name == null) return;
-    try {
-      final t = await widget.controller.create(name.trim());
-      if (!mounted) return;
-      await _open(t);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    }
+    if (ok != true || created == null || !mounted) return;
+    await _open(created!);
   }
 
   @override
@@ -100,7 +116,10 @@ class _ThreadListPageState extends State<ThreadListPage> {
             IconButton(
               tooltip: '刷新',
               icon: const Icon(Icons.refresh),
-              onPressed: () => widget.controller.refresh(),
+              onPressed: () {
+                setState(() => _slowLoad = true);
+                widget.controller.refresh();
+              },
             ),
           ],
         ),
@@ -112,19 +131,20 @@ class _ThreadListPageState extends State<ThreadListPage> {
   Widget _body(BuildContext context) {
     final c = widget.controller;
     if (c.firstLoad && c.loading) {
-      return const Center(child: CircularProgressIndicator());
+      return _slowLoad ? const Center(child: CircularProgressIndicator()) : const SizedBox.shrink();
     }
     if (c.error != null && c.threads.isEmpty) {
-      return _ErrorState(
-        message: c.error!,
-        onRetry: () => c.refresh(),
-      );
+      return _ErrorState(message: c.error!, onRetry: () => c.refresh());
     }
     if (c.threads.isEmpty) {
       return Column(
         children: [
           // 引擎掉线时先说清楚：聊天照旧，只是 @ 了没人接。
-          if (c.engineOnline == false) const _EngineOfflineBanner(),
+          if (c.engineOnline == false)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(AppInset.page, AppSpace.md, AppInset.page, 0),
+              child: _EngineOfflineBanner(),
+            ),
           Expanded(
             child: _EmptyState(
               canCreate: widget.auth.perms.startRequirement,
@@ -141,17 +161,19 @@ class _ThreadListPageState extends State<ThreadListPage> {
     return RefreshIndicator(
       onRefresh: () => c.refresh(),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        // 下拉刷新需要列表本身可滚；内容不满一屏时也要能拉
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(AppInset.page, AppSpace.xs, AppInset.page, AppSpace.xl),
         children: [
           if (c.engineOnline == false) const _EngineOfflineBanner(),
           if (waiting.isNotEmpty) ...[
             _SectionLabel(
               text: '等你确认',
               count: waiting.length,
-              color: AppColors.waiting,
+              color: AppColors.waiting(context),
             ),
             for (final t in waiting) _ThreadCard(thread: t, onTap: () => _open(t)),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppSpace.sm),
           ],
           if (others.isNotEmpty) ...[
             if (waiting.isNotEmpty) const _SectionLabel(text: '其它'),
@@ -173,26 +195,15 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final tint = color ?? theme.colorScheme.onSurfaceVariant;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+      padding: const EdgeInsets.fromLTRB(0, AppSpace.xs, 0, AppSpace.xs),
       child: Row(
         children: [
-          Text(
-            text,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: color ?? theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-            ),
-          ),
+          Text(text, style: AppText.label.copyWith(color: tint)),
           if (count != null) ...[
-            const SizedBox(width: 6),
-            Text(
-              '$count',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: color ?? theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
+            const SizedBox(width: AppSpace.xs),
+            Text('$count', style: AppText.caption.copyWith(color: tint)),
           ],
         ],
       ),
@@ -211,14 +222,13 @@ class _ThreadCard extends StatelessWidget {
     final theme = Theme.of(context);
     final t = thread;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: AppSpace.sm),
       child: Card(
-        color: theme.colorScheme.surfaceContainerLow,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppRadius.medium),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+            padding: const EdgeInsets.all(AppSpace.md),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -227,64 +237,81 @@ class _ThreadCard extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        t.title,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          height: 1.35,
-                        ),
+                        // 这里是群列表，主身份是群名：一个群里可能换过几轮需求，
+                        // 拿需求名当标题会让人以为列表里是另一批群。
+                        t.groupName ?? t.name ?? '未命名群',
+                        style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     if (t.running) ...[
-                      const SizedBox(width: 8),
+                      const SizedBox(width: AppSpace.xs),
                       SizedBox(
-                        width: 13,
-                        height: 13,
+                        width: AppSpace.md,
+                        height: AppSpace.md,
                         child: CircularProgressIndicator(
-                          strokeWidth: 1.8,
+                          strokeWidth: 2,
                           color: theme.colorScheme.primary,
                         ),
                       ),
                     ],
                   ],
                 ),
-                const SizedBox(height: 9),
+                const SizedBox(height: AppSpace.xs),
                 Row(
                   children: [
-                    StageBadge(status: t.stageStatus, dense: true),
-                    const SizedBox(width: 8),
+                    // 聊天群没有阶段，「待提需求」这种状态挂在卡片上会让人
+                    // 以为有个需求卡住了；群聊本身的状态就是「群聊」
+                    if (t.mode != 'chat') StageBadge(status: t.stageStatus, dense: true),
+                    if (t.mode != 'chat' && (t.stageStatus ?? '').isNotEmpty)
+                      const SizedBox(width: AppSpace.xs),
+                    // 阶段名和时间放在同一个 Text 里：拆成两个 Row 子项时，
+                    // 长群名/大字号/字体回退都会把时间挤出屏幕，
+                    // 而这里真正必须看见的是「现在到哪一步」。
                     Expanded(
-                      child: Text(
-                        // 聊天群没有阶段，显示「群聊」而不是留空：
-                        // 列表里一行空白会让人以为是数据没加载出来。
-                        t.stage ??
-                            (t.mode == 'chat'
-                                ? '群聊'
-                                : (t.pending ? '还没提需求' : '')),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              // 聊天群没有阶段，显示「群聊」而不是留空：
+                              // 列表里一行空白会让人以为是数据没加载出来。
+                              text: t.stage ??
+                                  (t.mode == 'chat'
+                                      ? '群聊'
+                                      : (t.pending ? '还没提需求' : '')),
+                              style: AppText.bodyS.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            if ((t.stage ?? '').isNotEmpty || t.mode == 'chat')
+                              TextSpan(
+                                text: ' · ',
+                                style: AppText.bodyS.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            TextSpan(
+                              text: Fmt.relative(t.lastActiveAt),
+                              style: AppText.caption.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    Text(
-                      Fmt.relative(t.lastActiveAt),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                        fontSize: 11,
-                      ),
-                    ),
                   ],
                 ),
                 if ((t.waitingLabel ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 7),
+                  const SizedBox(height: AppSpace.xs),
                   Text(
                     t.waitingLabel!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: AppColors.waiting,
-                      height: 1.4,
+                    style: AppText.bodyS.copyWith(
+                      // 卡住的理由用红色：它和「在等你点通过」不是一回事
+                      color: t.blocked ? AppColors.blocked(context) : AppColors.waiting(context),
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -309,32 +336,29 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpace.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               Icons.inbox_outlined,
-              size: 52,
+              size: AppSpace.huge + AppSpace.xs,
               color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
             ),
-            const SizedBox(height: 14),
-            Text('还没有群', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpace.md),
+            Text('还没有群', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
+            const SizedBox(height: AppSpace.xs),
             Text(
               canCreate ? '先建个群。想聊天就聊，要干活就 @需求bot 说一句。' : '等管理员建第一个群。',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-                height: 1.5,
-              ),
+              style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
             if (canCreate) ...[
-              const SizedBox(height: 18),
+              const SizedBox(height: AppSpace.xl),
               FilledButton.icon(
                 onPressed: onCreate,
-                icon: const Icon(Icons.add),
+                icon: const Icon(Icons.add, size: 20),
                 label: const Text('建群'),
               ),
             ],
@@ -356,27 +380,20 @@ class _EngineOfflineBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: AppSpace.sm),
+      padding: const EdgeInsets.all(AppSpace.sm),
       decoration: BoxDecoration(
         color: theme.colorScheme.errorContainer,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Row(
         children: [
-          Icon(
-            Icons.cloud_off_outlined,
-            size: 18,
-            color: theme.colorScheme.onErrorContainer,
-          ),
-          const SizedBox(width: 8),
+          Icon(Icons.cloud_off_outlined, size: 20, color: theme.colorScheme.onErrorContainer),
+          const SizedBox(width: AppSpace.xs),
           Expanded(
             child: Text(
               '需求引擎没连上。群还能照常聊，只是 @需求bot 暂时没人接。',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onErrorContainer,
-                height: 1.4,
-              ),
+              style: AppText.bodyS.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ),
         ],
@@ -395,23 +412,21 @@ class _ErrorState extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppSpace.xxl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_outlined, size: 46, color: theme.colorScheme.error),
-            const SizedBox(height: 14),
-            Text('拉不到群列表', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
+            Icon(Icons.cloud_off_outlined, size: 48, color: theme.colorScheme.error),
+            const SizedBox(height: AppSpace.md),
+            Text('拉不到群列表', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
+            const SizedBox(height: AppSpace.xs),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: AppSpace.xl),
             OutlinedButton(onPressed: onRetry, child: const Text('重试')),
           ],
         ),
@@ -425,7 +440,10 @@ class _ErrorState extends StatelessWidget {
 /// 这里刻意不收需求描述——群先当普通聊天用，需要 agent 干活时再在群里
 /// @ 它一句。先弹窗问需求再建群，等于把「群」降级成需求的包装壳。
 class _NewGroupDialog extends StatefulWidget {
-  const _NewGroupDialog();
+  const _NewGroupDialog({required this.onCreate});
+
+  /// 返回 null 表示成功，返回字符串表示要展示给用户的错误。
+  final Future<String?> Function(String name) onCreate;
 
   @override
   State<_NewGroupDialog> createState() => _NewGroupDialogState();
@@ -433,11 +451,35 @@ class _NewGroupDialog extends StatefulWidget {
 
 class _NewGroupDialogState extends State<_NewGroupDialog> {
   final _name = TextEditingController();
+  bool _busy = false;
+  String? _error;
 
   @override
   void dispose() {
     _name.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = '起个名字吧');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final err = await widget.onCreate(name);
+    if (!mounted) return;
+    if (err == null) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _error = err;
+    });
   }
 
   @override
@@ -447,23 +489,35 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
       content: TextField(
         controller: _name,
         autofocus: true,
+        enabled: !_busy,
         maxLength: 40,
         textInputAction: TextInputAction.done,
-        onSubmitted: (v) => Navigator.of(context).pop(v),
-        decoration: const InputDecoration(
+        onSubmitted: (_) => _busy ? null : _submit(),
+        // 计数器只在快写满时才出现：一进来就挂着「还可以输 40 个字符」，
+        // 等于在用户还没打字前就提醒他可能写错。
+        buildCounter: (_, {required currentLength, required isFocused, maxLength}) =>
+            currentLength > 32 ? Text('$currentLength / $maxLength') : null,
+        decoration: InputDecoration(
           labelText: '群名',
           hintText: '比如：首页改版、登录体验',
           helperText: '先当群聊用，要做事时 @需求bot 说一句。',
+          errorText: _error,
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(_name.text),
-          child: const Text('建群'),
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('建群'),
         ),
       ],
     );

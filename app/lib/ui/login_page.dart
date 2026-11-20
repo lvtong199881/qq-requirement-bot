@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../state/auth.dart';
 import 'server_setup_page.dart';
+import 'theme.dart';
+import 'widgets/feedback.dart';
 
 /// 登录 / 注册。
 ///
@@ -27,6 +29,7 @@ class _LoginPageState extends State<LoginPage> {
 
   bool _registering = false;
   bool _busy = false;
+  bool _showPassword = false;
   String? _error;
 
   @override
@@ -69,51 +72,57 @@ class _LoginPageState extends State<LoginPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_registering ? '注册' : '登录'),
-        actions: [
-          IconButton(
-            tooltip: '换服务器',
-            icon: const Icon(Icons.dns_outlined),
-            onPressed: _busy
-                ? null
-                : () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => ServerSetupPage(
-                        auth: widget.auth,
-                        initialUrl: widget.auth.baseUrl,
-                      ),
-                    ),
-                  ),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Form(
           key: _formKey,
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
+            padding: const EdgeInsets.fromLTRB(
+              AppInset.form,
+              AppSpace.xxl,
+              AppInset.form,
+              AppSpace.xxl,
+            ),
             children: [
               Text(
                 _registering ? '建个账号' : '欢迎回来',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
+                style: AppText.titleL.copyWith(color: theme.colorScheme.onSurface),
               ),
-              const SizedBox(height: 6),
-              Text(
-                widget.auth.baseUrl,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+              const SizedBox(height: AppSpace.xs),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.auth.baseUrl.isEmpty ? '还没连服务器' : widget.auth.baseUrl,
+                      style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // 「换服务器」贴着地址放：这是它唯一有意义的上下文，
+                  // 塞进 AppBar 右上角就变成了一个没人认得的小图标
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => ServerSetupPage(
+                                auth: widget.auth,
+                                initialUrl: widget.auth.baseUrl,
+                              ),
+                            ),
+                          ),
+                    child: const Text('换服务器'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: AppSpace.xl),
 
               TextFormField(
                 controller: _username,
                 enabled: !_busy,
                 autocorrect: false,
                 textInputAction: TextInputAction.next,
+                style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
                 decoration: const InputDecoration(labelText: '用户名'),
                 validator: (v) {
                   final s = (v ?? '').trim();
@@ -123,13 +132,22 @@ class _LoginPageState extends State<LoginPage> {
                   return null;
                 },
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: AppSpace.md),
               TextFormField(
                 controller: _password,
                 enabled: !_busy,
-                obscureText: true,
+                obscureText: !_showPassword,
+                style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
                 textInputAction: _registering ? TextInputAction.next : TextInputAction.done,
-                decoration: const InputDecoration(labelText: '密码'),
+                decoration: InputDecoration(
+                  labelText: '密码',
+                  // 手机上打长密码最容易出错，给一眼看清的开关
+                  suffixIcon: IconButton(
+                    tooltip: _showPassword ? '隐藏密码' : '显示密码',
+                    icon: Icon(_showPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
+                    onPressed: () => setState(() => _showPassword = !_showPassword),
+                  ),
+                ),
                 validator: (v) {
                   final s = v ?? '';
                   if (s.isEmpty) return '填个密码';
@@ -141,10 +159,11 @@ class _LoginPageState extends State<LoginPage> {
                 },
               ),
               if (_registering) ...[
-                const SizedBox(height: 14),
+                const SizedBox(height: AppSpace.md),
                 TextFormField(
                   controller: _nickname,
                   enabled: !_busy,
+                  style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
                   decoration: const InputDecoration(
                     labelText: '昵称（选填）',
                     helperText: '列表和消息里显示这个名字',
@@ -153,11 +172,11 @@ class _LoginPageState extends State<LoginPage> {
               ],
 
               if (_error != null) ...[
-                const SizedBox(height: 16),
-                _ErrorBox(message: _error!),
+                const SizedBox(height: AppSpace.md),
+                ErrorBox(message: _error!),
               ],
 
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpace.xl),
               FilledButton(
                 onPressed: _busy ? null : _submit,
                 child: _busy
@@ -168,7 +187,7 @@ class _LoginPageState extends State<LoginPage> {
                       )
                     : Text(_registering ? '注册并登录' : '登录'),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppSpace.xs),
               TextButton(
                 onPressed: _busy
                     ? null
@@ -180,9 +199,9 @@ class _LoginPageState extends State<LoginPage> {
               ),
 
               if (_registering) ...[
-                const SizedBox(height: 20),
-                _Note(
-                  '第一个注册的人会成为系统管理员。admin 才能发起需求和点通过/打回。',
+                const SizedBox(height: AppSpace.lg),
+                const HintRow(
+                  text: '第一个注册的人会成为系统管理员。admin 才能建群、@ 需求bot 提需求、点通过/打回。',
                 ),
               ],
 
@@ -190,7 +209,7 @@ class _LoginPageState extends State<LoginPage> {
               // 新装好的机器上，人拿到地址之后最容易卡在「用什么登录」这一步，
               // 让他去翻安装文档不如直接告诉他。
               if (!_registering && widget.auth.presetAdmin != null) ...[
-                const SizedBox(height: 20),
+                const SizedBox(height: AppSpace.lg),
                 _PresetHint(
                   username: widget.auth.presetAdmin!,
                   password: widget.auth.presetPassword ?? '',
@@ -226,104 +245,40 @@ class _PresetHint extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+      padding: const EdgeInsets.all(AppSpace.md),
       decoration: BoxDecoration(
         color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppRadius.medium),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.key_outlined, size: 16, color: theme.colorScheme.onSecondaryContainer),
-              const SizedBox(width: 8),
+              Icon(Icons.key_outlined, size: 20, color: theme.colorScheme.onSecondaryContainer),
+              const SizedBox(width: AppSpace.xs),
               Text(
                 '初始管理员账号',
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: theme.colorScheme.onSecondaryContainer,
-                ),
+                style: AppText.label.copyWith(color: theme.colorScheme.onSecondaryContainer),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: AppSpace.xs),
           SelectableText(
             '$username / $password',
-            style: theme.textTheme.bodyMedium?.copyWith(
+            style: AppText.body.copyWith(
+              color: theme.colorScheme.onSecondaryContainer,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: AppSpace.xxs),
           Text(
             '登录后请在「账号管理」里改掉这个密码。',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSecondaryContainer,
-            ),
+            style: AppText.bodyS.copyWith(color: theme.colorScheme.onSecondaryContainer),
           ),
           Align(
             alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: onFill,
-              child: const Text('填入'),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Note extends StatelessWidget {
-  const _Note(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(Icons.info_outline, size: 16, color: theme.colorScheme.onSurfaceVariant),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              height: 1.5,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ErrorBox extends StatelessWidget {
-  const _ErrorBox({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              message,
-              style: TextStyle(color: scheme.onErrorContainer, fontSize: 13),
-            ),
+            child: TextButton(onPressed: onFill, child: const Text('填入')),
           ),
         ],
       ),

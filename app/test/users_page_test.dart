@@ -67,6 +67,13 @@ void main() {
 
     await tester.tap(find.text('停用').last);
     await tester.pumpAndSettle();
+    // 停用会把人立刻踢下线，先要一次确认
+    expect(find.textContaining('停用 开发小明'), findsOneWidget);
+    await tester.tap(find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('停用'),
+    ));
+    await tester.pumpAndSettle();
 
     expect(calls, ['{"disabled":true}']);
     // 刷新后那条要显示「已停用」，说明界面信的是后端返回的列表
@@ -98,13 +105,13 @@ void main() {
 
     // 太短的密码要当场拦下来，别让后端拒了才发现
     await tester.enterText(find.byType(TextField), '123');
-    await tester.tap(find.text('重置'));
+    await tester.tap(_dialogButton('重置密码'));
     await tester.pumpAndSettle();
     expect(find.text('密码至少 6 位'), findsOneWidget);
     expect(calls, isEmpty);
 
     await tester.enterText(find.byType(TextField), 'newpass123');
-    await tester.tap(find.text('重置'));
+    await tester.tap(_dialogButton('重置密码'));
     await tester.pumpAndSettle();
     expect(calls, ['{"password":"newpass123"}']);
   });
@@ -132,12 +139,19 @@ void main() {
 
     await tester.tap(find.text('降为成员'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('确定'));
+    // 按钮写动作本身，不写「确定」
+    await tester.tap(_dialogButton('降为成员'));
     await tester.pumpAndSettle();
 
     expect(find.text('最后一个管理员不能降级'), findsOneWidget);
   });
 }
+
+/// 弹窗里的按钮：页面上往往有同名的行内按钮，只在这个弹窗范围里找。
+Finder _dialogButton(String label) => find.descendant(
+  of: find.byType(AlertDialog),
+  matching: find.text(label),
+);
 
 /// 造一个已登录的 AuthController。
 ///

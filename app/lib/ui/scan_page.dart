@@ -69,25 +69,53 @@ class _ScanPageState extends State<ScanPage> {
         children: [
           MobileScanner(controller: _controller, onDetect: _onDetect),
           IgnorePointer(
-            child: Center(
-              child: Container(
-                width: 240,
-                height: 240,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white70, width: 2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
+            // 取景框边长跟着屏幕走：小屏写死 240 会顶到边，
+            // 大屏又小得像粒纽扣，取 min(宽 0.7, 280) 两头都能用。
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final short = constraints.biggest.shortestSide;
+                final side = (short * 0.7).clamp(200.0, 280.0);
+                return Center(
+                  child: Container(
+                    width: side,
+                    height: side,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white70, width: 2),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
-          const Positioned(
+          Positioned(
             left: 24,
             right: 24,
             bottom: 48,
-            child: Text(
-              '对准服务器启动日志里的二维码',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '对准服务器启动日志里的二维码',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    height: 1.4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '扫不到就把日志里那行地址手填进去',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.7),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

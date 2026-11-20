@@ -87,12 +87,16 @@ class _UsersPageState extends State<UsersPage> {
         title: Text(toAdmin ? '设为系统管理员？' : '降为普通成员？'),
         content: Text(
           toAdmin
-              ? '${u.displayName} 将能发起需求、通过或打回结果。'
-              : '${u.displayName} 将只能看需求，不能再拍板。',
+              ? '${u.displayName} 将能建群、@ 需求bot 提需求、点通过或打回。'
+              : '${u.displayName} 将只能看群、聊天，不能再拍板。',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('确定')),
+          // 按钮写动作本身，不写「确定」：用户点完就该知道发生了什么
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(toAdmin ? '设为管理员' : '降为成员'),
+          ),
         ],
       ),
     );
@@ -104,6 +108,28 @@ class _UsersPageState extends State<UsersPage> {
   }
 
   Future<void> _toggleDisabled(User u) async {
+    if (!u.disabled) {
+      // 停用会把人立刻踢下线，让管理员先确认一下
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('停用 ${u.displayName}？'),
+          content: const Text('停用后立刻无法登录，已经登录的也会在下一次请求被拒。'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('取消')),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(ctx).colorScheme.error,
+                foregroundColor: Theme.of(ctx).colorScheme.onError,
+              ),
+              child: const Text('停用'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
     await _run(
       () => widget.auth.client.setUserDisabled(u.id, !u.disabled),
       u.disabled ? '已恢复 ${u.displayName}' : '已停用 ${u.displayName}',
@@ -129,19 +155,18 @@ class _UsersPageState extends State<UsersPage> {
 
   Widget _body() {
     final theme = Theme.of(context);
+    // 首屏还没拿到数据时，错误和加载是两种完全不同的状态：
+    // 一个要人重试，一个只要等，所以分开画。
+    if (_busy && _users == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (_error != null && _users == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton(onPressed: _load, child: const Text('重试')),
-            ],
-          ),
-        ),
+      return _StateBox(
+        icon: Icons.people_outline,
+        title: '拉不到账号列表',
+        message: _error!,
+        actionLabel: '重试',
+        onAction: _load,
       );
     }
     final users = _users;
@@ -149,21 +174,31 @@ class _UsersPageState extends State<UsersPage> {
       return const Center(child: CircularProgressIndicator());
     }
     if (users.isEmpty) {
-      return const Center(child: Text('还没有注册的人'));
+      return const _StateBox(
+        icon: Icons.person_add_alt,
+        title: '还没有别人注册',
+        message: '把服务器地址发给他们，在登录页点「注册并登录」就能进来。',
+      );
     }
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      padding: const EdgeInsets.fromLTRB(
+        AppInset.page,
+        AppSpace.sm,
+        AppInset.page,
+        AppSpace.xxl,
+      ),
       itemCount: users.length + 1,
-      separatorBuilder: (_, i) => i == 0 ? const SizedBox.shrink() : const SizedBox(height: 8),
+      separatorBuilder: (_, i) =>
+          i == 0 ? const SizedBox.shrink() : const SizedBox(height: AppSpace.sm),
       itemBuilder: (context, i) {
         if (i == 0) {
           return Padding(
-            padding: const EdgeInsets.fromLTRB(6, 0, 6, 12),
+            padding: const EdgeInsets.only(bottom: AppSpace.sm),
             child: Text(
               '没有找回密码流程，成员忘了密码就在这里重置。'
               '停用的人立刻无法登录，已登录的也会在下一次请求被拒。',
-              style: theme.textTheme.bodySmall?.copyWith(
+              style: AppText.bodyS.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.5,
               ),
@@ -205,10 +240,12 @@ class _UserCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dim = user.disabled;
+    final nameColor = dim ? theme.colorScheme.onSurfaceVariant : theme.colorScheme.onSurface;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+        // 底部留 8：三个文字按钮自己带 12/8 内边距，再加 8 才不贴卡片边
+        padding: const EdgeInsets.fromLTRB(AppSpace.md, AppSpace.sm, AppSpace.xs, AppSpace.xs),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -217,26 +254,24 @@ class _UserCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     isMe ? '${user.displayName}（我）' : user.displayName,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: dim ? theme.colorScheme.onSurfaceVariant : null,
-                    ),
+                    style: AppText.titleS.copyWith(color: nameColor),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 _RoleChip(role: user.role, label: user.roleLabel),
                 if (dim) ...[
-                  const SizedBox(width: 6),
-                  _RoleChip(role: 'disabled', label: '已停用'),
+                  const SizedBox(width: AppSpace.xs),
+                  const _RoleChip(role: 'disabled', label: '已停用'),
                 ],
               ],
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: AppSpace.xxs),
             Text(
               '@${user.username}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpace.xs),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -251,7 +286,7 @@ class _UserCard extends StatelessWidget {
                 TextButton(
                   onPressed: busy ? null : onToggleDisabled,
                   style: TextButton.styleFrom(
-                    foregroundColor: dim ? null : AppColors.blocked,
+                    foregroundColor: dim ? null : AppColors.blocked(context),
                   ),
                   child: Text(dim ? '恢复' : '停用'),
                 ),
@@ -272,21 +307,66 @@ class _RoleChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final color = switch (role) {
-      'admin' => AppColors.running,
-      'disabled' => AppColors.blocked,
-      _ => AppColors.idle,
+      'admin' => AppColors.running(context),
+      'disabled' => AppColors.blocked(context),
+      _ => AppColors.idle(context),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs, vertical: AppSpace.xxs),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
       ),
       child: Text(
         label.isEmpty ? role : label,
-        style: theme.textTheme.labelSmall?.copyWith(color: color),
+        style: AppText.caption.copyWith(color: color, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+}
+
+/// 空态与错误态共用一套骨架：图标 + 标题 + 说明 +（可选）一个动作。
+/// 两处各写一遍的话，字号和间距迟早会走样。
+class _StateBox extends StatelessWidget {
+  const _StateBox({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(AppInset.form),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: AppSpace.sm),
+            Text(title, style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
+            const SizedBox(height: AppSpace.xs),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.5),
+            ),
+            if (actionLabel != null) ...[
+              const SizedBox(height: AppSpace.lg),
+              OutlinedButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -332,7 +412,6 @@ class _NewPasswordDialogState extends State<_NewPasswordDialog> {
           TextField(
             controller: _pwd,
             autofocus: true,
-            obscureText: false,
             decoration: InputDecoration(
               labelText: '新密码',
               helperText: '记得线下告诉对方',
@@ -344,7 +423,7 @@ class _NewPasswordDialogState extends State<_NewPasswordDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
-        FilledButton(onPressed: _submit, child: const Text('重置')),
+        FilledButton(onPressed: _submit, child: const Text('重置密码')),
       ],
     );
   }

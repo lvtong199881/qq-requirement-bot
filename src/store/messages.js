@@ -185,6 +185,11 @@ function sanitizePayload(kind, payload) {
     if (ids.length) out.mentions = ids
   }
 
+  // 谁说的：群里不止一个人说话，右侧气泡只能靠 id 判断「是不是我」，
+  // 靠昵称判断会被同名的人冒充；昵称只用来显示
+  if (typeof p.userId === 'string' && p.userId) out.userId = p.userId
+  if (typeof p.nickname === 'string' && p.nickname) out.nickname = p.nickname.slice(0, 32)
+
   switch (kind) {
     case 'image':
       if (typeof p.url === 'string') out.url = p.url

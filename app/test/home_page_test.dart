@@ -11,6 +11,7 @@ import 'package:qqbot_app/state/threads.dart';
 import 'package:qqbot_app/ui/home_page.dart';
 import 'package:qqbot_app/ui/me_page.dart';
 import 'package:qqbot_app/ui/server_setup_page.dart';
+import 'package:qqbot_app/ui/thread_detail_page.dart';
 import 'package:qqbot_app/ui/thread_list_page.dart';
 
 /// 底部导航改造后的三个入口。
@@ -56,16 +57,18 @@ void main() {
 
     expect(find.text('产品阿宝'), findsOneWidget);
     expect(find.text('abao · 系统管理员'), findsOneWidget);
-    expect(find.text('设置'), findsOneWidget);
+    // 设置项直接以「服务器地址」为标题：点进去能改什么一目了然，
+    // 不再多一层只写着「设置」的空壳入口
+    expect(find.text('服务器地址'), findsOneWidget);
     // 管理员才看得到账号管理
     expect(find.text('账号管理'), findsOneWidget);
 
-    await tester.tap(find.text('设置'));
+    await tester.tap(find.text('服务器地址'));
     await tester.pumpAndSettle();
 
-    expect(find.text('服务器地址'), findsOneWidget);
-    expect(find.text('http://127.0.0.1:7881'), findsOneWidget);
-    expect(find.text('换服务器后需要重新登录。'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('http://127.0.0.1:7881'), findsWidgets);
+    expect(find.textContaining('换服务器后需要重新登录'), findsOneWidget);
   });
 
   testWidgets('首页底部导航可在群和我的之间切换', (tester) async {
@@ -159,6 +162,94 @@ void main() {
 
     expect(find.textContaining('需求引擎没连上'), findsOneWidget);
     expect(find.text('产品讨论'), findsOneWidget);
+  });
+
+  // 规范要求 320 宽（最小的常见机型）不溢出。Flutter 把溢出当异常抛出来，
+  // 所以这里不用断言具体像素，跑到不抛就说明布局没崩。
+  testWidgets('320 宽下群列表和建群弹窗都不溢出', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        return _ok({
+          'threads': [
+            {
+              'threadId': 't1',
+              'groupName': '一个特别特别长的群名字用来测省略号会不会把标题撑破',
+              'mode': 'requirement',
+              'pending': false,
+              'stage': '等待确认方案',
+              'stageStatus': '等你确认',
+              'waitingLabel': '确认一下首页那个弹窗要不要每次都弹，还是只弹一次，这决定了后面怎么改',
+              'lastActiveAt': 1700000000000,
+            },
+          ],
+        });
+      }
+      if (req.url.path == '/api/engine/status') {
+        return _ok({'ok': true, 'online': false, 'botName': '需求bot'});
+      }
+      return _ok({});
+    });
+    final controller = ThreadListController(auth: auth);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('建群'));
+    await tester.pumpAndSettle();
+    expect(find.text('建个群'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // 详情页输入区有「通过 / 打回」两个按钮 + @ 提示行，是横向空间最紧的地方
+  testWidgets('320 宽下群详情输入区不溢出', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'requirement',
+            'pending': false,
+            'stage': '等待确认方案',
+            'stageStatus': '等你确认',
+            'canAct': true,
+            'needsMe': true,
+            'stages': [
+              {'name': '需求澄清', 'status': '已完成'},
+              {'name': '确认方案', 'status': '进行中'},
+            ],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        return _ok({'messages': [], 'lastSeq': 0});
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('通过'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // 详情页 3 秒轮询一次，测试结束前要把页面拆掉，
+    // 否则计时器会挂到下一个用例里
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
 

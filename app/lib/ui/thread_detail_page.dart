@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -47,15 +48,23 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   final _focus = FocusNode();
   final _scroll = ScrollController();
 
+  /// 首屏加载超过 1 秒才出转圈，避免网络快时闪一下。
+  bool _slowLoad = false;
+  Timer? _slowTimer;
+
   @override
   void initState() {
     super.initState();
     _c.addListener(_onUpdate);
     _c.start();
+    _slowTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted && _c.loading) setState(() => _slowLoad = true);
+    });
   }
 
   @override
   void dispose() {
+    _slowTimer?.cancel();
     _c.removeListener(_onUpdate);
     _c.dispose();
     _input.dispose();
@@ -134,6 +143,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       animation: _c,
       builder: (context, _) {
         final t = _c.thread;
+        final theme = Theme.of(context);
         return Scaffold(
           appBar: AppBar(
             title: Column(
@@ -141,7 +151,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               children: [
                 Text(
                   t?.title ?? '群',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -149,18 +159,17 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                   Text(
                     // 有需求时标题是需求名，群名退到副标题——群里可能有多个需求，
                     // 用户要随时知道自己在哪个群里。
-                    [
-                      if (t.name?.isNotEmpty == true) t.groupName,
-                      t.stage,
-                      t.stageStatus,
-                    ].where((e) => e != null && e.isNotEmpty).join(' · '),
+                    // 纯聊天群没有阶段可说，写「群聊」比挂一个「待提需求」实在。
+                    (t.mode == 'chat' && t.name?.isNotEmpty != true)
+                        ? '群聊'
+                        : [
+                            if (t.name?.isNotEmpty == true) t.groupName,
+                            t.stage,
+                            t.stageStatus,
+                          ].where((e) => e != null && e.isNotEmpty).join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w400,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+                    style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
               ],
             ),
@@ -168,7 +177,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           body: Column(
             children: [
               if (t != null) _Header(thread: t),
-              const Divider(height: 1),
+              if (t != null) const Divider(),
               Expanded(child: _messageArea(context)),
               _composer(context),
             ],
@@ -179,20 +188,29 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   }
 
   Widget _messageArea(BuildContext context) {
+    final theme = Theme.of(context);
     if (_c.loading && _c.messages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      return _slowLoad
+          ? const Center(child: CircularProgressIndicator())
+          : const SizedBox.shrink();
     }
     if (_c.error != null && _c.messages.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpace.xxl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.cloud_off_outlined, color: Theme.of(context).colorScheme.error),
-              const SizedBox(height: 12),
-              Text(_c.error!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
+              Icon(Icons.cloud_off_outlined, size: 48, color: theme.colorScheme.error),
+              const SizedBox(height: AppSpace.md),
+              Text('拉不到对话', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
+              const SizedBox(height: AppSpace.xs),
+              Text(
+                _c.error!,
+                textAlign: TextAlign.center,
+                style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: AppSpace.xl),
               OutlinedButton(onPressed: _c.refreshNow, child: const Text('重试')),
             ],
           ),
@@ -209,12 +227,12 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               : '群里还没有消息，说第一句吧。')
           : '群里还没有消息。要它动手，就 @需求bot 说一句。';
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpace.xxl),
           child: Text(
             empty,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall,
+            style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
         ),
       );
@@ -226,7 +244,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     return ListView.builder(
       controller: _scroll,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppInset.page,
+        vertical: AppSpace.sm,
+      ),
       itemCount: items.length,
       itemBuilder: (context, i) {
         final m = items[i];
@@ -250,12 +271,15 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        padding: const EdgeInsets.fromLTRB(
+          AppInset.page,
+          AppSpace.xs,
+          AppInset.page,
+          AppSpace.xs,
+        ),
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
-          border: Border(
-            top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5)),
-          ),
+          border: Border(top: BorderSide(color: theme.dividerColor)),
         ),
         child: Column(
           children: [
@@ -268,47 +292,41 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                     child: OutlinedButton(
                       onPressed: busy ? null : _reject,
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.blocked,
-                        minimumSize: const Size(0, 42),
+                        foregroundColor: AppColors.blocked(context),
+                        side: BorderSide(color: AppColors.blocked(context).withValues(alpha: 0.5)),
                       ),
                       child: const Text('打回'),
                     ),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: AppSpace.xs),
                   Expanded(
                     child: FilledButton(
                       onPressed: busy ? null : _approve,
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.done,
-                        minimumSize: const Size(0, 42),
+                        backgroundColor: AppColors.done(context),
+                        foregroundColor: theme.colorScheme.onPrimary,
                       ),
                       child: const Text('通过'),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpace.xs),
             ],
             // 普通成员能看到按钮但没有 canAct。这里不把按钮藏掉，
             // 而是真的让后端拒一次——用户明确要的就是这个行为：
             // 看得见、点得到、但会被告知「只有管理员能操作」。
             if (t != null && _c.canAct == false && (t.needsMe || t.blocked))
               Padding(
-                padding: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.only(bottom: AppSpace.xs),
                 child: Row(
                   children: [
-                    Icon(
-                      Icons.lock_outline,
-                      size: 16,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
+                    Icon(Icons.lock_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: AppSpace.xs),
                     Expanded(
                       child: Text(
                         '通过和打回只有系统管理员能操作',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                        style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
                       ),
                     ),
                   ],
@@ -319,27 +337,25 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
             //   requirement 群——更常见的误解是「需求群里的每句话都算数」，
             //   结果讨论半天发现它没听见（它确实只认 @）。
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: AppSpace.xs),
               child: Row(
                 children: [
                   Icon(
-                    canStart || !isChat
-                        ? Icons.smart_toy_outlined
-                        : Icons.lock_outline,
-                    size: 16,
+                    canStart || !isChat ? Icons.smart_toy_outlined : Icons.lock_outline,
+                    size: 20,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: AppSpace.xs),
                   Expanded(
                     child: Text(
                       isChat
                           ? (canStart
-                              ? '想让它开工？@需求bot 说一句你要什么。'
-                              : '要让 agent 开工，得由系统管理员 @需求bot 说一句')
-                          : '它只看得见 @需求bot 的话，其它的都在群里聊。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                              // 具体怎么 @ 由右边的按钮说，这行只讲「为什么」：
+                              // 两段都写全会在 360 宽的屏上折成两行，把输入框顶下去
+                              ? '想让它动手？'
+                              : '让 agent 动手得找管理员')
+                          : '它只看得见 @ 它的话',
+                      style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
                     ),
                   ),
                   if (canStart || !isChat)
@@ -360,20 +376,21 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                     enabled: !busy,
                     minLines: 1,
                     maxLines: 5,
+                    style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
                     textInputAction: TextInputAction.newline,
                     decoration: InputDecoration(
                       hintText: isChat ? '聊点什么' : '聊点什么（要它听就 @需求bot）',
-                      isDense: true,
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: AppSpace.xs),
                 IconButton.filled(
+                  tooltip: '发送',
                   onPressed: busy ? null : _send,
                   icon: busy
                       ? const SizedBox(
-                          width: 18,
-                          height: 18,
+                          width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.arrow_upward),
@@ -397,46 +414,70 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+      padding: const EdgeInsets.fromLTRB(
+        AppInset.page,
+        AppSpace.xs,
+        AppInset.page,
+        AppSpace.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           StageProgress(stages: thread.stages, currentLabel: thread.stage),
           if ((thread.waitingLabel ?? '').isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.waiting.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Text(
-                thread.waitingLabel!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: AppColors.waiting,
-                  height: 1.45,
-                ),
-              ),
+            const SizedBox(height: AppSpace.xs),
+            Builder(
+              builder: (context) {
+                // 卡住和「等你确认」是两种完全不同的处境：前者是它干不下去了，
+                // 后者是它在等你。同一个橙色会让人以为该点「通过」。
+                final tint = thread.blocked
+                    ? AppColors.blocked(context)
+                    : AppColors.waiting(context);
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpace.sm,
+                    vertical: AppSpace.xs,
+                  ),
+                  decoration: BoxDecoration(
+                    color: tint.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.medium),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        thread.blocked ? Icons.error_outline : Icons.schedule,
+                        size: 16,
+                        color: tint,
+                      ),
+                      const SizedBox(width: AppSpace.xs),
+                      Expanded(
+                        child: Text(
+                          thread.waitingLabel!,
+                          style: AppText.bodyS.copyWith(color: tint),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ],
           if ((thread.featureBranch ?? '').isNotEmpty) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: AppSpace.xs),
             Row(
               children: [
                 Icon(
                   Icons.account_tree_outlined,
-                  size: 13,
+                  size: 16,
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 5),
+                const SizedBox(width: AppSpace.xs),
                 Expanded(
                   child: Text(
                     thread.featureBranch!,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontSize: 11,
-                    ),
+                    style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -465,22 +506,27 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final mine = message.isMine;
+    final mine = message.isMineFor(auth.user?.id);
+    // 群里可能有好几个人，光写「我 / Agent」会让人分不清这句是谁说的
+    final who = mine
+        ? '我'
+        : message.role == 'bot'
+        ? 'Agent'
+        : (message.nickname?.isNotEmpty == true ? message.nickname! : '成员');
 
     return Padding(
-      padding: EdgeInsets.only(top: showMeta ? 12 : 3),
+      padding: EdgeInsets.only(top: showMeta ? AppSpace.sm : AppSpace.xxs),
       child: Column(
         crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           if (showMeta)
             Padding(
-              padding: const EdgeInsets.only(bottom: 4, left: 6, right: 6),
+              padding: const EdgeInsets.only(bottom: AppSpace.xxs, left: AppSpace.xs, right: AppSpace.xs),
               child: Text(
-                '${mine ? '我' : 'Agent'} · ${Fmt.messageTime(message.at)}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: 10.5,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+                '$who · ${Fmt.messageTime(message.at)}',
+                style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ConstrainedBox(
@@ -489,18 +535,18 @@ class _Bubble extends StatelessWidget {
             ),
             child: Container(
               padding: EdgeInsets.symmetric(
-                horizontal: message.kind == 'image' ? 6 : 12,
-                vertical: message.kind == 'image' ? 6 : 9,
+                horizontal: message.kind == 'image' ? AppSpace.xs : AppSpace.sm,
+                vertical: message.kind == 'image' ? AppSpace.xs : AppSpace.xs,
               ),
               decoration: BoxDecoration(
                 color: mine
                     ? theme.colorScheme.primaryContainer
                     : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.65),
                 borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(14),
-                  topRight: const Radius.circular(14),
-                  bottomLeft: Radius.circular(mine ? 14 : 4),
-                  bottomRight: Radius.circular(mine ? 4 : 14),
+                  topLeft: const Radius.circular(AppRadius.medium),
+                  topRight: const Radius.circular(AppRadius.medium),
+                  bottomLeft: const Radius.circular(AppRadius.medium),
+                  bottomRight: const Radius.circular(AppRadius.medium),
                 ),
               ),
               child: _content(context),
@@ -523,7 +569,9 @@ class _Bubble extends StatelessWidget {
         return SelectionArea(
           child: Text(
             message.text,
-            style: const TextStyle(fontSize: 14, height: 1.5),
+            style: AppText.body.copyWith(
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
           ),
         );
     }
@@ -570,7 +618,7 @@ class _ImageContentState extends State<_ImageContent> {
           return _fallback(context, '加载中…');
         }
         return ClipRRect(
-          borderRadius: BorderRadius.circular(9),
+          borderRadius: BorderRadius.circular(AppRadius.medium),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 320),
             child: Image.memory(snap.data!, fit: BoxFit.contain),
@@ -581,11 +629,15 @@ class _ImageContentState extends State<_ImageContent> {
   }
 
   Widget _fallback(BuildContext context, String text) {
-    return SizedBox(
-      width: 160,
-      height: 90,
-      child: Center(
-        child: Text(text, style: Theme.of(context).textTheme.bodySmall),
+    final theme = Theme.of(context);
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 200),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.md, vertical: AppSpace.xl),
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -626,14 +678,14 @@ class _FileContent extends StatelessWidget {
     final theme = Theme.of(context);
     return InkWell(
       onTap: () => _download(context),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppRadius.medium),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpace.xxs, vertical: AppSpace.xxs),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.insert_drive_file_outlined, size: 20, color: theme.colorScheme.primary),
-            const SizedBox(width: 8),
+            const SizedBox(width: AppSpace.xs),
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -641,19 +693,22 @@ class _FileContent extends StatelessWidget {
                 children: [
                   Text(
                     message.fileName ?? '文件',
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500),
+                    style: AppText.bodyS.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w500,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     Fmt.bytes(message.fileSize),
-                    style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
+                    style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 6),
-            Icon(Icons.download_outlined, size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: AppSpace.xs),
+            Icon(Icons.download_outlined, size: 20, color: theme.colorScheme.onSurfaceVariant),
           ],
         ),
       ),
@@ -670,11 +725,21 @@ class _RejectDialog extends StatefulWidget {
 
 class _RejectDialogState extends State<_RejectDialog> {
   final _text = TextEditingController();
+  String? _error;
 
   @override
   void dispose() {
     _text.dispose();
     super.dispose();
+  }
+
+  void _submit() {
+    final v = _text.text.trim();
+    if (v.isEmpty) {
+      setState(() => _error = '写一句哪里不对，它才知道往哪改');
+      return;
+    }
+    Navigator.of(context).pop(v);
   }
 
   @override
@@ -686,19 +751,22 @@ class _RejectDialogState extends State<_RejectDialog> {
         autofocus: true,
         maxLines: 4,
         minLines: 2,
-        decoration: const InputDecoration(
-          hintText: '哪里不对、要改成什么样。写得越具体，下一轮改得越准。',
+        decoration: InputDecoration(
+          labelText: '打回原因',
+          hintText: '哪里不对、要改成什么样',
+          helperText: '写得越具体，下一轮改得越准。',
+          errorText: _error,
         ),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('取消'),
         ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(_text.text),
-          child: const Text('确认打回'),
-        ),
+        FilledButton(onPressed: _submit, child: const Text('确认打回')),
       ],
     );
   }
