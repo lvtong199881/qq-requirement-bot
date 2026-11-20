@@ -215,4 +215,93 @@ void main() {
     expect(find.widgetWithText(FilledButton, '提交'), findsNothing);
     expect(find.textContaining('只有系统管理员能操作'), findsOneWidget);
   });
+
+  testWidgets('题号跟卡片一致：第 14 题写意见、第 15 题选项，两行都要在', (tester) async {
+    String? sentText;
+    List<MessageAnswer>? sentAnswers;
+    final questions = [
+      for (var i = 1; i <= 15; i++)
+        AskQuestion(
+          id: 'q$i',
+          title: 'Q$i 第 $i 个问题？',
+          kind: 'single',
+          allowInput: true,
+          inputLabel: '都不是？自己写',
+          options: [opt('a', '甲'), opt('b', '乙')],
+        ),
+    ];
+
+    await tester.pumpWidget(
+      host(
+        AskCardView(
+          card: card(questions),
+          canSubmit: true,
+          onSubmit: (text, answers) async {
+            sentText = text;
+            sentAnswers = answers;
+            return true;
+          },
+        ),
+      ),
+    );
+
+    // 十五道题一屏放不下，先把测试窗口撑高，省得一路 scrollUntilVisible
+    tester.view.physicalSize = const Size(1000, 4200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pump();
+
+    // 第 14 题只写意见，第 15 题只点选项
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(13), '照旧版来，先别动埋点');
+    await tester.pump();
+    await tester.tap(find.text('甲').last);
+    await tester.pump();
+
+    await tester.tap(find.widgetWithText(FilledButton, '提交'));
+    await tester.pump();
+
+    expect(
+      sentText,
+      'Q14 第 14 个问题？ C. 照旧版来，先别动埋点\nQ15 第 15 个问题？ A. 甲',
+    );
+    expect(sentAnswers?.map((a) => a.qid), ['q14', 'q15']);
+    expect(sentAnswers?.first.input, '照旧版来，先别动埋点');
+  });
+
+  testWidgets('滑出视野再回来，写了一半的意见还在', (tester) async {
+    final drafts = <String, AskDraft>{};
+    final questions = [
+      AskQuestion(
+        id: 'q1',
+        title: 'Q1 弹窗时机？',
+        kind: 'single',
+        allowInput: true,
+        inputLabel: '自己写',
+        options: [opt('a', '首次启动')],
+      ),
+    ];
+
+    Widget build() => host(
+      AskCardView(
+        card: card(questions),
+        canSubmit: true,
+        drafts: drafts,
+        onSubmit: (text, answers) async => true,
+      ),
+    );
+
+    await tester.pumpWidget(build());
+    await tester.enterText(find.byType(TextField), '每次升级后第一次');
+    await tester.pump();
+
+    // 模拟卡片被回收重建：换一棵树再挂回来，草稿在页面那一层
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pumpWidget(build());
+
+    expect(find.text('每次升级后第一次'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, '提交'));
+    await tester.pump();
+    expect(find.text('已提交'), findsNothing); // 提交成功也不弹错误
+  });
 }

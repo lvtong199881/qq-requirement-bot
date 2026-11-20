@@ -49,6 +49,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   final _focus = FocusNode();
   final _scroll = ScrollController();
 
+  /// 提问卡片的草稿（按消息序号分）。卡片在 ListView 里滑出屏幕就被回收，
+  /// 草稿留在页面这一层，滚回去还能接着填。
+  final Map<int, Map<String, AskDraft>> _drafts = {};
+
   /// 首屏加载超过 1 秒才出转圈，避免网络快时闪一下。
   bool _slowLoad = false;
   Timer? _slowTimer;
@@ -249,7 +253,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           return Padding(
             padding: const EdgeInsets.only(bottom: AppSpace.sm),
             child: AskCardView(
+              // 带上消息序号：列表增删消息时 Flutter 才会把同一个状态还给同一张卡
+              key: ValueKey('ask-${m.seq}'),
               card: card,
+              drafts: _drafts.putIfAbsent(m.seq, () => <String, AskDraft>{}),
               canSubmit: widget.auth.perms.confirm,
               answered: answers[m.seq],
               busy: _c.sending,

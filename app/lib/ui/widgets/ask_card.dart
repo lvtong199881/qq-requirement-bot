@@ -9,6 +9,17 @@ import '../theme.dart';
 /// 用户得在输入框里手打字母。问题一多就记不住第几个题对应哪个选项，
 /// 打错一位 agent 就按错的选项往下做，往往要等几步之后才被发现。
 /// 卡片把选择变成点选，提交时还能一次把勾选结果结构化发回去。
+/// 一道题答到什么程度。
+///
+/// 草稿必须放在卡片外面：卡片在 ListView 里，滑出屏幕范围就被回收了，
+/// 十五道题的表单很容易滑出去——草稿跟着 State 走就等于「回了半屏再看，
+/// 刚才写的意见没了」。上层按消息序号持有一份，卡片重建也能接着填。
+class AskDraft {
+  final Set<String> picked = <String>{};
+  String typed = '';
+  bool get isEmpty => picked.isEmpty && typed.trim().isEmpty;
+}
+
 class AskCardView extends StatefulWidget {
   const AskCardView({
     super.key,
@@ -17,9 +28,13 @@ class AskCardView extends StatefulWidget {
     required this.onSubmit,
     this.answered,
     this.busy = false,
+    this.drafts,
   });
 
   final AskCard card;
+
+  /// 上层持有的草稿，key 是题目 id；不传就退化成「只活在卡片里」
+  final Map<String, AskDraft>? drafts;
 
   /// 没有确认权限时只显示、不让提交（和原来的「通过/打回」按钮一致）
   final bool canSubmit;
@@ -37,10 +52,14 @@ class AskCardView extends StatefulWidget {
 }
 
 class _AskCardViewState extends State<AskCardView> {
-  final Map<String, Set<String>> _picked = {};
   final Map<String, TextEditingController> _inputs = {};
+  final Map<String, AskDraft> _local = {};
   bool _sending = false;
   String? _error;
+
+  Map<String, AskDraft> get _drafts => widget.drafts ?? _local;
+
+  AskDraft _draft(String qid) => _drafts.putIfAbsent(qid, AskDraft.new);
 
   @override
   void dispose() {
@@ -50,8 +69,11 @@ class _AskCardViewState extends State<AskCardView> {
     super.dispose();
   }
 
-  TextEditingController _input(String qid) =>
-      _inputs.putIfAbsent(qid, () => TextEditingController());
+  TextEditingController _input(String qid) => _inputs.putIfAbsent(
+    qid,
+    // 用草稿里的文字初始化：卡片被回收重建后，输入框里还是刚才写的内容
+    () => TextEditingController(text: _draft(qid).typed),
+  );
 
   bool get _locked => widget.answered != null;
 
@@ -60,16 +82,14 @@ class _AskCardViewState extends State<AskCardView> {
     // 只要求「至少答了一道」：agent 可能一次问十五个，硬性全答等于不让人提交，
     // 漏掉的那几道它下一轮还会再问
     for (final q in widget.card.questions) {
-      final picked = _picked[q.id] ?? const <String>{};
-      final typed = (_inputs[q.id]?.text ?? '').trim();
-      if (picked.isNotEmpty || typed.isNotEmpty) return true;
+      if (!_draft(q.id).isEmpty) return true;
     }
     return false;
   }
 
   void _toggle(AskQuestion q, String optionId) {
     setState(() {
-      final set = _picked.putIfAbsent(q.id, () => <String>{});
+      final set = _draft(q.id).picked;
       if (q.isMulti) {
         set.contains(optionId) ? set.remove(optionId) : set.add(optionId);
       } else {
@@ -82,6 +102,10 @@ class _AskCardViewState extends State<AskCardView> {
     });
   }
 
+  /// 题干里已经自带编号（agent 常写成「Q14 是否需要…」「14. 是否…」）时不再加一次，
+  /// 用户按卡片上看到的题号核对，序号必须和卡片一致。
+  static final _numbered = RegExp(r'^\s*(?:[Qq第]\s*)?\d+');
+
   /// 提交后自动插进消息流的那句话。
   ///
   /// 用户要的是「打回就发打回，通过就发通过，决策就发问题+选项」——
@@ -90,23 +114,22 @@ class _AskCardViewState extends State<AskCardView> {
     final card = widget.card;
     if (card.isConfirm) {
       final q = card.questions.first;
-      final picked = _picked[q.id] ?? const <String>{};
-      if (picked.contains('approve')) return '通过';
-      final reason = (_inputs[q.id]?.text ?? '').trim();
-      if (picked.contains('reject')) return reason.isEmpty ? '打回' : '打回：$reason';
+      final d = _draft(q.id);
+      final reason = d.typed.trim();
+      if (d.picked.contains('approve')) return '通过';
+      if (d.picked.contains('reject')) return reason.isEmpty ? '打回' : '打回：$reason';
       return reason;
     }
     final lines = <String>[];
-    var n = 0;
-    for (final q in card.questions) {
-      final picked = _picked[q.id] ?? const <String>{};
-      final typed = (_inputs[q.id]?.text ?? '').trim();
+    for (var i = 0; i < card.questions.length; i++) {
+      final q = card.questions[i];
+      final d = _draft(q.id);
+      final typed = d.typed.trim();
       // 没答的题不进这句话：十五道里答了三道，群里只该出现三行
-      if (picked.isEmpty && typed.isEmpty) continue;
-      n++;
+      if (d.picked.isEmpty && typed.isEmpty) continue;
       final labels = <String>[];
       for (var j = 0; j < q.options.length; j++) {
-        if (picked.contains(q.options[j].id)) {
+        if (d.picked.contains(q.options[j].id)) {
           labels.add('${String.fromCharCode(65 + j)}. ${q.options[j].label}');
         }
       }
@@ -114,7 +137,9 @@ class _AskCardViewState extends State<AskCardView> {
         // 自己写的排最后一个选项的位置，和下发的选项字母对得上
         labels.add('${String.fromCharCode(65 + q.options.length)}. $typed');
       }
-      lines.add('$n. ${q.title} ${labels.join('  ')}'.trimRight());
+      // 题号用卡片上的序号，不是「答过的第几条」
+      final head = _numbered.hasMatch(q.title) ? q.title : '${i + 1}. ${q.title}';
+      lines.add('$head ${labels.join('  ')}'.trimRight());
     }
     return lines.join('\n');
   }
@@ -122,12 +147,11 @@ class _AskCardViewState extends State<AskCardView> {
   List<MessageAnswer> _answers() => [
     for (final q in widget.card.questions)
       // 没答的题不发：引擎那边按 qid 对位取选项，空答案只会让回答块变长
-      if ((_picked[q.id] ?? const <String>{}).isNotEmpty ||
-          (_inputs[q.id]?.text ?? '').trim().isNotEmpty)
+      if (!_draft(q.id).isEmpty)
         MessageAnswer(
           qid: q.id,
-          optionIds: (_picked[q.id] ?? const <String>{}).toList(),
-          input: (_inputs[q.id]?.text ?? '').trim(),
+          optionIds: _draft(q.id).picked.toList(),
+          input: _draft(q.id).typed.trim(),
         ),
   ];
 
@@ -180,12 +204,18 @@ class _AskCardViewState extends State<AskCardView> {
           for (var i = 0; i < card.questions.length; i++) ...[
             if (i > 0) const SizedBox(height: AppSpace.md),
             _Question(
-              index: card.questions.length > 1 ? i + 1 : null,
+              // 题干自带「Q14」这种编号时不再叠一层，否则卡片和自动回复里的题号都会变成「14. Q14 …」
+              index: card.questions.length > 1 && !_numbered.hasMatch(card.questions[i].title)
+                  ? i + 1
+                  : null,
               question: card.questions[i],
-              picked: _picked[card.questions[i].id] ?? const <String>{},
+              picked: _draft(card.questions[i].id).picked,
               input: _input(card.questions[i].id),
               enabled: !_locked && !_sending,
               onToggle: (id) => _toggle(card.questions[i], id),
+              onTyped: (v) => _drafts
+                  .putIfAbsent(card.questions[i].id, AskDraft.new)
+                  .typed = v,
               answered: answered,
             ),
           ],
@@ -231,6 +261,7 @@ class _Question extends StatelessWidget {
     required this.input,
     required this.enabled,
     required this.onToggle,
+    required this.onTyped,
     required this.index,
     this.answered,
   });
@@ -240,6 +271,7 @@ class _Question extends StatelessWidget {
   final TextEditingController input;
   final bool enabled;
   final void Function(String optionId) onToggle;
+  final void Function(String text) onTyped;
   final int? index;
   final List<MessageAnswer>? answered;
 
@@ -290,6 +322,7 @@ class _Question extends StatelessWidget {
               minLines: 1,
               maxLines: 3,
               style: AppText.bodyS,
+              onChanged: onTyped,
               decoration: InputDecoration(hintText: question.inputLabel),
             ),
           ),
