@@ -13,5 +13,8 @@
   "scripts": {
     "start": "node src/index.js",
     "doctor": "node src/doctor.js"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
   }
 }

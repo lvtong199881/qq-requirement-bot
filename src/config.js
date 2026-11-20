@@ -300,6 +300,10 @@ export function loadConfig(configPath) {
       // 只监听这个地址。默认 0.0.0.0 是为了 cloudflared/tailscale 能连进来；
       // 没有隧道又想更保守，就写 127.0.0.1 然后用本机反代转发。
       host: typeof raw.api?.host === 'string' && raw.api.host.trim() ? raw.api.host.trim() : '0.0.0.0',
+      // 手机该填的地址。留空就按 host 推：0.0.0.0 用局域网 IP，
+      // 回环地址就只打 http://127.0.0.1:port。走 Cloudflare 隧道时填隧道域名，
+      // 启动日志里打出来的二维码才是手机真正能连的那个（隧道地址每次重启会变）。
+      publicUrl: typeof raw.api?.publicUrl === 'string' ? raw.api.publicUrl.trim().replace(/\/+$/, '') : '',
       // 允许的 CORS 来源。留空则不回 CORS 头——App 和 curl 都不需要，
       // 只有浏览器里的页面才需要，那属于要单独想清楚的场景。
       allowedOrigin: typeof raw.api?.allowedOrigin === 'string' ? raw.api.allowedOrigin : '',
