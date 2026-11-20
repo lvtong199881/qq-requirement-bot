@@ -207,8 +207,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  // 详情页输入区有「通过 / 打回」两个按钮 + @ 提示行，是横向空间最紧的地方
-  testWidgets('320 宽下群详情输入区不溢出', (tester) async {
+  // 详情页输入区有 @ 提示行 + 右侧按钮，是横向空间最紧的地方；
+  // 提问卡片也常在这一屏里（最宽的一张是「需要你拍板」多题卡）。
+  testWidgets('320 宽下群详情输入区和提问卡片不溢出', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
@@ -233,7 +234,34 @@ void main() {
         });
       }
       if (req.url.path == '/api/threads/t1/messages') {
-        return _ok({'messages': [], 'lastSeq': 0});
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': DateTime.now().millisecondsSinceEpoch,
+              'role': 'bot',
+              'kind': 'ask',
+              'payload': {
+                'title': '需要你拍板',
+                'submitLabel': '提交',
+                'questions': [
+                  {
+                    'id': 'q1',
+                    'title': '欢迎弹窗什么时候出现比较合适？给新用户看还是所有人看？',
+                    'kind': 'single',
+                    'allowInput': true,
+                    'inputLabel': '都不是？自己写',
+                    'options': [
+                      {'id': 'a', 'label': '首次启动时给新用户看（推荐）'},
+                      {'id': 'b', 'label': '每次启动都弹，所有人可见'},
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+          'lastSeq': 1,
+        });
       }
       return _ok({});
     });
@@ -244,7 +272,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('通过'), findsOneWidget);
+    expect(find.text('需要你拍板'), findsOneWidget);
+    expect(find.text('提交'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     // 详情页 3 秒轮询一次，测试结束前要把页面拆掉，

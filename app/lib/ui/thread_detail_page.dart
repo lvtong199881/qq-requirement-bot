@@ -9,6 +9,7 @@ import '../state/auth.dart';
 import '../state/detail.dart';
 import 'format.dart';
 import 'theme.dart';
+import 'widgets/ask_card.dart';
 import 'widgets/stage.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
@@ -116,26 +117,8 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     _focus.requestFocus();
   }
 
-  Future<void> _approve() async {
-    final ok = await _c.approve();
-    if (ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已通过')));
-    }
-  }
-
-  /// 打回必须写原因：只说「不行」，agent 不知道该改什么，
-  /// 下一轮大概率还是错的，白烧一轮 token。
-  Future<void> _reject() async {
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (_) => const _RejectDialog(),
-    );
-    if (reason == null || reason.trim().isEmpty) return;
-    final ok = await _c.reject(reason.trim());
-    if (ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已打回')));
-    }
-  }
+  // 通过/打回不再走这里：它们已经是消息流里的提问卡片，提交时和普通消息
+  // 走同一条路径（带 answers），权限也由后端按 confirm 判。
 
   @override
   Widget build(BuildContext context) {
@@ -241,6 +224,13 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     // reverse: true 让新消息贴在底部，同时天然支持往上翻历史，
     // 不用自己算偏移量。所以列表要倒过来喂。
     final items = _c.messages.reversed.toList();
+    // 谁回答了哪张卡片：用户消息上的 askSeq 指向卡片消息的 seq。
+    // 卡片拿到这个就不再让人重复提交，直接显示勾过的结果。
+    final answers = <int, List<MessageAnswer>>{};
+    for (final m in _c.messages) {
+      final seq = m.askSeq;
+      if (seq != null && m.answers.isNotEmpty) answers[seq] = m.answers;
+    }
     return ListView.builder(
       controller: _scroll,
       reverse: true,
@@ -254,6 +244,19 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         final older = i + 1 < items.length ? items[i + 1] : null;
         // 同一个人连续说话时不重复显示头像/时间，读起来更像对话
         final showMeta = older == null || older.role != m.role || m.at - older.at > 3 * 60 * 1000;
+        final card = m.ask;
+        if (card != null) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: AppSpace.sm),
+            child: AskCardView(
+              card: card,
+              canSubmit: widget.auth.perms.confirm,
+              answered: answers[m.seq],
+              busy: _c.sending,
+              onSubmit: (text, list) => _c.send(text, answers: list, askSeq: m.seq),
+            ),
+          );
+        }
         return _Bubble(message: m, showMeta: showMeta, auth: widget.auth);
       },
     );
@@ -283,55 +286,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         ),
         child: Column(
           children: [
-            // 需要拍板时把动作放在输入框上方：这是当前最该做的事，
-            // 藏在菜单里等于没有。
-            if (_c.showActions) ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: busy ? null : _reject,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.blocked(context),
-                        side: BorderSide(color: AppColors.blocked(context).withValues(alpha: 0.5)),
-                      ),
-                      child: const Text('打回'),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpace.xs),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: busy ? null : _approve,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.done(context),
-                        foregroundColor: theme.colorScheme.onPrimary,
-                      ),
-                      child: const Text('通过'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpace.xs),
-            ],
-            // 普通成员能看到按钮但没有 canAct。这里不把按钮藏掉，
-            // 而是真的让后端拒一次——用户明确要的就是这个行为：
-            // 看得见、点得到、但会被告知「只有管理员能操作」。
-            if (t != null && _c.canAct == false && (t.needsMe || t.blocked))
-              Padding(
-                padding: const EdgeInsets.only(bottom: AppSpace.xs),
-                child: Row(
-                  children: [
-                    Icon(Icons.lock_outline, size: 20, color: theme.colorScheme.onSurfaceVariant),
-                    const SizedBox(width: AppSpace.xs),
-                    Expanded(
-                      child: Text(
-                        '通过和打回只有系统管理员能操作',
-                        style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+            // 通过/打回不再占一行按钮：它现在是消息流里的一张提问卡片
+            // （和「需要你拍板」的多选题是同一种东西）。按钮下沉成卡片之后，
+            // 一句话就能说清「在等哪一步、通过还是打回」，也不用在输入框
+            // 和按钮之间来回看。
             // 两句话得一直摆在输入框上面，否则用户会以为「群里说话它就听得见」：
             //   chat 群——没人知道这个群还能叫 agent 干活；
             //   requirement 群——更常见的误解是「需求群里的每句话都算数」，
@@ -716,58 +674,3 @@ class _FileContent extends StatelessWidget {
   }
 }
 
-class _RejectDialog extends StatefulWidget {
-  const _RejectDialog();
-
-  @override
-  State<_RejectDialog> createState() => _RejectDialogState();
-}
-
-class _RejectDialogState extends State<_RejectDialog> {
-  final _text = TextEditingController();
-  String? _error;
-
-  @override
-  void dispose() {
-    _text.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final v = _text.text.trim();
-    if (v.isEmpty) {
-      setState(() => _error = '写一句哪里不对，它才知道往哪改');
-      return;
-    }
-    Navigator.of(context).pop(v);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('打回'),
-      content: TextField(
-        controller: _text,
-        autofocus: true,
-        maxLines: 4,
-        minLines: 2,
-        decoration: InputDecoration(
-          labelText: '打回原因',
-          hintText: '哪里不对、要改成什么样',
-          helperText: '写得越具体，下一轮改得越准。',
-          errorText: _error,
-        ),
-        onChanged: (_) {
-          if (_error != null) setState(() => _error = null);
-        },
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('确认打回')),
-      ],
-    );
-  }
-}

@@ -236,10 +236,19 @@ class ApiClient {
     String threadId,
     String text, {
     List<String> mentions = const [],
+    List<MessageAnswer> answers = const [],
+    int? askSeq,
   }) => _send(
     'POST',
     '/api/threads/${Uri.encodeComponent(threadId)}/messages',
-    body: {'text': text, if (mentions.isNotEmpty) 'mentions': mentions},
+    body: {
+      'text': text,
+      if (mentions.isNotEmpty) 'mentions': mentions,
+      // 提问卡片上点「提交」：勾选结果原样发回去，引擎按 q1..qN 对位还原，
+      // 比让用户手打「1B 2A」可靠得多
+      if (answers.isNotEmpty) 'answers': answers.map((a) => a.toJson()).toList(),
+      'askSeq': ?askSeq,
+    },
   );
 
   /// 需求引擎连没连上。

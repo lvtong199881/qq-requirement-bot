@@ -106,14 +106,27 @@ class ThreadDetailController extends ChangeNotifier {
     }
   }
 
-  Future<bool> send(String text, {List<String> mentions = const []}) async {
+  Future<bool> send(
+    String text, {
+    List<String> mentions = const [],
+    List<MessageAnswer> answers = const [],
+    int? askSeq,
+  }) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return false;
+    // 点卡片提交时文本是自动拼的，但用户也可能什么都没勾——那种情况由页面拦住，
+    // 这里只要求「有文本或有勾选」。
+    if (trimmed.isEmpty && answers.isEmpty) return false;
     sending = true;
     actionError = null;
     notifyListeners();
     try {
-      await _api.sendMessage(threadId, trimmed, mentions: mentions);
+      await _api.sendMessage(
+        threadId,
+        trimmed,
+        mentions: mentions,
+        answers: answers,
+        askSeq: askSeq,
+      );
       // 后端是先落库再返回的，所以紧跟着的这次拉取一定包含刚发的那条。
       // 不做本地乐观插入：那要做文本去重，一旦后端改措辞就会重影。
       _inFlight = false;

@@ -225,7 +225,7 @@ class Message {
   /// user / bot
   final String role;
 
-  /// text / image / file / stage / decision
+  /// text / image / file / stage / decision / ask
   final String kind;
   final Map<String, dynamic> payload;
 
@@ -245,11 +245,121 @@ class Message {
   String? get fileName => payload['name']?.toString();
   int? get fileSize => (payload['size'] as num?)?.toInt();
 
+  /// 提问卡片。像 ask_user_question 那样直接躺在消息流里，
+  /// 勾完点「提交」就把选择发回去，不用在输入框里手打字母。
+  bool get isAsk => kind == 'ask';
+  AskCard? get ask => isAsk ? AskCard.fromPayload(payload) : null;
+
+  /// 用户回答的是哪张卡片（卡片消息的 seq）。没回答过是 null。
+  int? get askSeq => (payload['askSeq'] as num?)?.toInt();
+
+  /// 勾选结果，只在回答卡片的那条用户消息上有。
+  List<MessageAnswer> get answers => ((payload['answers'] as List?) ?? const [])
+      .whereType<Map>()
+      .map((m) => MessageAnswer.fromJson(m.cast<String, dynamic>()))
+      .toList();
+
   factory Message.fromJson(Map<String, dynamic> j) => Message(
     seq: (j['seq'] as num?)?.toInt() ?? 0,
     at: (j['at'] as num?)?.toInt() ?? 0,
     role: (j['role'] ?? 'bot').toString(),
     kind: (j['kind'] ?? 'text').toString(),
     payload: (j['payload'] as Map?)?.cast<String, dynamic>() ?? const {},
+  );
+}
+
+/// 一张提问卡片：一个标题 + 若干道题 + 一次提交。
+class AskCard {
+  const AskCard({
+    required this.title,
+    required this.submitLabel,
+    required this.questions,
+  });
+
+  final String title;
+  final String submitLabel;
+  final List<AskQuestion> questions;
+
+  static AskCard? fromPayload(Map<String, dynamic> p) {
+    final qs = ((p['questions'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => AskQuestion.fromJson(m.cast<String, dynamic>()))
+        .where((q) => q.id.isNotEmpty && q.title.isNotEmpty)
+        .toList();
+    if (qs.isEmpty) return null;
+    return AskCard(
+      title: (p['title'] ?? '需要你拍板').toString(),
+      submitLabel: (p['submitLabel'] ?? '提交').toString(),
+      questions: qs,
+    );
+  }
+
+  /// 只有「通过 / 打回」这一题的卡片，样子和普通多选题不一样。
+  bool get isConfirm => questions.length == 1 && questions.first.id == 'confirm';
+}
+
+class AskQuestion {
+  const AskQuestion({
+    required this.id,
+    required this.title,
+    required this.kind,
+    required this.allowInput,
+    required this.inputLabel,
+    required this.options,
+  });
+
+  final String id;
+  final String title;
+
+  /// single / multi
+  final String kind;
+  final bool allowInput;
+  final String inputLabel;
+  final List<AskOption> options;
+
+  bool get isMulti => kind == 'multi';
+
+  factory AskQuestion.fromJson(Map<String, dynamic> j) => AskQuestion(
+    id: (j['id'] ?? '').toString(),
+    title: (j['title'] ?? '').toString(),
+    kind: (j['kind'] == 'multi') ? 'multi' : 'single',
+    allowInput: j['allowInput'] == true,
+    inputLabel: (j['inputLabel'] ?? '自己写').toString(),
+    options: ((j['options'] as List?) ?? const [])
+        .whereType<Map>()
+        .map((m) => AskOption.fromJson(m.cast<String, dynamic>()))
+        .where((o) => o.id.isNotEmpty)
+        .toList(),
+  );
+}
+
+class AskOption {
+  const AskOption({required this.id, required this.label});
+  final String id;
+  final String label;
+
+  factory AskOption.fromJson(Map<String, dynamic> j) => AskOption(
+    id: (j['id'] ?? '').toString(),
+    label: (j['label'] ?? '').toString(),
+  );
+}
+
+/// 一条回答：第几题、选了哪些选项、另外补充了什么。
+class MessageAnswer {
+  const MessageAnswer({required this.qid, required this.optionIds, required this.input});
+  final String qid;
+  final List<String> optionIds;
+  final String input;
+
+  Map<String, dynamic> toJson() => {
+    'qid': qid,
+    'optionIds': optionIds,
+    if (input.trim().isNotEmpty) 'input': input.trim(),
+  };
+
+  factory MessageAnswer.fromJson(Map<String, dynamic> j) => MessageAnswer(
+    qid: (j['qid'] ?? '').toString(),
+    optionIds: ((j['optionIds'] as List?) ?? const []).map((e) => e.toString()).toList(),
+    input: (j['input'] ?? '').toString(),
   );
 }

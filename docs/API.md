@@ -568,7 +568,46 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 | `image` | `{ url, name }` | 设计稿，`url` 可直接下载 |
 | `file` | `{ url, name, size }` | 交付文件 |
 | `stage` | `{ stage, status }` | 阶段变化，App 可渲染成进度卡片 |
-| `decision` | `{ title, items }` | 待决策项 |
+| `decision` | `{ title, items }` | 待决策项（旧版，只有文字） |
+| `ask` | 见下 | 提问卡片：让用户在消息流里直接勾选、提交 |
+
+用户消息上还可能带 `askSeq`（回答的是哪张卡片）和 `answers`（勾了什么）：
+
+```jsonc
+{
+  "seq": 8,
+  "role": "user",
+  "kind": "text",
+  "payload": {
+    "text": "1. 弹窗时机？ A. 首次启动（推荐）",
+    "askSeq": 7,
+    "answers": [{ "qid": "q1", "optionIds": ["a"], "input": "" }]
+  }
+}
+```
+
+`ask` 的 `payload`：
+
+```jsonc
+{
+  "title": "需要你拍板",
+  "submitLabel": "提交",
+  "questions": [
+    {
+      "id": "q1",
+      "title": "弹窗什么时候出现比较合适？",
+      "kind": "single",          // single 单选 / multi 多选
+      "allowInput": true,        // 允许「都不是，自己写」
+      "inputLabel": "都不是？自己写",
+      "options": [{ "id": "a", "label": "首次启动（推荐）" }, { "id": "b", "label": "每次启动" }]
+    }
+  ]
+}
+```
+
+一张卡片最多 26 个问题、每题最多 26 个选项；`kind` 不认识的一律当 `single`。
+通过/打回也是一张 `ask` 卡（一道题、两个选项 `approve`/`reject`），所以 App 里不再有单独的按钮——
+**勾选后点提交，就是原来那个「通过」或「打回」**，权限判定完全一样。
 
 消息存成每 thread 一个 JSONL 文件（`.state/messages/<threadId>.jsonl`），
 只追加不改写。`text` 超过 20000 字会被截断。
@@ -582,6 +621,19 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 ```
 
 可选 `mentions: ["bot"]`，不传就按文本里的 `@需求bot` 判断。
+
+也可以带 `answers` + `askSeq` 交提问卡片：带了 `answers` 就等同于点了卡片上的提交，
+**不需要再 @ 需求 bot**（点按钮不该再要求打一次 @），权限按 `confirm` 判。
+
+```jsonc
+{
+  "text": "1. 弹窗时机？ A. 首次启动（推荐）",
+  "askSeq": 7,
+  "answers": [{ "qid": "q1", "optionIds": ["a"], "input": "" }]
+}
+```
+
+`optionIds` 为空表示这题靠 `input` 里的自写内容回答。`input` 最多 2000 字。
 
 成功返回 `{ ok: true, accepted: true }`，同样**不等回合跑完**。
 
