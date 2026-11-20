@@ -431,8 +431,8 @@ class _Bubble extends StatelessWidget {
       case 'file':
         return _FileContent(message: message, auth: auth);
       default:
-        // 文本。SelectionArea 让长报告能长按复制——这也是 QQ 那边
-        // 最常用的操作，不能丢。
+        // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
+        // 想摘一段发出去是常态，不能丢。
         return SelectionArea(
           child: Text(
             message.text,
