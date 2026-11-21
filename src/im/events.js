@@ -55,7 +55,7 @@ export class EngineEvents {
    * 记一条事件。
    *
    * @param {'start'|'message'|'group'} type
-   *        start: 群里第一句 @需求bot，要开需求
+   *        start: 群里第一句 @机器人账号，要开需求
    *        message: 需求群里的普通发言
    *        group: 群建好/改名，引擎可能想更新自己的目录
    */
