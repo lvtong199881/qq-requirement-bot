@@ -179,12 +179,15 @@ class ApiClient {
 
   // ── 需求 ──
 
-  Future<List<Thread>> listThreads() async {
+  /// 群列表。顺带把 agent 的显示名带回来——App 要拼「@AI员工」，
+  /// 名字在服务端配置里，前端不能写死。
+  Future<({List<Thread> threads, String? botName})> listThreads() async {
     final m = await _send('GET', '/api/threads');
-    return (m['threads'] as List? ?? const [])
+    final threads = (m['threads'] as List? ?? const [])
         .whereType<Map>()
         .map((e) => Thread.fromJson(e.cast<String, dynamic>()))
         .toList();
+    return (threads: threads, botName: m['botName']?.toString());
   }
 
   /// 建群。只给一个名字：需求不在这一步提，@ 需求 bot 才开跑。
@@ -230,8 +233,8 @@ class ApiClient {
   /// 发一条消息。
   ///
   /// mentions 是「这句话提到了谁」：@ 了需求 bot 的那句才会开需求。
-  /// 服务端也会从文本里认手打的「@需求bot」，但显式传更准
-  /// （bot 名字可配置，文本里不一定是「需求bot」）。
+  /// 服务端也会从文本里认手打的「@名字」，但显式传更准
+  /// （bot 名字可配置，文本里不一定是同一个名字）。
   Future<void> sendMessage(
     String threadId,
     String text, {

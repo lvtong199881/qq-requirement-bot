@@ -7,7 +7,7 @@
 ## 会消耗 token 的两个
 
 ```bash
-node test/full.js             # 全链路：从 App API 建群 → @需求bot 提需求 → 跑 dsh → 在消息流里收到回复
+node test/full.js             # 全链路：从 App API 建群 → @AI员工 提需求 → 跑 dsh → 在消息流里收到回复
 node test/queue-rerun.js      # 回合进行中插话，结束后必须补跑
 ```
 

@@ -52,6 +52,7 @@ class User {
     required this.role,
     required this.roleLabel,
     this.disabled = false,
+    this.isBot = false,
   });
 
   final String id;
@@ -64,6 +65,10 @@ class User {
   final String roleLabel;
   final bool disabled;
 
+  /// 机器人账号：跟普通账号同一张表，只是标了 bot。
+  /// 它不能登录、不能改角色/停用/重置密码，账号页里只读展示。
+  final bool isBot;
+
   String get displayName => nickname.isNotEmpty ? nickname : username;
   bool get isAdmin => role == 'admin';
 
@@ -74,6 +79,7 @@ class User {
     role: (j['role'] ?? 'member').toString(),
     roleLabel: (j['roleLabel'] ?? '').toString(),
     disabled: j['disabled'] == true,
+    isBot: j['isBot'] == true || (j['role'] ?? '') == 'bot',
   );
 }
 
@@ -130,6 +136,7 @@ class Thread {
     this.featureBranch,
     this.lastSeq = 0,
     this.canAct = false,
+    this.botName,
   });
 
   final String threadId;
@@ -144,7 +151,7 @@ class Thread {
   /// 需求群不会退回 chat：那样「这句话该不该交给 agent」就说不清了。
   final String mode;
 
-  /// 群里还没有需求。此时 stage 为 null，详情页要提示「@需求bot 说一句」。
+  /// 群里还没有需求。此时 stage 为 null，详情页要提示「@AI员工 说一句」。
   final bool pending;
   final String? reqId;
 
@@ -172,6 +179,16 @@ class Thread {
 
   /// 我能不能点通过/打回。普通成员能看到按钮，但这里会是 false。
   final bool canAct;
+
+  /// agent 在群里的显示名（服务端给，默认「AI员工」）。
+  /// 名字可配置，所以界面上所有「@名字」都要用它拼，不能在代码里写死。
+  final String? botName;
+
+  /// 界面上展示的 @ 名字：服务端没给时退回默认值。
+  String get botDisplayName {
+    final n = botName?.trim() ?? '';
+    return n.isEmpty ? 'AI员工' : n;
+  }
 
   /// 列表和标题用的名字：有需求名用需求名，还没提需求就退回群名。
   String get title {
@@ -206,6 +223,7 @@ class Thread {
     featureBranch: j['featureBranch']?.toString(),
     lastSeq: (j['lastSeq'] as num?)?.toInt() ?? 0,
     canAct: j['canAct'] == true,
+    botName: j['botName']?.toString(),
   );
 }
 

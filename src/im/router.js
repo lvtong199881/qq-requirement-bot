@@ -12,29 +12,32 @@
  * 触发一轮真金白银的回合。要不要让它听见，永远由说话的人用 @ 说清楚。
  */
 
-/** 引擎在群成员列表里的固定 id。用户表里不会有它，靠这个前缀避开撞号 */
-export const BOT_ID = 'bot'
+import { BOT_USER_ID } from '../account/store.js'
 
-/** 默认的 bot 名字，config.bot?.name 可以覆盖 */
-export const DEFAULT_BOT_NAME = '需求bot'
+/** 机器人在群成员列表里的 id——就是它的用户账号 id，不是另造的标记 */
+export const BOT_ID = BOT_USER_ID
+
+/** 默认的 bot 名字，config.bot?.name 可以覆盖。App 拿到这个名字再拼「@名字」 */
+export const DEFAULT_BOT_NAME = 'AI员工'
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
  * 收集「这条消息提到了谁」。
  *
- * App 会显式带 mentions（点按钮插入的），但手打「@需求bot」的也要认：
+ * App 会显式带 mentions（点按钮插入的），但手打「@名字」的也要认：
  * 网页端、curl、以及用户习惯性手打都在这一条路径上，认不出来就等于
  * 需求发不出去，还不会有任何报错。
  *
- * 同时认配置里的 bot 名字和默认的「需求bot」：App 的按钮和文档统一写
- * @需求bot，团队把 bot 改名成「产品同学」之后，按老名字 @ 也不该失效。
+ * 只认当前昵称：名字从机器人账号读出来，改名后就该只认新的。旧名字继续
+ * 生效等于「改个显示名」并不能真正换掉触发词，用户改了名还会被老的 @ 命中。
  */
 export function mentionsOf({ mentions, text, botName = DEFAULT_BOT_NAME } = {}) {
   const out = new Set()
   for (const m of Array.isArray(mentions) ? mentions : []) {
     const id = String(m ?? '').trim()
-    if (id) out.add(id)
+    // 老客户端/老脚本里写的是 'bot' 这个占位符，映射到机器人的账号 id
+    if (id) out.add(id === 'bot' ? BOT_ID : id)
   }
   if (typeof text === 'string') {
     for (const name of botNames(botName)) {
@@ -47,10 +50,10 @@ export function mentionsOf({ mentions, text, botName = DEFAULT_BOT_NAME } = {}) 
   return [...out]
 }
 
-/** 能被 @ 到的名字：配置的名字 + 默认名字（去重、去空） */
+/** 能被 @ 到的名字：机器人账号当前的昵称，没配就用默认名 */
 function botNames(botName) {
-  const names = [String(botName ?? '').trim(), DEFAULT_BOT_NAME]
-  return [...new Set(names.filter(Boolean))]
+  const name = String(botName ?? '').trim()
+  return [name || DEFAULT_BOT_NAME]
 }
 
 /**
@@ -73,10 +76,10 @@ export function routeMessage({ mode = 'chat', mentions = [] } = {}) {
 }
 
 /**
- * 去掉文本里的 @需求bot。
+ * 去掉文本里的 @ 名字。
  *
  * 需求名和需求描述都会被这句话带着走（makeReqName 取前 30 字），
- * 留着「@需求bot」会让每个需求的标题都以它开头。
+ * 留着「@AI员工」会让每个需求的标题都以它开头。
  */
 export function stripBotMention(text, botName = DEFAULT_BOT_NAME) {
   let out = String(text ?? '')

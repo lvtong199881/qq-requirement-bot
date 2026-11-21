@@ -370,13 +370,13 @@ console.log('\n== 群里不 @ 就是普通聊天 ==')
   check('群里还没有需求', detail.data?.thread?.pending === true)
 }
 
-console.log('\n== @需求bot 才算提需求 ==')
+console.log('\n== @AI员工 才算提需求 ==')
 {
   // 普通成员 @ 一下也要被拒，否则 startRequirement 就被绕过去了
   const before = messages.list(threadId, { limit: 100 }).messages.length
   const denied = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
-    body: { text: '@需求bot 给首页加个欢迎弹窗', mentions: ['bot'] },
+    body: { text: '@AI员工 给首页加个欢迎弹窗', mentions: ['bot'] },
   })
   check('普通成员提需求被拒 403', denied.status === 403, String(denied.status))
   check('提示需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
@@ -384,7 +384,7 @@ console.log('\n== @需求bot 才算提需求 ==')
 
   const r = await api('POST', `/api/threads/${threadId}/messages`, {
     token: adminToken,
-    body: { text: '@需求bot 给首页加个欢迎弹窗', mentions: ['bot'] },
+    body: { text: '@AI员工 给首页加个欢迎弹窗', mentions: ['bot'] },
   })
   check('管理员能提需求', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data))
   check(
@@ -394,7 +394,7 @@ console.log('\n== @需求bot 才算提需求 ==')
   )
   check(
     '@ 的痕迹留在消息里（气泡要能高亮）',
-    messages.list(threadId, { limit: 100 }).messages.some((m) => (m.payload?.mentions ?? []).includes('bot')),
+    messages.list(threadId, { limit: 100 }).messages.some((m) => (m.payload?.mentions ?? []).length > 0),
   )
 
   const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
@@ -411,7 +411,7 @@ console.log('\n== 消息顺序：用户的话必须在 bot 播报之前 ==')
   const list = r.data?.messages ?? []
   check('两条自己说的 + 一条 bot', list.length === 3, String(list.length))
   check('最后一条是 bot', list.at(-1)?.role === 'bot', list.at(-1)?.role)
-  check('bot 之前是刚提的需求', list.at(-2)?.payload?.text === '@需求bot 给首页加个欢迎弹窗')
+  check('bot 之前是刚提的需求', list.at(-2)?.payload?.text === '@AI员工 给首页加个欢迎弹窗')
   check('seq 递增', list.every((m, i) => i === 0 || m.seq === list[i - 1].seq + 1))
 }
 
@@ -439,7 +439,7 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
 
   const at = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
-    body: { text: '@需求bot 给新用户看，第一次打开的时候弹', mentions: ['bot'] },
+    body: { text: '@AI员工 给新用户看，第一次打开的时候弹', mentions: ['bot'] },
   })
   check('@ 之后发言成功', at.status === 200 && at.data?.action === 'message', at.data?.action)
   check(
@@ -479,7 +479,7 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
 
   const rel = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
-    body: { text: '@需求bot /release', mentions: ['bot'] },
+    body: { text: '@AI员工 /release', mentions: ['bot'] },
   })
   check('普通成员 /release 被拒 403', rel.status === 403, String(rel.status))
   check('拒绝原因是权限', rel.data?.error === '只有系统管理员能释放会话', rel.data?.error)

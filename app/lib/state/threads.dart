@@ -31,6 +31,9 @@ class ThreadListController extends ChangeNotifier {
   /// 单独存一份而不是塞进 Thread：引擎掉线是全站状态，跟哪个群无关。
   bool? engineOnline;
 
+  /// agent 的显示名，服务端给。界面拼「@名字」用它，不写死。
+  String botName = 'AI员工';
+
   Timer? _timer;
   bool _inFlight = false;
   bool _disposed = false;
@@ -68,10 +71,12 @@ class ThreadListController extends ChangeNotifier {
         _api.listThreads(),
         _api.engineOnline().catchError((_) => null),
       ]);
-      final list = results[0] as List<Thread>;
+      final page = results[0] as ({List<Thread> threads, String? botName});
       if (_disposed) return;
       engineOnline = results[1] as bool?;
-      threads = sortThreads(list);
+      // 服务端没配 bot 名字时留空，界面统一退回默认的「AI员工」
+      if ((page.botName ?? '').trim().isNotEmpty) botName = page.botName!.trim();
+      threads = sortThreads(page.threads);
       lastSyncedAt = DateTime.now();
       error = null;
     } on ApiException catch (e) {

@@ -29,6 +29,7 @@ const RATE_MAX_FAILS = 20
  *        把一条用户消息投进群里。普通聊天就地留下，@ 了需求 bot 才交给引擎
  * @param {(o: {name?:string, user:object}) => Promise<object>} o.createGroup  新建群
  * @param {{handle:Function, status:Function}=} o.engine  引擎通道（IM 独立部署时才有）
+ * @param {string=} o.botName  agent 在群里的显示名，App 用它拼「@名字」，不在前端写死
  * @param {(...a:any[]) => void} o.log
  * @param {string=} o.allowedOrigin  CORS 白名单，空则允许所有（Flutter 原生不需要 CORS）
  */
@@ -41,6 +42,7 @@ export function createApiServer({
   deliver,
   createGroup,
   engine = null,
+  botName = 'AI员工',
   log,
   allowedOrigin = '',
 }) {
@@ -211,8 +213,14 @@ export function createApiServer({
           canAct: users.can('confirm', user).ok,
         }))
         // 引擎在不在线决定 App 要不要显示「需求暂时不可用」——
-        // 这个状态放列表里，省得前端为一个布尔值再打一次接口
-        return json(res, 200, { ok: true, threads, engine: engine ? engine.status() : null })
+        // 这个状态放列表里，省得前端为一个布尔值再打一次接口。
+        // botName 一起带上：App 要拼「@AI员工」，名字可配置就不能写死。
+        return json(res, 200, {
+          ok: true,
+          threads,
+          botName,
+          engine: engine ? engine.status() : null,
+        })
       }
 
       if (method === 'POST' && path === '/api/threads') {
@@ -237,7 +245,11 @@ export function createApiServer({
 
         const result = await createGroup({ name, user })
         if (!result.ok) return json(res, 400, result)
-        return json(res, 200, result)
+        // 建完群就进详情，先把名字带上，省得第一屏闪烁一次默认名字
+        return json(res, 200, {
+          ...result,
+          thread: result.thread ? { ...result.thread, botName } : result.thread,
+        })
       }
 
       // 产物下载。/api/threads/:id/artifacts/:token
@@ -278,7 +290,8 @@ export function createApiServer({
         if (method === 'GET' && !sub) {
           return json(res, 200, {
             ok: true,
-            thread: { ...info, canAct: users.can('confirm', user).ok },
+            // botName 跟着详情一起回：详情页的「@名字」和气泡作者名都要用
+            thread: { ...info, canAct: users.can('confirm', user).ok, botName },
             engine: engine ? engine.status() : null,
           })
         }

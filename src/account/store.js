@@ -25,10 +25,22 @@ import {
   verifyToken,
 } from './auth.js'
 
-export const ROLES = { admin: 'admin', member: 'member' }
+export const ROLES = { admin: 'admin', member: 'member', bot: 'bot' }
 
 /** 角色中文名，给 UI 和提示文案用 */
-export const ROLE_LABELS = { admin: '系统管理员', member: '普通成员' }
+export const ROLE_LABELS = { admin: '系统管理员', member: '普通成员', bot: '机器人' }
+
+/**
+ * 机器人账号的固定 id。
+ *
+ * 它和普通账号存在同一张表里——群里 @ 的是「某个用户」，不是一段文本，
+ * 所以消息归属、@ 判定、发言人显示都走账号，不能在代码里另挂一个名字。
+ * id 固定是为了重启/换机器之后历史消息里的 @ 仍然对得上同一个人。
+ */
+export const BOT_USER_ID = 'u_bot'
+
+/** 机器人账号的用户名（不可登录，密码字段一直是空的） */
+export const BOT_USERNAME = 'bot'
 
 export class UserStore {
   /**
@@ -184,12 +196,56 @@ export class UserStore {
   }
 
   /**
+   * 机器人账号。
+   *
+   * 它本质上就是一个用户：有 id、有昵称，消息挂在它名下，群里 @ 的是它的昵称。
+   * 区别只有两条——role 是 bot（权限表里不给任何「替人拍板」的权力），
+   * 以及没有密码（永远不会有人以它的身份登录）。
+   *
+   * 昵称随配置走：改了 config.bot.name，下次启动就同步过来，
+   * 历史消息里的 nickname 不动（那是当时的事实）。
+   *
+   * @returns {{created:boolean, user:object}}
+   */
+  ensureBot({ nickname = 'AI员工' } = {}) {
+    const name = String(nickname ?? '').trim() || 'AI员工'
+    const existing = this.findById(BOT_USER_ID)
+    if (existing) {
+      if (existing.role !== ROLES.bot) existing.role = ROLES.bot
+      if (existing.nickname !== name) {
+        existing.nickname = name
+        this.#save()
+      }
+      return { created: false, user: publicUser(existing) }
+    }
+    const user = {
+      id: BOT_USER_ID,
+      username: BOT_USERNAME,
+      nickname: name,
+      role: ROLES.bot,
+      createdAt: Date.now(),
+      disabled: false,
+      isBot: true,
+    }
+    this.data.users.push(user)
+    this.#save()
+    return { created: true, user: publicUser(user) }
+  }
+
+  /** 机器人账号（没有就返回 null） */
+  botUser() {
+    return this.findById(BOT_USER_ID)
+  }
+
+  /**
    * 登录。用户名错和密码错返回同一句文案——
    * 分开说等于免费提供一个「这个用户名存在」的探测器。
    */
   login({ username, password }) {
     const user = this.findByUsername(username)
     if (!user) return { ok: false, error: '用户名或密码不对' }
+    // 机器人账号没有密码，也不该有人用它的身份操作
+    if (user.role === ROLES.bot) return { ok: false, error: '用户名或密码不对' }
     if (!verifyPassword(password, user.salt, user.passwordHash)) {
       return { ok: false, error: '用户名或密码不对' }
     }
@@ -239,6 +295,10 @@ export class UserStore {
   setRole(id, role) {
     const user = this.findById(id)
     if (!user) return { ok: false, error: '没有这个账号' }
+    // 机器人是系统的一部分，不是某个人：改它的角色等于把 agent 变成能拍板的账号
+    if (user.role === ROLES.bot || role === ROLES.bot) {
+      return { ok: false, error: '机器人账号的角色不能改' }
+    }
     if (!ROLES[role]) return { ok: false, error: '角色只能是 admin 或 member' }
     // 不允许把最后一个管理员降级：否则没人能再管理，只能改 JSON 救场
     if (user.role === ROLES.admin && role !== ROLES.admin) {
@@ -255,6 +315,8 @@ export class UserStore {
   setDisabled(id, disabled) {
     const user = this.findById(id)
     if (!user) return { ok: false, error: '没有这个账号' }
+    // 停掉机器人等于整个系统不能 @ 了，这是配置错误不是账号管理
+    if (user.role === ROLES.bot) return { ok: false, error: '机器人账号不能停用' }
     if (disabled && user.role === ROLES.admin) {
       const others = this.data.users.filter((u) => u.id !== id && u.role === ROLES.admin && !u.disabled)
       if (others.length === 0) return { ok: false, error: '这是最后一个管理员，不能停用' }
@@ -267,6 +329,8 @@ export class UserStore {
   resetPassword(id, password) {
     const user = this.findById(id)
     if (!user) return { ok: false, error: '没有这个账号' }
+    // 给机器人设密码等于开一个能替 agent 说话的后门
+    if (user.role === ROLES.bot) return { ok: false, error: '机器人账号不能设密码' }
     const bad = checkPassword(password)
     if (bad) return { ok: false, error: bad }
     user.salt = newSalt()
@@ -322,6 +386,9 @@ export function publicUser(u) {
     createdAt: u.createdAt ?? null,
     lastLoginAt: u.lastLoginAt ?? null,
     disabled: Boolean(u.disabled),
+    // 机器人账号：App 用它决定「这行不给改角色/停用/重置密码」，
+    // 也用来在成员列表里标出「这是 agent 不是人」
+    isBot: Boolean(u.isBot) || u.role === ROLES.bot,
     // 预设账号还是那串初始密码时，App 上提醒一次。改过密码这个标记就没意义了，
     // 但留着它不会泄露什么——它只说明「这个号是系统建的」。
     preset: Boolean(u.preset),

@@ -59,7 +59,9 @@ if (config.api?.enabled !== true) {
 const store = new SessionStore(config.repoRoot, config.stateDir)
 const stateDir = store.dir
 const users = new UserStore(stateDir)
-const messages = new MessageStore(join(stateDir, 'messages'))
+// 机器人账号先落表，消息库才知道 role=bot 的消息该挂在谁名下
+const botUser = users.ensureBot({ nickname: config.bot?.name }).user
+const messages = new MessageStore(join(stateDir, 'messages'), { bot: botUser })
 const artifacts = new ArtifactStore(join(stateDir, 'artifacts'))
 const events = new EngineEvents(join(stateDir, 'engine'))
 
@@ -104,7 +106,7 @@ const engineApi = createEngineApi({
   users,
   token,
   log,
-  botName: config.bot?.name,
+  botName: botUser.nickname,
 })
 
 /** 权限裁决：用户表在 IM 这边，引擎每句话都回来问一次 */
@@ -148,7 +150,7 @@ const threads = createThreadService({
   dispatch,
   can,
   log,
-  botName: config.bot?.name,
+  botName: botUser.nickname,
 })
 
 const server = createApiServer({
@@ -160,6 +162,7 @@ const server = createApiServer({
   deliver: threads.deliver,
   createGroup: threads.createGroup,
   engine: engineApi,
+  botName: botUser.nickname,
   log,
   allowedOrigin: config.api.allowedOrigin ?? '',
 })

@@ -34,7 +34,7 @@ const KINDS = new Set(['text', 'image', 'file', 'stage', 'decision', 'ask'])
  * @param {(...a:any[])=>void} o.log
  * @param {string} [o.botName]
  */
-export function createEngineApi({ events, messages, artifacts, groups, users, token, log, botName = '需求bot' }) {
+export function createEngineApi({ events, messages, artifacts, groups, users, token, log, botName = 'AI员工' }) {
   let lastPollAt = 0
 
   // 从没连上过时返回 null（「不知道」），而不是 false（「掉线了」）：

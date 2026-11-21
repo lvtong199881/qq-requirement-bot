@@ -22,11 +22,17 @@ import { join } from 'node:path'
 const MAX_TEXT = 20000
 
 export class MessageStore {
-  /** @param {string} dir 落盘目录，通常是 join(repoRoot, '.state', 'messages') */
-  constructor(dir) {
+  /**
+   * @param {string} dir 落盘目录，通常是 join(repoRoot, '.state', 'messages')
+   * @param {{bot?: {id:string, nickname:string}}} [opts]
+   *        bot：机器人账号。role='bot' 的消息自动挂到它名下，
+   *        群里显示的就是这个账号的昵称，不用每个调用方各自填一遍。
+   */
+  constructor(dir, { bot = null } = {}) {
     this.dir = dir
     /** @type {Map<string, number>} thread → 已分配的最大 seq，懒加载 */
     this.seqCache = new Map()
+    this.bot = bot && bot.id ? { id: String(bot.id), nickname: String(bot.nickname ?? '') } : null
     this.#ensureDir()
   }
 
@@ -88,6 +94,12 @@ export class MessageStore {
     this.#ensureDir()
     const seq = this.#lastSeq(threadId) + 1
     const clean = sanitizePayload(kind, payload)
+    // 机器人说的话挂在机器人账号名下：群里按账号显示昵称和头像，
+    // 和真实用户的消息走同一套字段，前端不用为「bot」另开分支
+    if (role === 'bot' && this.bot) {
+      if (!clean.userId) clean.userId = this.bot.id
+      if (!clean.nickname && this.bot.nickname) clean.nickname = this.bot.nickname
+    }
     const row = { seq, at, role, kind, payload: clean }
 
     const file = this.#file(threadId)

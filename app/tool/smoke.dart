@@ -46,7 +46,8 @@ Future<void> main(List<String> args) async {
     check('GET /api/auth/me', me.user.id.isNotEmpty,
         'role=${me.user.roleLabel} confirm=${me.perms.confirm}');
 
-    final threads = await c.listThreads();
+    final page = await c.listThreads();
+    final threads = page.threads;
     check('GET /api/threads', true, '共 ${threads.length} 条');
     // App 列表只该出现 App 里建的 thread；QQ 群号混进来是回归
     final leaked = threads.where((t) => int.tryParse(t.threadId) != null).toList();
@@ -104,15 +105,15 @@ Future<void> main(List<String> args) async {
     check('第一句话之后进入需求流程', !one.pending && one.stages.isNotEmpty,
         'pending=${one.pending} stage=${one.stage} stages=${one.stages.length}');
 
-    final page = await c.messages(created.threadId, since: 0, limit: 50);
-    check('GET /api/threads/:id/messages', page.messages.isNotEmpty,
-        '共 ${page.messages.length} 条 lastSeq=${page.lastSeq}');
+    final msgs = await c.messages(created.threadId, since: 0, limit: 50);
+    check('GET /api/threads/:id/messages', msgs.messages.isNotEmpty,
+        '共 ${msgs.messages.length} 条 lastSeq=${msgs.lastSeq}');
     check('第一条是我说的话',
-        page.messages.first.isMine && page.messages.first.text.contains('返回顶部'),
-        page.messages.first.text);
+        msgs.messages.first.isMine && msgs.messages.first.text.contains('返回顶部'),
+        msgs.messages.first.text);
 
     await c.sendMessage(created.threadId, '补充：按钮要能配置位置');
-    final after = await c.messages(created.threadId, since: page.lastSeq);
+    final after = await c.messages(created.threadId, since: msgs.lastSeq);
     // 不止一条是正常的：投递后编排层会立刻播一条「收到，开始处理」。
     // 要验证的是增量窗口没错位——第一条必须是我刚发的那句。
     check('POST 消息 + since 增量', after.messages.isNotEmpty && after.messages.first.isMine,

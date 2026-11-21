@@ -85,6 +85,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => _NewGroupDialog(
+        botName: widget.controller.botName,
         onCreate: (name) async {
           try {
             created = await widget.controller.create(name);
@@ -141,14 +142,15 @@ class _ThreadListPageState extends State<ThreadListPage> {
         children: [
           // 引擎掉线时先说清楚：聊天照旧，只是 @ 了没人接。
           if (c.engineOnline == false)
-            const Padding(
+            Padding(
               padding: EdgeInsets.fromLTRB(AppInset.page, AppSpace.md, AppInset.page, 0),
-              child: _EngineOfflineBanner(),
+              child: _EngineOfflineBanner(botName: c.botName),
             ),
           Expanded(
             child: _EmptyState(
               canCreate: widget.auth.perms.startRequirement,
               onCreate: _create,
+              botName: c.botName,
             ),
           ),
         ],
@@ -165,7 +167,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(AppInset.page, AppSpace.xs, AppInset.page, AppSpace.xl),
         children: [
-          if (c.engineOnline == false) const _EngineOfflineBanner(),
+          if (c.engineOnline == false) _EngineOfflineBanner(botName: c.botName),
           if (waiting.isNotEmpty) ...[
             _SectionLabel(
               text: '等你确认',
@@ -327,10 +329,15 @@ class _ThreadCard extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.canCreate, required this.onCreate});
+  const _EmptyState({
+    required this.canCreate,
+    required this.onCreate,
+    required this.botName,
+  });
 
   final bool canCreate;
   final VoidCallback onCreate;
+  final String botName;
 
   @override
   Widget build(BuildContext context) {
@@ -350,7 +357,7 @@ class _EmptyState extends StatelessWidget {
             Text('还没有群', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
             const SizedBox(height: AppSpace.xs),
             Text(
-              canCreate ? '先建个群。想聊天就聊，要干活就 @需求bot 说一句。' : '等管理员建第一个群。',
+              canCreate ? '先建个群。想聊天就聊，要干活就 @$botName 说一句。' : '等管理员建第一个群。',
               textAlign: TextAlign.center,
               style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
@@ -374,7 +381,10 @@ class _EmptyState extends StatelessWidget {
 /// 不挡住整页：群和消息都在 IM 上，跟引擎死没死没关系。只是「@ 了会不会
 /// 有人接」这件事变了，得让用户知道，否则他会以为按钮坏了。
 class _EngineOfflineBanner extends StatelessWidget {
-  const _EngineOfflineBanner();
+  const _EngineOfflineBanner({required this.botName});
+
+  /// 名字从服务端来：它可配置，文案里不能写死。
+  final String botName;
 
   @override
   Widget build(BuildContext context) {
@@ -392,7 +402,7 @@ class _EngineOfflineBanner extends StatelessWidget {
           const SizedBox(width: AppSpace.xs),
           Expanded(
             child: Text(
-              '需求引擎没连上。群还能照常聊，只是 @需求bot 暂时没人接。',
+              '需求引擎没连上。群还能照常聊，只是 @$botName 暂时没人接。',
               style: AppText.bodyS.copyWith(color: theme.colorScheme.onErrorContainer),
             ),
           ),
@@ -440,10 +450,13 @@ class _ErrorState extends StatelessWidget {
 /// 这里刻意不收需求描述——群先当普通聊天用，需要 agent 干活时再在群里
 /// @ 它一句。先弹窗问需求再建群，等于把「群」降级成需求的包装壳。
 class _NewGroupDialog extends StatefulWidget {
-  const _NewGroupDialog({required this.onCreate});
+  const _NewGroupDialog({required this.onCreate, required this.botName});
 
   /// 返回 null 表示成功，返回字符串表示要展示给用户的错误。
   final Future<String?> Function(String name) onCreate;
+
+  /// agent 账号昵称，写进 helperText——名字由服务端给，这里不写死
+  final String botName;
 
   @override
   State<_NewGroupDialog> createState() => _NewGroupDialogState();
@@ -500,7 +513,7 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
         decoration: InputDecoration(
           labelText: '群名',
           hintText: '比如：首页改版、登录体验',
-          helperText: '先当群聊用，要做事时 @需求bot 说一句。',
+          helperText: '先当群聊用，要做事时 @${widget.botName} 说一句。',
           errorText: _error,
         ),
       ),

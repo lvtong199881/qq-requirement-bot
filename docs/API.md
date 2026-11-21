@@ -507,13 +507,15 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 
 在聊天模式的群里发一条 **@ 了需求 bot** 的消息，编排层就据此建 flow。这一步需要 `startRequirement` 权限（`403` 文案 `"提需求需要系统管理员权限"`，且被拒的那句话不会落库）。
 
-请求体里可以显式带上 `mentions`：
+请求体里可以显式带上 `mentions`，值是机器人账号的 id：
 
 ```jsonc
-{ "text": "@首页加个欢迎弹窗", "mentions": ["bot"] }
+{ "text": "给首页加个欢迎弹窗", "mentions": ["u_bot"] }
 ```
 
-不传 `mentions` 时，服务端也会从文本里认手打的 `@需求bot`（bot 名字可配置）。@ 判据、去 @、模式切换都在 `src/im/router.js` 里，测试见 `test/engine-channel.js`。
+不传 `mentions` 时，服务端也会从文本里认手打的 `@AI员工`。名字取自机器人账号的昵称（`config.bot.name`，缺省 `AI员工`），改了就只认新名字。@ 判据、去 @、模式切换都在 `src/im/router.js` 里，测试见 `test/engine-channel.js`。
+
+机器人本身是账号表里的一个真实账号（`role: "bot"`、`username: "bot"`、`id: "u_bot"`，服务启动时自动建）：消息归属它、@ 指向它，但它不能登录，也不能改角色、停用或重置密码。账号接口里它带 `isBot: true`。
 
 之后的规矩——**判据只有一条：有没有 @ 需求 bot**，需求群里也一样：
 
@@ -558,7 +560,7 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 }
 ```
 
-`role` 是 `user`（团队里的人说的）或 `bot`（产品同学说的）。
+`role` 是 `user`（团队里的人说的）或 `bot`（机器人账号说的，`userId` 是 `u_bot`、`nickname` 是它的昵称）。
 
 `kind` 与对应 `payload`：
 
@@ -624,7 +626,7 @@ App 自己按 `answers` + 对应卡片渲染（问题一行、选项缩进且字
 { "text": "给新用户看，第一次打开的时候弹" }
 ```
 
-可选 `mentions: ["bot"]`，不传就按文本里的 `@需求bot` 判断。
+可选 `mentions: ["u_bot"]`，不传就按文本里的 `@AI员工` 判断。
 
 也可以带 `answers` + `askSeq` 交提问卡片：带了 `answers` 就等同于点了卡片上的提交，
 **不需要再 @ 需求 bot**（点按钮不该再要求打一次 @），权限按 `confirm` 判。
@@ -699,7 +701,7 @@ IM（`src/im.js`）和需求引擎（`src/engine.js`）分开部署时，两边�
 ```jsonc
 { "seq": 12, "at": 1730000000000, "type": "start",
   "groupId": "t1a2b3c4d5e6", "text": "首页加个欢迎弹窗",
-  "mentions": ["bot"], "user": { "userId": "...", "nickname": "产品阿宝" } }
+  "mentions": ["u_bot"], "user": { "userId": "...", "nickname": "产品阿宝" } }
 ```
 
 - 事件**落盘**在 `.state/engine/events.jsonl`：引擎断网或重启期间用户 @ 的不能静默消失，连上来按游标补。

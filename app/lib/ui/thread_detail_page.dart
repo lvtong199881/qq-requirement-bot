@@ -96,23 +96,28 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     });
   }
 
+  /// agent 的显示名。名字挂在机器人账号上（服务端给），这里不写死。
+  String get _botName {
+    final n = (_c.thread?.botName ?? widget.seed?.botName ?? '').trim();
+    return n.isEmpty ? 'AI员工' : n;
+  }
+
   Future<void> _send() async {
     final text = _input.text;
     if (text.trim().isEmpty) return;
-    // @ 了需求 bot 的这句才是「开需求」，服务端也从文本里认，
-    // 但显式带上更准：bot 名字是可配置的，文本里不一定是「需求bot」
-    final mentions = text.contains('@需求bot') ? const ['bot'] : const <String>[];
-    final ok = await _c.send(text, mentions: mentions);
+    // 不再自己判断「有没有 @」：@ 的判定在服务端（它知道机器人账号叫什么），
+    // 前端猜名字等于把名字又写死一次。
+    final ok = await _c.send(text);
     if (ok && mounted) _input.clear();
   }
 
-  /// 把「@需求bot 」填进输入框。
+  /// 把「@名字 」填进输入框。
   ///
   /// 不直接发一条空需求：用户往往要先说一句背景（给谁看、什么时候弹），
   /// 让他接着打比替他按下发送键更符合实际用法。
   void _mentionBot() {
-    const token = '@需求bot ';
-    if (_input.text.contains('@需求bot')) {
+    final token = '@$_botName ';
+    if (_input.text.contains('@$_botName')) {
       _focus.requestFocus();
       return;
     }
@@ -141,7 +146,9 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           appBar: AppBar(
             // 标题只留群名/需求名。阶段和状态挪到下面那排 tag 里——标题栏第二行
             // 和下面的阶段信息说的是同一件事，两处重复等于把一屏切成三块。
-            toolbarHeight: 48,
+            // 44 是 44x44 的最小点击区，也刚好放下 17 号标题——
+            // 再矮标题就被裁了（Android 状态栏下面本来就有一道系统留白）
+            toolbarHeight: 44,
             title: Text(
               t?.title ?? '群',
               style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
@@ -153,11 +160,11 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
             // 撑满整宽，否则只有 tag 的吸顶区会被 Column 居中，看着像缩进了一截
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 没有需求进度也没有状态时整块不出现：条和分割线都不留，
-              // 否则纯聊天群顶上会白挂一条线。
-              if (t != null && _headerHasContent(t)) ...[
-                _Header(thread: t),
-                const Divider(),
+              // 分割线属于整个标题栏，不属于标签行：没有标签（纯聊天群）时
+              // 也要有，否则消息区的白底和标题栏连成一片，看不出边界在哪。
+              if (t != null) ...[
+                if (_headerHasContent(t)) _Header(thread: t),
+                const Divider(height: 1),
               ],
               Expanded(child: _messageArea(context)),
               _composer(context),
@@ -204,9 +211,9 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       final t = _c.thread;
       final empty = (t?.mode ?? 'chat') == 'chat'
           ? (t?.pending == true
-              ? '群建好了。想聊天就直接说，要干活就 @需求bot 说一句。'
+              ? '群建好了。想聊天就直接说，要干活就 @$_botName 说一句。'
               : '群里还没有消息，说第一句吧。')
-          : '群里还没有消息。要它动手，就 @需求bot 说一句。';
+          : '群里还没有消息。要它动手，就 @$_botName 说一句。';
       return Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(AppSpace.xxl),
@@ -267,6 +274,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           message: m,
           showMeta: showMeta,
           auth: widget.auth,
+          botName: _botName,
           // 回答了卡片的消息：气泡按「问题一行、选项缩进一行」排，
           // 一行到底的话十五道题糊成一片，看不清哪个答案属于哪一问
           answeredCard: m.askSeq == null ? null : cards[m.askSeq],
@@ -299,15 +307,15 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         ),
         child: Column(
           children: [
-            // 只剩一个「@需求bot」标签：聊天本身不需要解释，需要解释的是
-            // 「怎么让它动手」——所以标签就是入口，点一下把「@需求bot 」填进输入框。
+            // 只剩一个「@名字」标签：聊天本身不需要解释，需要解释的是
+            // 「怎么让它动手」——所以标签就是入口，点一下把「@名字 」填进输入框。
             // 没权限时标签变灰带锁，点不动但还在，用户看得到「还能这样」。
             Align(
               alignment: Alignment.centerLeft,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: AppSpace.xs),
                 child: Tooltip(
-                  message: canStart || !isChat ? '点一下，把「@需求bot」填进输入框' : '要让 agent 动手，得找管理员',
+                  message: canStart || !isChat ? '点一下，把「@$_botName」填进输入框' : '要让 agent 动手，得找管理员',
                   child: InkWell(
                     onTap: (canStart || !isChat) && !busy ? _mentionBot : null,
                     borderRadius: BorderRadius.circular(AppRadius.pill),
@@ -331,7 +339,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            '@需求bot',
+                            '@$_botName',
                             style: AppText.caption.copyWith(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -360,7 +368,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                     style: AppText.body.copyWith(color: theme.colorScheme.onSurface),
                     textInputAction: TextInputAction.newline,
                     decoration: InputDecoration(
-                      hintText: isChat ? '聊点什么' : '聊点什么（要它听就 @需求bot）',
+                      hintText: isChat ? '聊点什么' : '聊点什么（要它听就 @$_botName）',
                     ),
                   ),
                 ),
@@ -526,12 +534,16 @@ class _Bubble extends StatelessWidget {
     required this.message,
     required this.showMeta,
     required this.auth,
+    required this.botName,
     this.answeredCard,
   });
 
   final Message message;
   final bool showMeta;
   final AuthController auth;
+
+  /// agent 账号的昵称：老消息没带 nickname 时用它兜底
+  final String botName;
 
   /// 这条消息是在回答哪张卡片；有值且答了题时，正文按结构化排版
   final AskCard? answeredCard;
@@ -540,12 +552,13 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mine = message.isMineFor(auth.user?.id);
-    // 群里可能有好几个人，光写「我 / Agent」会让人分不清这句是谁说的
+    // 群里可能有好几个人，光写「我 / Agent」会让人分不清这句是谁说的。
+    // 机器人也是账号，优先用消息里落的昵称，老数据才退回当前昵称。
     final who = mine
         ? '我'
-        : message.role == 'bot'
-        ? 'Agent'
-        : (message.nickname?.isNotEmpty == true ? message.nickname! : '成员');
+        : (message.nickname?.isNotEmpty == true
+              ? message.nickname!
+              : (message.role == 'bot' ? botName : '成员'));
 
     return Padding(
       padding: EdgeInsets.only(top: showMeta ? AppSpace.sm : AppSpace.xxs),

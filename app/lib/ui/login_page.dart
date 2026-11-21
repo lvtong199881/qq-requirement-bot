@@ -201,7 +201,7 @@ class _LoginPageState extends State<LoginPage> {
               if (_registering) ...[
                 const SizedBox(height: AppSpace.lg),
                 const HintRow(
-                  text: '第一个注册的人会成为系统管理员。admin 才能建群、@ 需求bot 提需求、点通过/打回。',
+                  text: '第一个注册的人会成为系统管理员。admin 才能建群、@ 机器人提需求、点通过/打回。',
                 ),
               ],
 

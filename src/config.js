@@ -183,7 +183,7 @@ export function loadConfig(configPath) {
     // 对外自称。以前还有 bot.qq，那是给 OneBot 认群管理员用的；
     // 现在身份来自用户表，「谁是谁」由账号决定，这里只剩一个显示名。
     bot: {
-      name: raw.bot?.name || '产品同学',
+      name: raw.bot?.name || 'AI员工',
     },
     // 顶层 approval 是所有需求的默认批准方式
     approval: raw.approval === 'auto' ? 'auto' : 'manual',

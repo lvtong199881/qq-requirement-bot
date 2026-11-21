@@ -21,7 +21,9 @@
   // apiKeyEnv 是供应商读 key 的环境变量名，bridge 会把它注入 dsh 子进程。
   "model": { "provider": "opencode-go", "model": "deepseek-v4.1-flash", "apiKeyEnv": "OPENCODE_GO_API_KEY" },
 
-  "bot": { "name": "产品同学" },                    // 对话框里显示的昵称
+  // 机器人账号的昵称。服务启动时会把它写进用户表（id `u_bot`、username `bot`、
+  // role `bot`）：@ 它才算对 agent 说话。改这里等于改名，改完只认新名字。
+  "bot": { "name": "AI员工" },
 
   "approval": "manual",                            // manual = 每阶段等确认；auto = 自动推进
 

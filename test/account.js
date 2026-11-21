@@ -11,7 +11,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { UserStore, ROLES } from '../src/account/store.js'
+import { UserStore, ROLES, publicUser, BOT_USER_ID } from '../src/account/store.js'
 
 let pass = 0
 let fail = 0
@@ -185,6 +185,29 @@ console.log('\n== 参数不合法就不建 ==')
   check('弱密码不建', r.created === false && !!r.error)
   check('表仍然是空的', users.list().length === 0)
   check('下次还能正常建', users.ensureBootstrap().created === true)
+}
+
+console.log('\n== 机器人账号：内置、不可登录、不可管理 ==')
+{
+  const d = fresh()
+  const users = new UserStore(d)
+  const created = users.ensureBot({ nickname: 'AI员工' })
+  check('第一次启动建出机器人', created.created === true)
+  check('角色是 bot', created.user.role === ROLES.bot, created.user.role)
+  check('带 isBot 标记', created.user.isBot === true)
+  check('对外也标 isBot', publicUser(users.botUser()).isBot === true)
+
+  const again = users.ensureBot({ nickname: 'AI员工' })
+  check('重复调用不会再建一个', again.created === false && users.list().length === 1)
+
+  const renamed = users.ensureBot({ nickname: '产品同学' })
+  check('改配置后昵称跟着变', renamed.user.nickname === '产品同学', renamed.user.nickname)
+  check('id 不变（@ 的归属不会漂）', renamed.user.id === BOT_USER_ID)
+
+  check('机器人不能登录', users.login({ username: 'bot', password: '123456' }).ok === false)
+  check('机器人不能改角色', !!users.setRole(created.user.id, 'admin').error)
+  check('机器人不能停用', !!users.setDisabled(created.user.id, true).error)
+  check('机器人不能设密码', !!users.resetPassword(created.user.id, '123456').error)
 }
 
 console.log('\n== 用户表损坏时的行为 ==')

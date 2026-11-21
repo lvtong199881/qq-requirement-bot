@@ -104,7 +104,7 @@ void main() {
     final auth = await _readyAuth((req) async {
       if (req.url.path == '/api/threads') return _ok({'threads': []});
       if (req.url.path == '/api/engine/status') {
-        return _ok({'ok': true, 'online': true, 'botName': '需求bot'});
+        return _ok({'ok': true, 'online': true, 'botName': 'AI员工'});
       }
       return _ok({});
     });
@@ -124,7 +124,7 @@ void main() {
     expect(find.text('建个群'), findsOneWidget);
     expect(find.text('群名'), findsOneWidget);
     // 对话框里只收群名，要不要跑需求进群之后 @ 一句才知道
-    expect(find.text('先当群聊用，要做事时 @需求bot 说一句。'), findsOneWidget);
+    expect(find.text('先当群聊用，要做事时 @AI员工 说一句。'), findsOneWidget);
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.maxLines, 1);
     expect(find.text('发出去'), findsNothing);
@@ -147,7 +147,7 @@ void main() {
         });
       }
       if (req.url.path == '/api/engine/status') {
-        return _ok({'ok': true, 'online': false, 'botName': '需求bot'});
+        return _ok({'ok': true, 'online': false, 'botName': 'AI员工'});
       }
       return _ok({});
     });
@@ -189,7 +189,7 @@ void main() {
         });
       }
       if (req.url.path == '/api/engine/status') {
-        return _ok({'ok': true, 'online': false, 'botName': '需求bot'});
+        return _ok({'ok': true, 'online': false, 'botName': 'AI员工'});
       }
       return _ok({});
     });
@@ -283,7 +283,7 @@ void main() {
 
   // 顶部那排只放「需求进度」和「待决策」：纯聊天群没有这两样，
   // 不该为了填满而挂一个「群聊」。
-  testWidgets('纯聊天群不显示顶部标签', (tester) async {
+  testWidgets('纯聊天群不显示顶部标签，但保留分割线', (tester) async {
     final auth = await _readyAuth((req) async {
       if (req.url.path == '/api/threads/t1') {
         return _ok({
@@ -310,8 +310,9 @@ void main() {
 
     expect(find.text('群聊'), findsNothing);
     expect(find.text('待提需求'), findsNothing);
-    // 标签没了，顶上那条分割线也不该留着
-    expect(find.byType(Divider), findsNothing);
+    // 标签没了，但分割线属于整个标题栏，仍然要在——否则标题栏和消息区
+    // 连成一片白，看不出边界
+    expect(find.byType(Divider), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -338,7 +339,7 @@ void main() {
               'at': DateTime.now().millisecondsSinceEpoch,
               'role': 'user',
               'kind': 'text',
-              'payload': {'text': '@需求bot 加个返回顶部按钮'},
+              'payload': {'text': '@AI员工 加个返回顶部按钮'},
             },
           ],
           'lastSeq': 1,
@@ -369,7 +370,7 @@ void main() {
       }
       return true;
     });
-    expect(colored, ['@需求bot']);
+    expect(colored, ['@AI员工']);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

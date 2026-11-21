@@ -58,23 +58,25 @@ console.log('\n== 路由：需求群里没 @ 的还是聊天 ==')
 console.log('\n== @ 的识别：显式 mentions 和手打都要认 ==')
 {
   check('显式 mentions 认', mentionsOf({ mentions: [BOT_ID], text: '随便' }).includes(BOT_ID))
-  check('手打 @需求bot 认', mentionsOf({ text: '@需求bot 加个按钮' }).includes(BOT_ID))
+  check('手打 @AI员工 认', mentionsOf({ text: '@AI员工 加个按钮' }).includes(BOT_ID))
   check('自定义 bot 名字也认', mentionsOf({ text: '@产品同学 加个按钮', botName: '产品同学' }).includes(BOT_ID))
   check('没 @ 不认', mentionsOf({ text: '加个按钮' }).length === 0)
   check('空文本不炸', mentionsOf({ text: null }).length === 0)
   check('去重', mentionsOf({ mentions: [BOT_ID, BOT_ID] }).length === 1)
-  // App 的按钮和文档统一写 @需求bot；bot 改名之后按老名字 @ 也不该失效，
-  // 否则用户照着界面点出来的字，服务端反而不认
-  check('改名后仍认默认的 @需求bot', mentionsOf({ text: '@需求bot 加个按钮', botName: '产品同学' }).includes(BOT_ID))
+  // 只认当前昵称：改名之后旧名字不该继续触发，否则「改名」并不能真正换掉触发词
+  check(
+    '改名后不认旧名字',
+    !mentionsOf({ text: '@需求bot 加个按钮', botName: '产品同学' }).includes(BOT_ID),
+  )
 }
 
 console.log('\n== 去掉 @：需求名不该以它开头 ==')
 {
-  check('去掉 @ 和多余空格', stripBotMention('@需求bot   加个欢迎弹窗') === '加个欢迎弹窗')
-  check('中间出现的也去掉', stripBotMention('加个弹窗 @需求bot 谢谢') === '加个弹窗 谢谢')
+  check('去掉 @ 和多余空格', stripBotMention('@AI员工   加个欢迎弹窗') === '加个欢迎弹窗')
+  check('中间出现的也去掉', stripBotMention('加个弹窗 @AI员工 谢谢') === '加个弹窗 谢谢')
   check('没 @ 时原样（去首尾空格）', stripBotMention('  加个弹窗  ') === '加个弹窗')
   check('自定义名字', stripBotMention('@产品同学 加个按钮', '产品同学') === '加个按钮')
-  check('改名后也去掉默认写法', stripBotMention('@需求bot 加个按钮', '产品同学') === '加个按钮')
+  check('改名后不剥旧名字', stripBotMention('@需求bot 加个按钮', '产品同学') === '@需求bot 加个按钮')
 }
 
 console.log('\n== 事件队列：落盘 + 游标 ==')

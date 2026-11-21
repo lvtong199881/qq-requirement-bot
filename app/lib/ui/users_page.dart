@@ -87,7 +87,7 @@ class _UsersPageState extends State<UsersPage> {
         title: Text(toAdmin ? '设为系统管理员？' : '降为普通成员？'),
         content: Text(
           toAdmin
-              ? '${u.displayName} 将能建群、@ 需求bot 提需求、点通过或打回。'
+              ? '${u.displayName} 将能建群、@ 机器人提需求、点通过或打回。'
               : '${u.displayName} 将只能看群、聊天，不能再拍板。',
         ),
         actions: [
@@ -272,7 +272,15 @@ class _UserCard extends StatelessWidget {
               style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: AppSpace.xs),
-            Row(
+            // 机器人跟人共用一张账号表，但它不该被当成「人」去管理：
+            // 没有密码、不能登录，停用或降级会直接把 @ 它打需求的路掐断。
+            if (user.isBot)
+              Text(
+                '机器人账号：不能登录，也不能停用或改角色。',
+                style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              )
+            else
+              Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
@@ -307,9 +315,11 @@ class _RoleChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 管理员用主题蓝（它是「身份」，不是状态），停用才用糖果粉
+    // 管理员用主题蓝（它是「身份」，不是状态），停用才用糖果粉，
+    // 机器人用糖果绿——它不是人，跟这两种身份都不同类
     final color = switch (role) {
       'admin' => Theme.of(context).colorScheme.primary,
+      'bot' => AppColors.done(context),
       'disabled' => AppColors.blocked(context),
       _ => AppColors.idle(context),
     };

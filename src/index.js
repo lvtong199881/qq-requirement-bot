@@ -84,7 +84,9 @@ const detail = (...a) => config.verbose && runtime.log('debug', ...a)
 // 分开建是为了各自能独立演进：消息量会一直涨，用户表基本不动，
 // 混在一个文件里迟早因为写消息把用户表写坏。
 const users = new UserStore(store.dir)
-const messages = new MessageStore(pathJoin(store.dir, 'messages'))
+// 机器人也是个账号：先把它放进用户表，再让消息库把 role=bot 的消息挂到它名下
+const botUser = users.ensureBot({ nickname: config.bot.name }).user
+const messages = new MessageStore(pathJoin(store.dir, 'messages'), { bot: botUser })
 const artifacts = new ArtifactStore(pathJoin(store.dir, 'artifacts'))
 
 // 投递门面：编排层只说「说给谁听」，存储细节全在这里，见 transport/transport.js
@@ -345,7 +347,7 @@ async function buildSnapshot({ full = true } = {}) {
     },
     config: {
       profile: config.profile,
-      botName: config.bot.name,
+      botName: botUser.nickname,
       // 项目不再绑死：改哪个仓库由每条需求的内容决定（见 pickRepoFor）
       projectDir: null,
       // 团队化改造后新增的三处路径与并发上限，面板要能看到实际用的是哪
@@ -434,7 +436,7 @@ const threads = createThreadService({
   buildSnapshot,
   can,
   log,
-  botName: config.bot?.name,
+  botName: botUser.nickname,
   dispatch: async ({ threadId, text, user, replyTo, answers }) => {
     const st = machine.peek(threadId)
     if (!st) return { ok: false, error: '这个群当前不接受需求' }
@@ -598,6 +600,8 @@ function startAppApi() {
     listThreads: threads.listThreads,
     deliver: threads.deliver,
     createGroup: threads.createGroup,
+    // App 用这个名字拼「@AI员工」，改名只改配置就行
+    botName: botUser.nickname,
     log,
     allowedOrigin: config.api.allowedOrigin ?? '',
   })
