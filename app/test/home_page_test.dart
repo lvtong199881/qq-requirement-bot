@@ -281,6 +281,99 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  // 顶部那排只放「需求进度」和「待决策」：纯聊天群没有这两样，
+  // 不该为了填满而挂一个「群聊」。
+  testWidgets('纯聊天群不显示顶部标签', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'chat',
+            'pending': true,
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        return _ok({'messages': [], 'lastSeq': 0});
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('群聊'), findsNothing);
+    expect(find.text('待提需求'), findsNothing);
+    // 标签没了，顶上那条分割线也不该留着
+    expect(find.byType(Divider), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  // 气泡里的 @名字：跟输入框一个颜色，别人一眼看出这句叫了谁。
+  testWidgets('气泡里的 @ 名字用主题蓝', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'chat',
+            'pending': true,
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': DateTime.now().millisecondsSinceEpoch,
+              'role': 'user',
+              'kind': 'text',
+              'payload': {'text': '@需求bot 加个返回顶部按钮'},
+            },
+          ],
+          'lastSeq': 1,
+        });
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final primary = Theme.of(tester.element(find.byType(ThreadDetailPage)))
+        .colorScheme
+        .primary;
+    final rich = tester.widget<RichText>(
+      find.descendant(
+        of: find.byType(SelectionArea),
+        matching: find.byType(RichText),
+      ),
+    );
+    final colored = <String>[];
+    rich.text.visitChildren((s) {
+      if (s is TextSpan && s.text != null && s.style?.color == primary) {
+        colored.add(s.text!);
+      }
+      return true;
+    });
+    expect(colored, ['@需求bot']);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   // 卡片和气泡是两条消息，贴在一起时看起来像一条消息被切成两个圆角。
   testWidgets('气泡和提问卡片之间留出间隔', (tester) async {
     final auth = await _readyAuth((req) async {

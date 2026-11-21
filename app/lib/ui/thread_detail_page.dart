@@ -10,6 +10,7 @@ import '../state/detail.dart';
 import 'format.dart';
 import 'theme.dart';
 import 'widgets/ask_card.dart';
+import 'widgets/mentions.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
 ///
@@ -44,7 +45,8 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     threadId: widget.threadId,
     seed: widget.seed,
   );
-  final _input = TextEditingController();
+  // @名字在输入框里也要着色，所以用接管了 buildTextSpan 的控制器
+  final _input = MentionEditingController();
   final _focus = FocusNode();
   final _scroll = ScrollController();
 
@@ -130,6 +132,11 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       builder: (context, _) {
         final t = _c.thread;
         final theme = Theme.of(context);
+        // 输入框里的 @名字 用主题蓝，跟发出去之后气泡里的颜色是同一个
+        _input.highlight = AppText.body.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.w600,
+        );
         return Scaffold(
           appBar: AppBar(
             // 标题只留群名/需求名。阶段和状态挪到下面那排 tag 里——标题栏第二行
@@ -146,8 +153,12 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
             // 撑满整宽，否则只有 tag 的吸顶区会被 Column 居中，看着像缩进了一截
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (t != null) _Header(thread: t),
-              if (t != null) const Divider(),
+              // 没有需求进度也没有状态时整块不出现：条和分割线都不留，
+              // 否则纯聊天群顶上会白挂一条线。
+              if (t != null && _headerHasContent(t)) ...[
+                _Header(thread: t),
+                const Divider(),
+              ],
               Expanded(child: _messageArea(context)),
               _composer(context),
             ],
@@ -374,33 +385,33 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   }
 }
 
-/// 吸顶区：一行 tag（阶段 / 状态 / 分支）。
+/// 状态 tag 的文案。顺序即优先级：卡住 > 已完成 > 待决策 > 进行中。
+String? _statusOf(Thread thread) {
+  if (thread.blocked) return '卡住';
+  if (thread.finished) return '已完成';
+  if (thread.needsMe) return '待决策';
+  if (thread.running) return '进行中';
+  if ((thread.waitingLabel ?? '').isNotEmpty) return '等你确认';
+  return null;
+}
+
+/// 顶部那排 tag 有没有内容可放：需求进度或者状态，有一样才出现。
+bool _headerHasContent(Thread thread) =>
+    (thread.stage ?? '').isNotEmpty || _statusOf(thread) != null;
+
+/// 吸顶区：一行 tag（阶段 / 状态）。
 ///
-/// 原来这里是「阶段进度条 + 一整行等待原因」，两行内容把消息区压掉一块，
-/// 而且和标题栏第二行重复。现在只留 tag：阶段名一个、状态一个（卡住原因
-/// 点开看），分支一个。
+/// 只放「需求进度」和「待决策」两种：没有需求进度、也没有状态时整块不出，
+/// 纯聊天群不该在顶上挂个「群聊」。
 class _Header extends StatelessWidget {
   const _Header({required this.thread});
 
   final Thread thread;
 
-  /// 状态 tag 的文案。顺序即优先级：卡住 > 已完成 > 待决策 > 进行中。
-  String? get _statusLabel {
-    if (thread.blocked) return '卡住';
-    if (thread.finished) return '已完成';
-    if (thread.needsMe) return '待决策';
-    if (thread.running) return '进行中';
-    if ((thread.waitingLabel ?? '').isNotEmpty) return '等你确认';
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isChat = thread.mode == 'chat' && thread.name?.isNotEmpty != true;
-    final stage = (thread.stage ?? '').isNotEmpty
-        ? thread.stage!
-        : (isChat ? '群聊' : '待提需求');
-    final status = _statusLabel;
+    final stage = thread.stage ?? '';
+    final status = _statusOf(thread);
     final reason = thread.waitingLabel ?? '';
 
     return Padding(
@@ -415,11 +426,12 @@ class _Header extends StatelessWidget {
         runSpacing: AppSpace.xs,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          _Tag(
-            label: stage,
-            tint: AppColors.running(context),
-            icon: Icons.donut_small_outlined,
-          ),
+          if (stage.isNotEmpty)
+            _Tag(
+              label: stage,
+              tint: AppColors.running(context),
+              icon: Icons.donut_small_outlined,
+            ),
           if (status != null)
             _Tag(
               label: status,
@@ -591,11 +603,17 @@ class _Bubble extends StatelessWidget {
         }
         // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
         // 想摘一段发出去是常态，不能丢。
+        final scheme = Theme.of(context).colorScheme;
         return SelectionArea(
-          child: Text(
-            message.text,
-            style: AppText.body.copyWith(
-              color: Theme.of(context).colorScheme.onSurface,
+          child: Text.rich(
+            mentionRich(
+              message.text,
+              AppText.body.copyWith(color: scheme.onSurface),
+              // 叫了谁就在正文里标出来，跟输入框里的颜色一致
+              AppText.body.copyWith(
+                color: scheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         );
