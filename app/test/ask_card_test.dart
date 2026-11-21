@@ -230,12 +230,15 @@ void main() {
           options: [opt('a', '甲'), opt('b', '乙')],
         ),
     ];
+    // 卡片一次只显示一题，直接跳到第 14 题（翻十四次和用户实际做的事一样，只是慢）
+    final state = AskCardState()..step = 13;
 
     await tester.pumpWidget(
       host(
         AskCardView(
           card: card(questions),
           canSubmit: true,
+          state: state,
           onSubmit: (text, answers) async {
             sentText = text;
             sentAnswers = answers;
@@ -245,17 +248,27 @@ void main() {
       ),
     );
 
-    // 十五道题一屏放不下，先把测试窗口撑高，省得一路 scrollUntilVisible
-    tester.view.physicalSize = const Size(1000, 4200);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
+    // 第 14 题只写意见
+    await tester.enterText(find.byType(TextField), '照旧版来，先别动埋点');
     await tester.pump();
 
-    // 第 14 题只写意见，第 15 题只点选项
-    final fields = find.byType(TextField);
-    await tester.enterText(fields.at(13), '照旧版来，先别动埋点');
-    await tester.pump();
-    await tester.tap(find.text('甲').last);
+    // 第 15 题只点选项
+    state.step = 14;
+    await tester.pumpWidget(
+      host(
+        AskCardView(
+          card: card(questions),
+          canSubmit: true,
+          state: state,
+          onSubmit: (text, answers) async {
+            sentText = text;
+            sentAnswers = answers;
+            return true;
+          },
+        ),
+      ),
+    );
+    await tester.tap(find.text('甲'));
     await tester.pump();
 
     await tester.tap(find.widgetWithText(FilledButton, '提交'));
@@ -271,7 +284,7 @@ void main() {
   });
 
   testWidgets('滑出视野再回来，写了一半的意见还在', (tester) async {
-    final drafts = <String, AskDraft>{};
+    final state = AskCardState();
     final questions = [
       AskQuestion(
         id: 'q1',
@@ -287,7 +300,7 @@ void main() {
       AskCardView(
         card: card(questions),
         canSubmit: true,
-        drafts: drafts,
+        state: state,
         onSubmit: (text, answers) async => true,
       ),
     );
@@ -304,5 +317,86 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '提交'));
     await tester.pump();
     expect(find.text('已提交'), findsNothing); // 提交成功也不弹错误
+  });
+
+  testWidgets('一次一题：单选自动下一题，多选不跳，最后一题才能提交', (tester) async {
+    String? sentText;
+    List<MessageAnswer>? sentAnswers;
+    await tester.pumpWidget(
+      host(
+        AskCardView(
+          card: card([
+            AskQuestion(
+              id: 'q1',
+              title: '弹窗时机？',
+              kind: 'single',
+              allowInput: false,
+              inputLabel: '',
+              options: [opt('a', '首次启动'), opt('b', '每次启动')],
+            ),
+            AskQuestion(
+              id: 'q2',
+              title: '先做哪几块？',
+              kind: 'multi',
+              allowInput: false,
+              inputLabel: '',
+              options: [opt('a', '登录'), opt('b', '我的')],
+            ),
+            AskQuestion(
+              id: 'q3',
+              title: '什么时候上线？',
+              kind: 'single',
+              allowInput: false,
+              inputLabel: '',
+              options: [opt('a', '这周'), opt('b', '下周')],
+            ),
+          ]),
+          canSubmit: true,
+          onSubmit: (text, answers) async {
+            sentText = text;
+            sentAnswers = answers;
+            return true;
+          },
+        ),
+      ),
+    );
+
+    final submit = find.widgetWithText(FilledButton, '提交');
+    expect(find.text('1/3'), findsOneWidget);
+    // 不在最后一题，提交点不动
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+    // 单选：选完自动到第 2 题
+    await tester.tap(find.text('首次启动'));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+
+    // 多选：选两个都停在原地
+    await tester.tap(find.text('登录'));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+    await tester.tap(find.text('我的'));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+    // 跳过第 2 题 → 第 3 题，这时提交才亮
+    await tester.tap(find.text('跳过'));
+    await tester.pump();
+    expect(find.text('3/3'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+
+    // 上一题还能回去看
+    await tester.tap(find.byTooltip('上一题'));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('下一题'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '提交'));
+    await tester.pump();
+
+    expect(sentText, '1. 弹窗时机？\n  A. 首次启动\n2. 先做哪几块？\n  A. 登录\n  B. 我的');
+    expect(sentAnswers?.map((a) => a.qid), ['q1', 'q2']);
   });
 }

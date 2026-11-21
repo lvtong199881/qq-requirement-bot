@@ -20,6 +20,15 @@ class AskDraft {
   bool get isEmpty => picked.isEmpty && typed.trim().isEmpty;
 }
 
+/// 卡片在图里要保住的状态：当前看到第几题 + 每题的草稿。
+///
+/// 两样都不能跟着 State 走：卡片在 ListView 里滑出屏幕就被回收，
+/// 看完第 3 题再滑回来如果退回第 1 题、意见也没了，等于白填。
+class AskCardState {
+  int step = 0;
+  final Map<String, AskDraft> drafts = <String, AskDraft>{};
+}
+
 class AskCardView extends StatefulWidget {
   const AskCardView({
     super.key,
@@ -28,13 +37,13 @@ class AskCardView extends StatefulWidget {
     required this.onSubmit,
     this.answered,
     this.busy = false,
-    this.drafts,
+    this.state,
   });
 
   final AskCard card;
 
-  /// 上层持有的草稿，key 是题目 id；不传就退化成「只活在卡片里」
-  final Map<String, AskDraft>? drafts;
+  /// 上层持有的状态；不传就退化成「只活在卡片里」
+  final AskCardState? state;
 
   /// 没有确认权限时只显示、不让提交（和原来的「通过/打回」按钮一致）
   final bool canSubmit;
@@ -53,11 +62,13 @@ class AskCardView extends StatefulWidget {
 
 class _AskCardViewState extends State<AskCardView> {
   final Map<String, TextEditingController> _inputs = {};
-  final Map<String, AskDraft> _local = {};
+  final AskCardState _local = AskCardState();
   bool _sending = false;
   String? _error;
 
-  Map<String, AskDraft> get _drafts => widget.drafts ?? _local;
+  AskCardState get _st => widget.state ?? _local;
+
+  Map<String, AskDraft> get _drafts => _st.drafts;
 
   AskDraft _draft(String qid) => _drafts.putIfAbsent(qid, AskDraft.new);
 
@@ -88,18 +99,41 @@ class _AskCardViewState extends State<AskCardView> {
   }
 
   void _toggle(AskQuestion q, String optionId) {
+    var pickedNow = false;
     setState(() {
       final set = _draft(q.id).picked;
       if (q.isMulti) {
         set.contains(optionId) ? set.remove(optionId) : set.add(optionId);
       } else {
         // 单选：再点一次取消，方便「我选错了，清掉」
-        set.contains(optionId) ? set.clear() : (set
-          ..clear()
-          ..add(optionId));
+        if (set.contains(optionId)) {
+          set.clear();
+        } else {
+          set
+            ..clear()
+            ..add(optionId);
+          pickedNow = true;
+        }
       }
       _error = null;
     });
+    // 单选点完就往下走：一次只看一道题，选中还停在原地等于让人多点一次「下一题」。
+    // 多选不能自动走——第二项还没点完，跳走就等于把它从眼前拿掉。
+    if (pickedNow) _next(q.id);
+  }
+
+  List<AskQuestion> get _questions => widget.card.questions;
+
+  /// 翻到某一题（越界就夹在范围内）。
+  void _go(int step) {
+    final last = _questions.length - 1;
+    setState(() => _st.step = step < 0 ? 0 : (step > last ? last : step));
+  }
+
+  /// 单选作答后自动前进一位；已经是最后一题就不动。
+  void _next(String qid) {
+    final i = _questions.indexWhere((q) => q.id == qid);
+    if (i >= 0 && i < _questions.length - 1) _go(i + 1);
   }
 
   /// 题干里已经自带编号（agent 常写成「Q14 是否需要…」「14. 是否…」）时不再加一次，
@@ -180,6 +214,11 @@ class _AskCardViewState extends State<AskCardView> {
     final scheme = Theme.of(context).colorScheme;
     final card = widget.card;
     final answered = widget.answered;
+    final total = _questions.length;
+    final step = _st.step.clamp(0, total - 1);
+    final q = _questions[step];
+    final isLast = step == total - 1;
+    final submitted = _locked;
 
     return Container(
       width: double.infinity,
@@ -194,68 +233,128 @@ class _AskCardViewState extends State<AskCardView> {
         children: [
           Row(
             children: [
-              Icon(Icons.smart_toy_outlined, size: 18, color: scheme.primary),
+              Icon(Icons.smart_toy_outlined, size: 16, color: scheme.primary),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   card.title,
-                  style: AppText.label.copyWith(color: scheme.primary),
-                  maxLines: 2,
+                  style: AppText.caption.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: AppSpace.xs),
-          for (var i = 0; i < card.questions.length; i++) ...[
-            if (i > 0) const SizedBox(height: AppSpace.sm),
-            _Question(
-              // 题干自带「Q14」这种编号时不再叠一层，否则卡片和自动回复里的题号都会变成「14. Q14 …」
-              index: card.questions.length > 1 && !_numbered.hasMatch(card.questions[i].title)
-                  ? i + 1
-                  : null,
-              question: card.questions[i],
-              picked: _draft(card.questions[i].id).picked,
-              input: _input(card.questions[i].id),
-              enabled: !_locked && !_sending,
-              onToggle: (id) => _toggle(card.questions[i], id),
-              onTyped: (v) => _drafts
-                  .putIfAbsent(card.questions[i].id, AskDraft.new)
-                  .typed = v,
-              answered: answered,
-            ),
-          ],
+          const SizedBox(height: 6),
+          // 一次只显示一道题：agent 一次能问十五道，全铺开是一屏表单，
+          // 填到一半根本不知道还剩几道、自己在第几道。
+          _Question(
+            // 题干自带「Q14」这种编号时不再叠一层，否则卡片和自动回复里的题号都会变成「14. Q14 …」
+            index: total > 1 && !_numbered.hasMatch(q.title) ? step + 1 : null,
+            question: q,
+            picked: _draft(q.id).picked,
+            input: _input(q.id),
+            enabled: !submitted && !_sending,
+            onToggle: (id) => _toggle(q, id),
+            onTyped: (v) => _drafts.putIfAbsent(q.id, AskDraft.new).typed = v,
+            answered: answered,
+          ),
           if (_error != null) ...[
-            const SizedBox(height: AppSpace.sm),
+            const SizedBox(height: AppSpace.xs),
             Text(_error!, style: AppText.bodyS.copyWith(color: scheme.error)),
           ],
-          const SizedBox(height: AppSpace.sm),
-          if (_locked)
-            Text(
-              '已提交',
-              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-            )
-          else if (!widget.canSubmit)
-            Text(
-              '通过和打回只有系统管理员能操作',
-              style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
-            )
-          else
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _canSubmit ? _submit : null,
-                child: _sending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(card.submitLabel),
-              ),
-            ),
+          const SizedBox(height: AppSpace.xs),
+          Row(
+            children: [
+              // 「< 1/3 >」：检查前面的答案、临时改主意都靠它
+              if (total > 1) ...[
+                _StepArrow(
+                  icon: Icons.chevron_left,
+                  tooltip: '上一题',
+                  onTap: step > 0 ? () => _go(step - 1) : null,
+                ),
+                Text(
+                  '${step + 1}/$total',
+                  style: AppText.caption.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                _StepArrow(
+                  icon: Icons.chevron_right,
+                  tooltip: '下一题',
+                  onTap: !isLast ? () => _go(step + 1) : null,
+                ),
+              ],
+              const Spacer(),
+              if (submitted)
+                Text(
+                  '已提交',
+                  style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+                )
+              else if (!widget.canSubmit)
+                Text(
+                  '通过和打回只有系统管理员能操作',
+                  style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
+                )
+              else ...[
+                // 跳过 = 这题不答，直接看下一题；最后一题没什么可跳的
+                if (!isLast)
+                  TextButton(
+                    onPressed: _sending ? null : () => _go(step + 1),
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpace.sm),
+                    ),
+                    child: const Text('跳过'),
+                  ),
+                FilledButton(
+                  // 只有站在最后一题上才有意义：前一题点提交，后面那些题还没看
+                  onPressed: isLast && _canSubmit ? _submit : null,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpace.lg),
+                  ),
+                  child: _sending
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(card.submitLabel),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+/// 「上一题 / 下一题」的小箭头：站点在卡片底部，尺寸收在 32 上下，
+/// 但整块都能点，不影响命中。
+class _StepArrow extends StatelessWidget {
+  const _StepArrow({required this.icon, required this.tooltip, this.onTap});
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      onPressed: onTap,
+      tooltip: tooltip,
+      icon: Icon(icon, size: 20),
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+      disabledColor: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.35),
     );
   }
 }

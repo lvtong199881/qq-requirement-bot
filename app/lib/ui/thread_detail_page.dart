@@ -48,9 +48,9 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   final _focus = FocusNode();
   final _scroll = ScrollController();
 
-  /// 提问卡片的草稿（按消息序号分）。卡片在 ListView 里滑出屏幕就被回收，
-  /// 草稿留在页面这一层，滚回去还能接着填。
-  final Map<int, Map<String, AskDraft>> _drafts = {};
+  /// 每张提问卡片的临时状态（看到第几题 + 每题草稿），key 是卡片消息的 seq。
+  /// 放在页面这一层：卡片在 ListView 里滑出屏幕就被回收，状态跟着 State 走就丢了。
+  final Map<int, AskCardState> _cardStates = {};
 
   /// 首屏加载超过 1 秒才出转圈，避免网络快时闪一下。
   bool _slowLoad = false;
@@ -134,6 +134,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           appBar: AppBar(
             // 标题只留群名/需求名。阶段和状态挪到下面那排 tag 里——标题栏第二行
             // 和下面的阶段信息说的是同一件事，两处重复等于把一屏切成三块。
+            toolbarHeight: 48,
             title: Text(
               t?.title ?? '群',
               style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
@@ -142,6 +143,8 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
             ),
           ),
           body: Column(
+            // 撑满整宽，否则只有 tag 的吸顶区会被 Column 居中，看着像缩进了一截
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (t != null) _Header(thread: t),
               if (t != null) const Divider(),
@@ -239,7 +242,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               // 带上消息序号：列表增删消息时 Flutter 才会把同一个状态还给同一张卡
               key: ValueKey('ask-${m.seq}'),
               card: card,
-              drafts: _drafts.putIfAbsent(m.seq, () => <String, AskDraft>{}),
+              state: _cardStates.putIfAbsent(m.seq, AskCardState.new),
               canSubmit: widget.auth.perms.confirm,
               answered: answers[m.seq],
               busy: _c.sending,
@@ -391,14 +394,12 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final isChat = thread.mode == 'chat' && thread.name?.isNotEmpty != true;
     final stage = (thread.stage ?? '').isNotEmpty
         ? thread.stage!
         : (isChat ? '群聊' : '待提需求');
     final status = _statusLabel;
     final reason = thread.waitingLabel ?? '';
-    final branch = thread.featureBranch ?? '';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
@@ -443,13 +444,6 @@ class _Header extends StatelessWidget {
                       ),
                     ),
             ),
-          if (branch.isNotEmpty)
-            _Tag(
-              label: branch,
-              tint: theme.colorScheme.onSurfaceVariant,
-              icon: Icons.account_tree_outlined,
-              maxWidth: 200,
-            ),
         ],
       ),
     );
@@ -463,14 +457,12 @@ class _Tag extends StatelessWidget {
     required this.tint,
     required this.icon,
     this.onTap,
-    this.maxWidth,
   });
 
   final String label;
   final Color tint;
   final IconData icon;
   final VoidCallback? onTap;
-  final double? maxWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -486,7 +478,7 @@ class _Tag extends StatelessWidget {
           Icon(icon, size: 12, color: tint),
           const SizedBox(width: 4),
           ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth ?? 160),
+            constraints: const BoxConstraints(maxWidth: 160),
             child: Text(
               label,
               maxLines: 1,
