@@ -184,6 +184,31 @@ cloudflared tunnel run --url http://127.0.0.1:7881 qq-bot
 
 **关于 `repos`**：`id` 是内部标识（路径按它派生，建了就别改）；`name` 是给人看的；`path` 和 `url` 二选一，给了 `url` 就由 bot 克隆到 `checkoutRoot`。`platform` 决定用哪套工具链（`harmony` / `android` / `ios`）。
 
+## 模拟器工具路径
+
+模拟器服务用 `emulator` / `adb` / `avdmanager` 管理 Android AVD。这三个默认按名字从 PATH 找，
+而 SDK 的 `emulator` 目录一般不在 PATH 上——找不到时服务会报 `spawnSync emulator ENOENT`，
+把绝对路径写进 `tools.android` 即可：
+
+```json
+"tools": {
+  "android": {
+    "bin": "C:\\Users\\you\\AppData\\Local\\Android\\Sdk\\emulator\\emulator.exe",
+    "adb": "C:\\Users\\you\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+    "avdmanager": "C:\\qq-bot\\scripts\\avdmanager.cmd"
+  }
+}
+```
+
+- `bin` / `adb` 是列设备、启停模拟器、装包用的，必配。
+- `avdmanager` 只在删除 AVD 时用；它要求 JDK 17+，而 Flutter 构建这边 `JAVA_HOME` 通常是 11。
+  仓库里的 `scripts/avdmanager.cmd` 只在这一次调用里切到 Android Studio 自带的 JBR，不动全局环境。
+- AVD 存在 `%USERPROFILE%\.android\avd`，服务用 `emulator -list-avds` 发现，系统版本从各 AVD 的
+  `config.ini` 里读（Android 5.0 ~ Android 17 有中文叫法）。
+- 模拟器的 ABI 是 x86_64，而 `flutter build apk` 的默认变体只带 arm64 时，装进模拟器会在启动
+  瞬间崩（`libflutter.so is for EM_AARCH64 ... instead of EM_X86_64`）。要在模拟器上跑，用
+  `flutter build apk --debug --target-platform=android-x64` 单独构建一份。
+
 ## 编排
 
 流程由 bridge 的状态机驱动（`src/flow.js` 的 `CHECKPOINTS` 表）：当前阶段、返工次数、
