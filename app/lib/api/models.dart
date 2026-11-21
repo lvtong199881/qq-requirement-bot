@@ -139,6 +139,8 @@ class Thread {
     this.botName,
     this.memberCount = 0,
     this.myRole,
+    this.lastReadSeq = 0,
+    this.unread = 0,
   });
 
   final String threadId;
@@ -198,6 +200,15 @@ class Thread {
   /// 我在这个群里的角色：owner / admin / member（没加入时为 null）。
   final String? myRole;
 
+  /// 我读到哪儿了（服务端记的，只进不退）。
+  final int lastReadSeq;
+
+  /// 别人发的、我还没看的消息条数。列表页的红点靠它。
+  /// 不算自己发的：自己说句话就冒红点，那红点就没意义了。
+  final int unread;
+
+  bool get hasUnread => unread > 0;
+
   /// 列表和标题用的名字：有需求名用需求名，还没提需求就退回群名。
   String get title {
     if (name?.isNotEmpty == true) return name!;
@@ -234,6 +245,8 @@ class Thread {
     botName: j['botName']?.toString(),
     memberCount: (j['memberCount'] as num?)?.toInt() ?? 0,
     myRole: j['myRole']?.toString(),
+    lastReadSeq: (j['lastReadSeq'] as num?)?.toInt() ?? 0,
+    unread: (j['unread'] as num?)?.toInt() ?? 0,
   );
 }
 

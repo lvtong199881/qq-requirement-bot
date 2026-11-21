@@ -479,6 +479,10 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
       "stages": [ { "name": "需求澄清", "status": "已完成" }, ... ],
       "featureBranch": "feat/welcome-modal",
       "lastSeq": 42,
+      "lastReadSeq": 40,
+      "unread": 2,
+      "memberCount": 3,
+      "myRole": "member",
       "canAct": true
     }
   ]
@@ -489,8 +493,20 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 - `mode` —— `chat`（只是聊天）/ `requirement`（跑过需求，但群里不 @ 仍然只是聊天）
 - `pending` —— `true` 表示这个群还没提过需求，此时 `name`/`stage` 为 `null`、`stages` 为空
 - `needsMe` —— 该你拍板了（等价于 `stageStatus === "等你确认"`），列表页拿它做置顶和红点
-- `lastSeq` —— 这条需求最后一条消息的序号，App 用它算未读
+- `lastSeq` —— 这条需求最后一条消息的序号，App 用它当增量拉取的游标
+- `lastReadSeq` —— 你读到哪儿了（只进不退）
+- `unread` —— 别人发的、比 `lastReadSeq` 新的消息条数，列表页拿它做红点。**自己发的不算**：自己说句话就冒红点，那红点就不表示「有新东西我还没看」了
 - `canAct` —— 当前用户能不能通过/打回（普通成员为 `false`）
+
+### `POST /api/threads/:id/read`
+
+上报「我读到第 seq 条了」，用来消列表页的红点。App 在拉到消息后调用。
+
+```jsonc
+{ "seq": 42 }
+```
+
+返回 `{ ok: true, lastReadSeq: 42 }`。位置**只进不退**：详情页和列表页会并发刷新，一个乱序的旧请求不该让红点重新亮起来。没加入这个群返回 `403`。
 
 ### `POST /api/threads`
 

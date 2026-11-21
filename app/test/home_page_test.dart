@@ -164,6 +164,46 @@ void main() {
     expect(find.text('产品讨论'), findsOneWidget);
   });
 
+  testWidgets('有别人发的没读消息时列表头像上有红点', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        return _ok({
+          'threads': [
+            {
+              'threadId': 't1',
+              'groupName': '有未读的群',
+              'mode': 'chat',
+              'pending': true,
+              'lastActiveAt': 1700000002000,
+              'unread': 3,
+            },
+            {
+              'threadId': 't2',
+              'groupName': '没有未读的群',
+              'mode': 'chat',
+              'pending': true,
+              'lastActiveAt': 1700000001000,
+              'unread': 0,
+            },
+          ],
+        });
+      }
+      if (req.url.path == '/api/engine/status') {
+        return _ok({'ok': true, 'online': true, 'botName': 'AI员工'});
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: ThreadListController(auth: auth))),
+    );
+    await tester.pumpAndSettle();
+
+    // 数字是第二载体：光靠一个红点，色弱用户分不出「有未读」和「头像装饰」
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+  });
+
   // 规范要求 320 宽（最小的常见机型）不溢出。Flutter 把溢出当异常抛出来，
   // 所以这里不用断言具体像素，跑到不抛就说明布局没崩。
   testWidgets('320 宽下群列表和建群弹窗都不溢出', (tester) async {

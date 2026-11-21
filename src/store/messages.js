@@ -149,9 +149,40 @@ export class MessageStore {
     return { messages: rows, lastSeq: this.#lastSeq(threadId) }
   }
 
-  /** 未读数：App 列表页的角标。只数 bot 发的、比用户最后阅读位置新的 */
+  /** 这个群最新的 seq，App 用它当增量拉取的游标 */
   lastSeq(threadId) {
     return this.#lastSeq(threadId)
+  }
+
+  /**
+   * 列表页红点：别人发的、我没读过的有多少条。
+   *
+   * 「别人」包括机器人；自己发的不算——不然每次自己说句话列表就冒红点，
+   * 那红点就不再表示「有新东西我还没看」了。
+   */
+  unreadCount(threadId, { after = 0, userId = null } = {}) {
+    const file = this.#file(threadId)
+    if (!existsSync(file)) return 0
+    let text = ''
+    try {
+      text = readFileSync(file, 'utf8')
+    } catch {
+      return 0
+    }
+    let count = 0
+    for (const line of text.split('\n')) {
+      if (!line) continue
+      try {
+        const row = JSON.parse(line)
+        if (typeof row.seq !== 'number' || row.seq <= after) continue
+        // userId 在 payload 里（消息行只有 seq/at/role/kind/payload 这几个键）
+        if (row.role === 'user' && userId && row.payload?.userId === userId) continue
+        count += 1
+      } catch {
+        /* 单行损坏不影响计数其他行 */
+      }
+    }
+    return count
   }
 
   /** 删除该需求的全部消息。取消/归档需求时调用 */

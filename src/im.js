@@ -175,6 +175,7 @@ const server = createApiServer({
   renameGroup: threads.renameGroup,
   membersOf: threads.membersOf,
   setMemberRole: threads.setMemberRole,
+  markRead: threads.markRead,
   engine: engineApi,
   botName: botUser.nickname,
   log,

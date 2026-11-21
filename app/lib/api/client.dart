@@ -307,6 +307,21 @@ class ApiClient {
     },
   );
 
+  /// 告诉服务端「我读到第 seq 条了」，用来消列表页的红点。
+  ///
+  /// 失败不抛：已读位置丢了最多是红点多挂一会儿，不值得打断看消息。
+  Future<void> markRead(String threadId, int seq) async {
+    try {
+      await _send(
+        'POST',
+        '/api/threads/${Uri.encodeComponent(threadId)}/read',
+        body: {'seq': seq},
+      );
+    } on ApiException {
+      /* 已读位置是尽力而为的，别让它在详情页弹错 */
+    }
+  }
+
   /// 需求引擎连没连上。
   ///
   /// 返回 null 表示无从判断：这台服务器没有可查的引擎通道（单机部署时引擎就在

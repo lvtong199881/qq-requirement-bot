@@ -236,6 +236,42 @@ class _SectionLabel extends StatelessWidget {
   }
 }
 
+/// 未读角标。
+///
+/// 不用品牌蓝：蓝在这套界面里表示「可点」，红点表示「有新东西」，
+/// 两者是不同语义。超过 99 显示 99+，数字本身也是给色弱用户的第二载体。
+class _UnreadBadge extends StatelessWidget {
+  const _UnreadBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final text = count > 99 ? '99+' : '$count';
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18),
+      height: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        color: scheme.error,
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+        // 描边让红点在深色头像上也有一圈底气，不至于糊成一团
+        border: Border.all(color: scheme.surface, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        text,
+        style: AppText.caption.copyWith(
+          color: scheme.onError,
+          fontWeight: FontWeight.w600,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
 class _ThreadCard extends StatelessWidget {
   const _ThreadCard({required this.thread, required this.onTap});
 
@@ -260,9 +296,18 @@ class _ThreadCard extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    InitialAvatar(
-                      name: t.groupName ?? t.name ?? '未命名群',
-                      size: 40,
+                    // 红点挂在头像右上角：群名可能很长、右侧又有转圈，
+                    // 放头像上不会被挤掉，也像 IM 那样一眼看到哪个群有新消息。
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        InitialAvatar(
+                          name: t.groupName ?? t.name ?? '未命名群',
+                          size: 40,
+                        ),
+                        if (t.hasUnread)
+                          Positioned(top: -4, right: -6, child: _UnreadBadge(count: t.unread)),
+                      ],
                     ),
                     const SizedBox(width: AppSpace.md),
                     Expanded(

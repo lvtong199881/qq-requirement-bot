@@ -614,6 +614,7 @@ function startAppApi() {
     renameGroup: threads.renameGroup,
     membersOf: threads.membersOf,
     setMemberRole: threads.setMemberRole,
+    markRead: threads.markRead,
     // App 用这个名字拼「@AI员工」，改名只改配置就行
     botName: botUser.nickname,
     log,

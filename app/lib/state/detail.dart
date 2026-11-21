@@ -36,6 +36,9 @@ class ThreadDetailController extends ChangeNotifier {
   String? actionError;
 
   int _lastSeq = 0;
+
+  /// 已经上报过的已读位置，避免每次轮询都重复写一遍。
+  int _reportedRead = 0;
   Timer? _timer;
   bool _inFlight = false;
   bool _disposed = false;
@@ -94,6 +97,7 @@ class ThreadDetailController extends ChangeNotifier {
       // 用服务端给的值，不要自己 +1 猜：中间可能有别的客户端发的消息。
       // 只进不退：拉回的 lastSeq 若比手里的小，按小的走会一直重复拉同一段。
       if (page.lastSeq > _lastSeq) _lastSeq = page.lastSeq;
+      _markRead();
       error = null;
     } on ApiException catch (e) {
       if (_disposed) return;
@@ -112,6 +116,16 @@ class ThreadDetailController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  /// 上报已读位置，让列表页的红点消掉。
+  ///
+  /// 只在位置真的往前走了才发：详情页每 3 秒轮询一次，每次都上报等于
+  /// 在轮询里再塞一次写请求。失败也不重试——下次轮询自然会补上。
+  void _markRead() {
+    if (_lastSeq <= _reportedRead) return;
+    _reportedRead = _lastSeq;
+    unawaited(_api.markRead(threadId, _lastSeq));
   }
 
   Future<bool> send(

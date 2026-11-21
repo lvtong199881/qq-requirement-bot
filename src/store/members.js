@@ -74,6 +74,9 @@ export class MemberStore {
         nickname: typeof m.nickname === 'string' ? m.nickname : '',
         joinedAt: Number.isFinite(m.joinedAt) ? m.joinedAt : Date.now(),
         isBot: m.isBot === true,
+        // 读到这里为止：列表页的红点靠它算「有没有我没看的新消息」。
+        // 存每个成员一份而不是存全局，因为群里每个人读到哪儿都不一样。
+        lastReadSeq: Number.isFinite(m.lastReadSeq) ? Math.max(0, Math.floor(m.lastReadSeq)) : 0,
       }
     }
     return { ownerId: typeof raw.ownerId === 'string' ? raw.ownerId : null, members }
@@ -98,6 +101,7 @@ export class MemberStore {
             nickname: owner.nickname ?? '',
             joinedAt: owner.at ?? Date.now(),
             isBot: false,
+            lastReadSeq: 0,
           },
         },
       }
@@ -109,6 +113,7 @@ export class MemberStore {
         nickname: bot.nickname ?? '',
         joinedAt: Date.now(),
         isBot: true,
+        lastReadSeq: 0,
       }
       dirty = true
     }
@@ -129,6 +134,9 @@ export class MemberStore {
       nickname: user.nickname ?? user.username ?? '',
       joinedAt: Date.now(),
       isBot: user.isBot === true || user.role === 'bot',
+      // 新进来的人从「当前这条消息之后」开始算未读：进群之前的历史
+      // 不该全变成红点，否则一进群就是个 99+。
+      lastReadSeq: Number.isFinite(user.lastReadSeq) ? Math.max(0, Math.floor(user.lastReadSeq)) : 0,
     }
     this.save(threadId, data)
     return data
@@ -161,6 +169,28 @@ export class MemberStore {
     return data?.members?.[userId]?.role ?? null
   }
 
+  /**
+   * 把「读到哪儿」往前推。
+   *
+   * 只进不退：一次乱序的请求（比如详情页开着、列表页并发刷新）不该把
+   * 已经读过的位置改小，那会让红点重新亮起来。
+   */
+  markRead(threadId, userId, seq) {
+    const data = this.get(threadId)
+    const m = data?.members?.[userId]
+    if (!m) return false
+    const next = Math.max(m.lastReadSeq ?? 0, Math.max(0, Math.floor(Number(seq) || 0)))
+    if (next === (m.lastReadSeq ?? 0)) return true
+    m.lastReadSeq = next
+    this.save(threadId, data)
+    return true
+  }
+
+  lastReadOf(threadId, userId) {
+    const data = this.get(threadId)
+    return data?.members?.[userId]?.lastReadSeq ?? 0
+  }
+
   isMember(threadId, userId) {
     return Boolean(userId) && Boolean(this.get(threadId)?.members?.[userId])
   }
@@ -176,6 +206,7 @@ export class MemberStore {
         role: m.role,
         joinedAt: m.joinedAt,
         isBot: m.isBot,
+        lastReadSeq: m.lastReadSeq ?? 0,
       }))
       .sort((a, b) => {
         const ra = ROLE_RANK[a.role] ?? 9

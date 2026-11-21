@@ -83,12 +83,22 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     return members.ensure(threadId, { owner, bot: botUser })
   }
 
-  /** 列表/详情都要带上的成员信息；myRole 让 App 决定显不显示管理者操作 */
-  const withMembers = (thread, userId) => ({
-    ...thread,
-    memberCount: members.count(thread.threadId),
-    myRole: userId ? members.roleOf(thread.threadId, userId) : null,
-  })
+  /**
+   * 列表/详情都要带上的成员信息；myRole 让 App 决定显不显示管理者操作。
+   *
+   * unread 是「别人发的、我读到哪儿之后还有多少条」：列表页靠它点红点。
+   * 自己发的不算（store 里按 userId 排除），否则自己说句话就冒红点。
+   */
+  const withMembers = (thread, userId) => {
+    const lastReadSeq = userId ? members.lastReadOf(thread.threadId, userId) : 0
+    return {
+      ...thread,
+      memberCount: members.count(thread.threadId),
+      myRole: userId ? members.roleOf(thread.threadId, userId) : null,
+      lastReadSeq,
+      unread: userId ? messages.unreadCount(thread.threadId, { after: lastReadSeq, userId }) : 0,
+    }
+  }
 
   /**
    * 把落盘的群状态翻译成 App 的形状。
@@ -260,6 +270,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
         id: user.id,
         nickname: user.nickname || user.username,
         isBot: false,
+        // 从进群这一刻开始算未读：一进来就把历史全标成红点，那是 99+，
+        // 相当于告诉用户「你错过了一堆你没参与过的对话」。
+        lastReadSeq: messages.lastSeq(threadId),
       })
       log(`[api] ${user.username} 加入群 ${threadId}`)
     }
@@ -476,5 +489,24 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     return { ok: true, action: route.action, accepted: true }
   }
 
-  return { listThreads, threadInfo, createGroup, deliver, joinGroup, renameGroup, membersOf, setMemberRole }
+  /**
+   * 记「我读到哪儿了」，用来消列表页的红点。
+   *
+   * 不校验 seq 是否真实存在：App 拿到的 lastSeq 就是它看到的最后一条，
+   * 多报一点只是把红点提前消掉，少报才会让红点一直挂着。
+   * 只进不退（存储层保证），所以并发刷新不会把已读位置冲回去。
+   */
+  async function markRead({ threadId, user, seq }) {
+    if (!isAppThread(threadId)) return { ok: false, notFound: true }
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true }
+    ensureMembers(threadId, saved)
+    if (!members.isMember(threadId, user.id)) {
+      return { ok: false, forbidden: true, error: '你还没加入这个群' }
+    }
+    members.markRead(threadId, user.id, seq)
+    return { ok: true, lastReadSeq: members.lastReadOf(threadId, user.id) }
+  }
+
+  return { listThreads, threadInfo, createGroup, deliver, joinGroup, renameGroup, membersOf, setMemberRole, markRead }
 }

@@ -32,6 +32,7 @@ const RATE_MAX_FAILS = 20
  * @param {(o: {threadId:string, name:string, user:object}) => Promise<object>} o.renameGroup  改群名
  * @param {(o: {threadId:string, user:object}) => Promise<object>} o.membersOf  群成员列表
  * @param {(o: {threadId:string, userId:string, role:string, user:object}) => Promise<object>} o.setMemberRole
+ * @param {(o: {threadId:string, user:object, seq:number}) => Promise<object>} o.markRead  记「读到哪儿了」，消红点
  * @param {import('../store/members.js').MemberStore} o.members  成员表：决定谁能看见哪个群
  * @param {{handle:Function, status:Function}=} o.engine  引擎通道（IM 独立部署时才有）
  * @param {string=} o.botName  agent 在群里的显示名，App 用它拼「@名字」，不在前端写死
@@ -50,6 +51,7 @@ export function createApiServer({
   renameGroup,
   membersOf,
   setMemberRole,
+  markRead,
   members,
   engine = null,
   botName = 'AI员工',
@@ -215,8 +217,8 @@ export function createApiServer({
         const user = requireUser(req, res)
         if (!user) return
         const list = await listThreads({ userId: user.id })
-        // 未读数：每个 thread 最后一条 seq 减去用户读到的位置。
-        // 现在没有「已读位置」存储，先用消息总数当提示，够用且不用新表。
+        // unread 由 threads 服务算好（别人发的、我读到哪儿之后还剩多少），
+        // 这里只补 lastSeq 与 canAct——列表页的增量游标要用最新的 seq。
         const threads = list.map((t) => ({
           ...t,
           lastSeq: messages.lastSeq(t.threadId),
@@ -323,6 +325,21 @@ export function createApiServer({
           joined: result.joined,
           thread: result.thread ? { ...result.thread, botName } : result.thread,
         })
+      }
+
+      // 已读到哪儿：App 拉到消息、或进详情页时上报一次，用来消列表红点
+      const readMatch = path.match(/^\/api\/threads\/([^/]+)\/read$/)
+      if (readMatch && method === 'POST') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(readMatch[1])
+        const body = await readBody(req)
+        const result = await markRead({ threadId, user, seq: body.seq })
+        if (result?.notFound) return json(res, 404, { ok: false, error: '没有这个群' })
+        if (result?.forbidden) {
+          return json(res, 403, { ok: false, error: result.error, code: 'not_member' })
+        }
+        return json(res, 200, result)
       }
 
       const membersMatch = path.match(/^\/api\/threads\/([^/]+)\/members$/)

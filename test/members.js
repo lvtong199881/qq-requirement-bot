@@ -119,6 +119,37 @@ console.log('\n== 落盘文件与脏数据 ==')
   check('昵称不是字符串就落成空串', norm.members.u_1.nickname === '', String(norm.members.u_1.nickname))
 }
 
+console.log('\n== 已读位置：只进不退 ==')
+{
+  store.ensure('t_read', { owner, bot })
+  check('新成员从 0 开始', store.lastReadOf('t_read', 'u_owner') === 0, String(store.lastReadOf('t_read', 'u_owner')))
+
+  store.markRead('t_read', 'u_owner', 7)
+  check('能往前推', store.lastReadOf('t_read', 'u_owner') === 7, String(store.lastReadOf('t_read', 'u_owner')))
+
+  // 详情页和列表页会并发刷新，一个乱序的旧请求不该把已读位置冲回去，
+  // 否则红点会重新亮起来
+  store.markRead('t_read', 'u_owner', 3)
+  check('旧位置不会把它冲回去', store.lastReadOf('t_read', 'u_owner') === 7, String(store.lastReadOf('t_read', 'u_owner')))
+
+  store.markRead('t_read', 'u_owner', -5)
+  check('负数当 0，不会把位置弄成负的', store.lastReadOf('t_read', 'u_owner') === 7)
+
+  check('不相干的人读不到别人的位置', store.lastReadOf('t_read', 'u_stranger') === 0)
+  check('不在群里的人 markRead 返回 false', store.markRead('t_read', 'u_stranger', 9) === false)
+
+  // 重读文件后还在：这是重启不能丢的状态
+  const reloaded = new MemberStore(join(tmp, 'members'))
+  check('落盘后重读还在', reloaded.lastReadOf('t_read', 'u_owner') === 7, String(reloaded.lastReadOf('t_read', 'u_owner')))
+  check('列表里带 lastReadSeq', reloaded.list('t_read').find((m) => m.userId === 'u_owner')?.lastReadSeq === 7)
+
+  // 手工改坏的字段不能变成 NaN 往下传：NaN 参与比较恒为 false，
+  // 红点会永远算不出来
+  const dirty = join(tmp, 'members', 'members-t_dirty.json')
+  writeFileSync(dirty, JSON.stringify({ ownerId: 'u_owner', members: { u_owner: { role: 'owner', lastReadSeq: 'x' } } }), 'utf8')
+  check('脏的 lastReadSeq 收敛成 0', reloaded.lastReadOf('t_dirty', 'u_owner') === 0)
+}
+
 rmSync(tmp, { recursive: true, force: true })
 
 console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} 通过，${fail} 失败`)

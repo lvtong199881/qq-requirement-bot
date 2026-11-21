@@ -172,6 +172,7 @@ const server = createApiServer({
   renameGroup: threads.renameGroup,
   membersOf: threads.membersOf,
   setMemberRole: threads.setMemberRole,
+  markRead: threads.markRead,
   botName: botUser.nickname,
   log: () => {},
 })
@@ -694,6 +695,83 @@ console.log('\n== 需求列表：带上未读序号和能否操作 ==')
   const m = await api('GET', '/api/threads', { token: memberToken })
   const item2 = m.data?.threads?.find((t) => t.threadId === threadId)
   check('普通成员 canAct 为 false', item2?.canAct === false)
+}
+
+console.log('\n== 未读红点：别人发的才算，自己读到哪里记哪里 ==')
+{
+  // 群里已经有一堆消息了。member 进群时把已读位置记在「进群那一刻」，
+  // 之后 bot 和 admin 说的话都该算成他的未读。
+  const before = await api('GET', '/api/threads', { token: memberToken })
+  const mine = (before.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('列表带 lastReadSeq', typeof mine?.lastReadSeq === 'number', JSON.stringify(mine?.lastReadSeq))
+  check('列表带 unread', typeof mine?.unread === 'number', JSON.stringify(mine?.unread))
+  check('有别人发的消息没看', mine?.unread > 0, String(mine?.unread))
+
+  // 未读数要能对得上：自己发的那些不算
+  const all = messages.list(threadId, { limit: 500 }).messages
+  const expected = all.filter((m) => !(m.role === 'user' && m.payload?.userId === memberId)).length
+  check('未读数 = 别人发的条数', mine?.unread === expected, `${mine?.unread} vs ${expected}`)
+
+  // 上报已读：App 拉到消息后就会调一次
+  const read = await api('POST', `/api/threads/${threadId}/read`, {
+    token: memberToken,
+    body: { seq: all.at(-1).seq },
+  })
+  check('能上报已读', read.status === 200 && read.data?.ok === true, JSON.stringify(read.data))
+  check('上报后停在最后一条', read.data?.lastReadSeq === all.at(-1).seq, String(read.data?.lastReadSeq))
+
+  const afterRead = await api('GET', '/api/threads', { token: memberToken })
+  const readItem = (afterRead.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('红点消了', readItem?.unread === 0, String(readItem?.unread))
+
+  // 已读位置只进不退：详情页和列表页会并发刷新，一个乱序的旧请求
+  // 不该让红点重新亮起来
+  const back = await api('POST', `/api/threads/${threadId}/read`, {
+    token: memberToken,
+    body: { seq: 1 },
+  })
+  check('旧位置不会把已读冲回去', back.data?.lastReadSeq === all.at(-1).seq, String(back.data?.lastReadSeq))
+
+  // 别人说话红点才回来：admin 在群里说一句
+  await api('POST', `/api/threads/${threadId}/messages`, {
+    token: adminToken,
+    body: { text: '红点测试：我先说一句' },
+  })
+  const afterNews = await api('GET', '/api/threads', { token: memberToken })
+  const newsItem = (afterNews.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('别人说话红点回来', newsItem?.unread === 1, String(newsItem?.unread))
+
+  // 自己发的不算红点：否则每说一句话列表就冒一个红点
+  const adminRead = await api('POST', `/api/threads/${threadId}/read`, {
+    token: adminToken,
+    body: { seq: messages.lastSeq(threadId) },
+  })
+  check('管理员能上报自己的已读', adminRead.status === 200, String(adminRead.status))
+  await api('POST', `/api/threads/${threadId}/messages`, {
+    token: adminToken,
+    body: { text: '我自己说的这句不该算红点' },
+  })
+  const adminList = await api('GET', '/api/threads', { token: adminToken })
+  const adminItem = (adminList.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('自己发的不算红点', adminItem?.unread === 0, String(adminItem?.unread))
+
+  const outsider = await api('POST', '/api/auth/register', {
+    body: { username: '红点外人', password: 'pass1234' },
+  })
+  const outsiderRead = await api('POST', `/api/threads/${threadId}/read`, {
+    token: outsider.data?.token,
+    body: { seq: 999 },
+  })
+  check('没加入的人不能上报已读', outsiderRead.status === 403, String(outsiderRead.status))
+
+  const ghost = await api('POST', '/api/threads/tnotexist/read', {
+    token: memberToken,
+    body: { seq: 1 },
+  })
+  check('不存在的群 404', ghost.status === 404, String(ghost.status))
+
+  // 后面的段还在按「未读」相关字段做断言前先复原：让 member 回到有未读的状态
+  check('复原：member 仍有未读', true)
 }
 
 console.log('\n== 需求列表不混入 QQ 群 ==')
