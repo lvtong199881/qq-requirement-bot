@@ -24,6 +24,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { UserStore, roleLabelOf } from './account/store.js'
 import { MessageStore } from './store/messages.js'
 import { ArtifactStore } from './store/artifacts.js'
+import { MemberStore } from './store/members.js'
 import { createTransport } from './transport/transport.js'
 import { createApiServer } from './api/server.js'
 import { createThreadService } from './api/threads.js'
@@ -84,10 +85,16 @@ const detail = (...a) => config.verbose && runtime.log('debug', ...a)
 // 分开建是为了各自能独立演进：消息量会一直涨，用户表基本不动，
 // 混在一个文件里迟早因为写消息把用户表写坏。
 const users = new UserStore(store.dir)
+// 预设管理员必须在机器人之前建：ensureBootstrap 只在用户表为空时生效，
+// 而 ensureBot 会往表里塞一个账号——顺序反了就永远建不出 admin/123456。
+const boot = users.ensureBootstrap()
 // 机器人也是个账号：先把它放进用户表，再让消息库把 role=bot 的消息挂到它名下
 const botUser = users.ensureBot({ nickname: config.bot.name }).user
 const messages = new MessageStore(pathJoin(store.dir, 'messages'), { bot: botUser })
 const artifacts = new ArtifactStore(pathJoin(store.dir, 'artifacts'))
+// 成员表：谁能看见哪个群。和用户表分开——用户表是全系统的账号，
+// 成员表是「这个人进过这个群」，两件事的写频率也差得远。
+const members = new MemberStore(pathJoin(store.dir, 'members'))
 
 // 投递门面：编排层只说「说给谁听」，存储细节全在这里，见 transport/transport.js
 const transport = createTransport({ messages, artifacts, log })
@@ -433,6 +440,8 @@ let appApiPort = 0
 const threads = createThreadService({
   store: machine.store,
   messages,
+  members,
+  botUser,
   buildSnapshot,
   can,
   log,
@@ -596,10 +605,15 @@ function startAppApi() {
     users,
     messages,
     artifacts,
+    members,
     threadInfo: threads.threadInfo,
     listThreads: threads.listThreads,
     deliver: threads.deliver,
     createGroup: threads.createGroup,
+    joinGroup: threads.joinGroup,
+    renameGroup: threads.renameGroup,
+    membersOf: threads.membersOf,
+    setMemberRole: threads.setMemberRole,
     // App 用这个名字拼「@AI员工」，改名只改配置就行
     botName: botUser.nickname,
     log,
@@ -624,9 +638,8 @@ function startAppApi() {
     runtime.info(`App API：${(urls[0] ?? `http://${address}:${port}`)}/healthz`)
     for (const url of urls.slice(0, 3)) printQr(url)
 
-    // 预设一个管理员：新装的系统不该要求人先会注册才能进去。
-    // 只在用户表完全为空时生效，所以改过密码、加过账号之后它不会再出现。
-    const boot = users.ensureBootstrap()
+    // 预设管理员：新装的系统不该要求人先会注册才能进去。
+    // 启动时已经建过了（见 store 初始化那段，必须在 ensureBot 之前），这里只负责播报。
     if (boot.created) {
       runtime.info(`已创建预设管理员：${boot.user.username} / 123456`)
       runtime.warn('这个密码是公开的，登录后请立刻在「账号管理」里改掉')

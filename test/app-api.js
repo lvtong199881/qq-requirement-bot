@@ -18,6 +18,7 @@ import { MessageStore } from '../src/store/messages.js'
 import { ArtifactStore } from '../src/store/artifacts.js'
 import { createApiServer } from '../src/api/server.js'
 import { createThreadService, newThreadId } from '../src/api/threads.js'
+import { MemberStore } from '../src/store/members.js'
 import { isAppThread } from '../src/api/threads.js'
 
 let pass = 0
@@ -84,8 +85,10 @@ const dispatch = async (ev) => {
 }
 
 const users = new UserStore(tmp)
-const messages = new MessageStore(join(tmp, 'messages'))
+const botUser = users.ensureBot({ nickname: 'AI员工' }).user
+const messages = new MessageStore(join(tmp, 'messages'), { bot: botUser })
 const artifacts = new ArtifactStore(join(tmp, 'artifacts'))
+const members = new MemberStore(join(tmp, 'members'))
 
 // 面板快照的形状要和真的一样：threads.js 的 toThread 就按这些字段取值。
 // 特别注意 legacy 分支——src/index.js 的 buildSnapshot 对「有状态但还没 flow」
@@ -147,9 +150,12 @@ const threads = createThreadService({
   machine,
   store: machine.store,
   messages,
+  members,
+  botUser,
   buildSnapshot,
   dispatch,
   can,
+  botName: botUser.nickname,
   log: () => {},
 })
 
@@ -157,10 +163,16 @@ const server = createApiServer({
   users,
   messages,
   artifacts,
+  members,
   threadInfo: threads.threadInfo,
   listThreads: threads.listThreads,
   deliver: threads.deliver,
   createGroup: threads.createGroup,
+  joinGroup: threads.joinGroup,
+  renameGroup: threads.renameGroup,
+  membersOf: threads.membersOf,
+  setMemberRole: threads.setMemberRole,
+  botName: botUser.nickname,
   log: () => {},
 })
 
@@ -227,6 +239,7 @@ console.log('\n== 首屏：有没改过密码的预设账号时给出账号和�
 
 console.log('\n== 注册：第一个注册者成为管理员 ==')
 let adminToken = ''
+let adminId = ''
 {
   const r = await api('POST', '/api/auth/register', {
     body: { username: '阿宝', password: 'pass1234', nickname: '产品阿宝' },
@@ -236,6 +249,7 @@ let adminToken = ''
   check('给出了 token', typeof r.data?.token === 'string' && r.data.token.length > 20)
   check('提示了自动成为管理员', String(r.data?.notice ?? '').includes('管理员'))
   adminToken = r.data?.token
+  adminId = r.data?.user?.id
 }
 
 console.log('\n== 注册：第二个是普通成员 ==')
@@ -350,7 +364,145 @@ let threadId = ''
   )
 }
 
-console.log('\n== 群里不 @ 就是普通聊天 ==')
+console.log('\n== 群是私有的：没加入看不见，加进来才聊得上 ==')
+{
+  // 群是私有的：系统管理员建了群，不代表别人能在列表里看到它。
+  // 这里同时验证「看不见 → 看得见」这条主线，后面的聊天段才有个正常起点。
+  const listBefore = await api('GET', '/api/threads', { token: memberToken })
+  check(
+    '没加入的人列表里没有这个群',
+    !(listBefore.data?.threads ?? []).some((t) => t.threadId === threadId),
+  )
+
+  const denied = await api('GET', `/api/threads/${threadId}`, { token: memberToken })
+  check('没加入的人打不开详情 403', denied.status === 403, String(denied.status))
+  check('403 带 not_member 码', denied.data?.code === 'not_member', JSON.stringify(denied.data))
+
+  // 群号搜索：只知道群号的人也能看到「叫什么、几个人」，但看不到任何消息
+  const preview = await api('GET', `/api/threads/${threadId}/preview`, { token: memberToken })
+  check('能按群号预览', preview.status === 200 && preview.data?.ok === true, JSON.stringify(preview.data))
+  check('预览带群名', preview.data?.preview?.groupName === '首页改版', preview.data?.preview?.groupName)
+  check('预览里 joined 是 false', preview.data?.preview?.joined === false)
+  check(
+    '预览里成员数含群主和机器人',
+    preview.data?.preview?.memberCount === 2,
+    String(preview.data?.preview?.memberCount),
+  )
+  check('预览里没有消息内容', preview.data?.preview?.messages == null)
+
+  const join = await api('POST', `/api/threads/${threadId}/join`, { token: memberToken })
+  check('能加入群', join.status === 200 && join.data?.joined === true, JSON.stringify(join.data))
+  check('加入后返回的详情里带群名', join.data?.thread?.groupName === '首页改版')
+
+  const again = await api('POST', `/api/threads/${threadId}/join`, { token: memberToken })
+  check('重复加入是幂等的', again.status === 200 && again.data?.joined === false, JSON.stringify(again.data))
+
+  const listAfter = await api('GET', '/api/threads', { token: memberToken })
+  check(
+    '加入后列表里能看见',
+    (listAfter.data?.threads ?? []).some((t) => t.threadId === threadId),
+  )
+  const mine = (listAfter.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('列表带自己在这个群里的角色', mine?.myRole === 'member', mine?.myRole)
+  check('列表带成员数', mine?.memberCount === 3, String(mine?.memberCount))
+
+  const ghost = await api('POST', '/api/threads/tnotexist/join', { token: memberToken })
+  check('加入不存在的群 404', ghost.status === 404, String(ghost.status))
+  const ghostPreview = await api('GET', '/api/threads/tnotexist/preview', { token: memberToken })
+  check('预览不存在的群 404', ghostPreview.status === 404, String(ghostPreview.status))
+}
+
+console.log('\n== 群成员：群主、机器人管理员、指定管理员 ==')
+{
+  const list = await api('GET', `/api/threads/${threadId}/members`, { token: memberToken })
+  check('成员能看成员列表', list.status === 200 && list.data?.ok === true, JSON.stringify(list.data))
+  check('群主是建群的人', list.data?.ownerId === adminId, `${list.data?.ownerId} vs ${adminId}`)
+  check('普通成员不能指定管理员', list.data?.canManage === false)
+  check('普通成员不能改群名', list.data?.canRename === false)
+  const names = (list.data?.members ?? []).map((m) => m.nickname)
+  check('成员里有建群的人', names.includes('产品阿宝'), JSON.stringify(names))
+  check('成员里有机器人', names.includes('AI员工'), JSON.stringify(names))
+  const bot = (list.data?.members ?? []).find((m) => m.nickname === 'AI员工')
+  check('机器人被标成管理员', bot?.role === 'admin' && bot?.isBot === true, JSON.stringify(bot))
+
+  // 未加入的人连成员列表都不能看
+  const outsider = await api('POST', '/api/auth/register', {
+    body: { username: '路人甲', password: 'pass1234' },
+  })
+  const outsiderToken = outsider.data?.token
+  const peek = await api('GET', `/api/threads/${threadId}/members`, { token: outsiderToken })
+  check('外人看成员列表 403', peek.status === 403, String(peek.status))
+}
+
+console.log('\n== 改群名：系统管理员或群管理员 ==')
+{
+  const denied = await api('PATCH', `/api/threads/${threadId}`, {
+    token: memberToken,
+    body: { name: '偷偷改名' },
+  })
+  check('普通成员改群名 403', denied.status === 403, String(denied.status))
+  check('给出原因', /群管理员/.test(denied.data?.error ?? ''), denied.data?.error)
+
+  const empty = await api('PATCH', `/api/threads/${threadId}`, { token: adminToken, body: { name: '   ' } })
+  check('空群名被拒', empty.status === 400, String(empty.status))
+  check('空群名有提示', /群名不能为空/.test(empty.data?.error ?? ''), empty.data?.error)
+
+  const long = await api('PATCH', `/api/threads/${threadId}`, {
+    token: adminToken,
+    body: { name: '一'.repeat(41) },
+  })
+  check('超长群名被拒', long.status === 400 && /40/.test(long.data?.error ?? ''), long.data?.error)
+
+  const ok = await api('PATCH', `/api/threads/${threadId}`, {
+    token: adminToken,
+    body: { name: '首页改版·二期' },
+  })
+  check('管理员能改群名', ok.status === 200 && ok.data?.groupName === '首页改版·二期', JSON.stringify(ok.data).slice(0, 200))
+
+  const got = await api('GET', `/api/threads/${threadId}`, { token: memberToken })
+  check('改完群里立刻看到新名字', got.data?.thread?.groupName === '首页改版·二期', got.data?.thread?.groupName)
+
+  // 改回原名字：后面几段还在按「首页改版」做断言
+  const back = await api('PATCH', `/api/threads/${threadId}`, { token: adminToken, body: { name: '首页改版' } })
+  check('能改回去', back.data?.groupName === '首页改版')
+}
+
+console.log('\n== 群主指定群管理员 ==')
+{
+  const promote = await api('POST', `/api/threads/${threadId}/members/${memberId}/role`, {
+    token: adminToken,
+    body: { role: 'admin' },
+  })
+  check('群主能把成员提成管理员', promote.status === 200 && promote.data?.ok === true, JSON.stringify(promote.data).slice(0, 200))
+
+  const canNow = await api('GET', `/api/threads/${threadId}/members`, { token: memberToken })
+  check('提上来之后能改群名了', canNow.data?.canRename === true)
+  const rename = await api('PATCH', `/api/threads/${threadId}`, { token: memberToken, body: { name: '首页改版' } })
+  check('群管理员改群名成功', rename.status === 200, String(rename.status))
+  check('群管理员仍然不能指定别人', canNow.data?.canManage === false)
+
+  const self = await api('POST', `/api/threads/${threadId}/members/${adminId}/role`, {
+    token: adminToken,
+    body: { role: 'member' },
+  })
+  check('群主不能改自己的角色', self.status === 400 && /群主/.test(self.data?.error ?? ''), self.data?.error)
+
+  const bot = (await api('GET', `/api/threads/${threadId}/members`, { token: adminToken })).data?.members
+    ?.find((m) => m.isBot)
+  const botRole = await api('POST', `/api/threads/${threadId}/members/${bot?.userId}/role`, {
+    token: adminToken,
+    body: { role: 'member' },
+  })
+  check('机器人角色改不了', botRole.status === 400 && /机器人/.test(botRole.data?.error ?? ''), botRole.data?.error)
+
+  const demote = await api('POST', `/api/threads/${threadId}/members/${memberId}/role`, {
+    token: adminToken,
+    body: { role: 'member' },
+  })
+  check('能降回普通成员', demote.status === 200, String(demote.status))
+}
+
+
 {
   // 这条是「当普通 IM 用」的核心：没 @ 需求 bot，就只是聊天——
   // 引擎不该被打扰，群也不该变成需求群

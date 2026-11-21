@@ -49,12 +49,17 @@ export function isAppThread(threadId) {
  * @param {(o:object)=>Promise<object>} [o.buildSnapshot]  有编排层时才有
  * @param {(ev:object)=>Promise<object>} o.dispatch  把一条消息交给引擎（进程内或事件队列）
  * @param {(action:string, threadId:string, userId:string)=>Promise<{ok:boolean,roleLabel?:string}>} o.can
+ * @param {import('../store/members.js').MemberStore} o.members  群成员表
+ * @param {{id:string,nickname:string,role?:string,isBot?:boolean}} [o.botUser]  机器人账号（自动群管理员）
  * @param {(...a:any[])=>void} o.log
  * @param {string} [o.botName]
  */
-export function createThreadService({ machine, store, messages, buildSnapshot, dispatch, can, log, botName }) {
+export function createThreadService({ machine, store, messages, buildSnapshot, dispatch, can, members, botUser, log, botName }) {
   const groups = store ?? machine?.store ?? null
   if (!groups) throw new Error('createThreadService 需要 store 或 machine')
+  // 成员表是「能不能看见这个群」的唯一判据。缺了它就只剩「所有人可见」，
+  // 那是一种更难发现的错误，所以宁可启动时报错。
+  if (!members) throw new Error('createThreadService 需要 members（群成员表）')
 
   const get = (id) => {
     try {
@@ -65,6 +70,25 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
   }
 
   const exists = (saved) => Boolean(saved) && Object.keys(saved).length > 0
+
+  /**
+   * 老群补成员表：功能上线前建的群没有成员文件，用群状态的 initiator 当群主，
+   * 机器人补管理员。放在读路径上而不是写一次迁移脚本——迁移脚本漏跑一次，
+   * 群里的人就全看不见了。
+   */
+  const ensureMembers = (threadId, saved) => {
+    const owner = saved?.initiator?.userId
+      ? { userId: saved.initiator.userId, nickname: saved.initiator.nickname, at: saved.initiator.at }
+      : null
+    return members.ensure(threadId, { owner, bot: botUser })
+  }
+
+  /** 列表/详情都要带上的成员信息；myRole 让 App 决定显不显示管理者操作 */
+  const withMembers = (thread, userId) => ({
+    ...thread,
+    memberCount: members.count(thread.threadId),
+    myRole: userId ? members.roleOf(thread.threadId, userId) : null,
+  })
 
   /**
    * 把落盘的群状态翻译成 App 的形状。
@@ -129,13 +153,15 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
    * 只列 App 建的 thread（isAppThread）：跑过 QQ 群的老机器上，.state 里
    * 躺着一堆真实群记录，带出来用户会看到自己从没建过的群。
    */
-  async function listThreads() {
+  async function listThreads({ userId = null } = {}) {
     const threads = new Map()
     if (typeof buildSnapshot === 'function') {
       const snap = await buildSnapshot({ full: true })
       for (const g of snap.groups ?? []) {
         if (!isAppThread(g.groupId) || g.legacy) continue
-        threads.set(g.groupId, fromSnapshot(g, get(g.groupId)))
+        const saved = get(g.groupId)
+        ensureMembers(g.groupId, saved)
+        threads.set(g.groupId, fromSnapshot(g, saved))
       }
     }
 
@@ -145,26 +171,33 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       if (!isAppThread(id) || threads.has(id)) continue
       const saved = get(id)
       if (!exists(saved)) continue
+      ensureMembers(id, saved)
       threads.set(id, { ...fromSaved(id, saved), lastSeq: messages.lastSeq(id) })
     }
 
-    return [...threads.values()].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
+    // 群是私有的：只回自己加入的群。系统管理员也一样——
+    // 「能管所有账号」不等于「能偷看所有群」。
+    const visible = [...threads.values()]
+      .filter((t) => members.isMember(t.threadId, userId))
+      .map((t) => withMembers(t, userId))
+    return visible.sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0))
   }
 
   /** 单个群的详情 */
-  async function threadInfo(threadId) {
+  async function threadInfo(threadId, { userId = null } = {}) {
     if (!isAppThread(threadId)) return null
     const saved = get(threadId)
     const valid = exists(saved)
+    ensureMembers(threadId, saved)
 
     if (typeof buildSnapshot === 'function') {
       const snap = await buildSnapshot({ full: true })
       const g = (snap.groups ?? []).find((x) => x.groupId === threadId)
-      if (g && !g.legacy) return fromSnapshot(g, saved)
+      if (g && !g.legacy) return withMembers(fromSnapshot(g, saved), userId)
     }
     // 还没有需求、或没有编排层：靠落盘状态兜底，别让详情页 404
     if (!valid) return null
-    return fromSaved(threadId, saved)
+    return withMembers(fromSaved(threadId, saved), userId)
   }
 
   /**
@@ -190,19 +223,116 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       initiator,
       lastActiveAt: initiator.at,
     })
+    // 建群的人自动是群主；机器人跟着进群当管理员（它要能发消息、也要出现在成员里）
+    ensureMembers(threadId, { initiator })
 
     log(`[api] ${user.username} 新建群 ${threadId}：${groupName}`)
 
     return {
       ok: true,
       threadId,
-      thread: fromSaved(threadId, {
-        mode: 'chat',
-        name: groupName,
-        initiator,
-        lastActiveAt: initiator.at,
-      }),
+      thread: withMembers(
+        fromSaved(threadId, {
+          mode: 'chat',
+          name: groupName,
+          initiator,
+          lastActiveAt: initiator.at,
+        }),
+        user.id,
+      ),
     }
+  }
+
+  /**
+   * 加入群。
+   *
+   * 幂等：重复扫码、重复点「加入」都只当一次。已经在群里就原样返回，
+   * 不做任何降级——有人被指定成管理员后又扫了一次码，不该掉回普通成员。
+   */
+  async function joinGroup({ threadId, user }) {
+    if (!isAppThread(threadId)) return { ok: false, notFound: true }
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true }
+    ensureMembers(threadId, saved)
+    const before = members.isMember(threadId, user.id)
+    if (!before) {
+      members.add(threadId, {
+        id: user.id,
+        nickname: user.nickname || user.username,
+        isBot: false,
+      })
+      log(`[api] ${user.username} 加入群 ${threadId}`)
+    }
+    const info = await threadInfo(threadId, { userId: user.id })
+    return { ok: true, joined: !before, thread: info }
+  }
+
+  /**
+   * 改群名。
+   *
+   * 权限：系统管理员或群管理员。群主也在 members 里记成 owner，
+   * 所以这里只问成员表，不用再比 initiator——两处判据迟早会不一致。
+   */
+  async function renameGroup({ threadId, name, user }) {
+    if (!isAppThread(threadId)) return { ok: false, notFound: true }
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true }
+    ensureMembers(threadId, saved)
+    if (!members.isMember(threadId, user.id)) {
+      return { ok: false, forbidden: true, error: '你还没加入这个群' }
+    }
+    const myRole = members.roleOf(threadId, user.id)
+    if (user.role !== 'admin' && myRole !== 'owner' && myRole !== 'admin') {
+      return { ok: false, forbidden: true, error: '只有群管理员能改群名' }
+    }
+    const groupName = String(name ?? '').trim()
+    if (!groupName) return { ok: false, error: '群名不能为空' }
+    if (groupName.length > 40) return { ok: false, error: '群名太长了，40 字以内' }
+
+    const next = { ...saved, name: groupName }
+    groups.save(threadId, next)
+    log(`[api] ${user.username} 把群 ${threadId} 改名为「${groupName}」`)
+    const info = await threadInfo(threadId, { userId: user.id })
+    return { ok: true, thread: info, groupName }
+  }
+
+  /**
+   * 群成员列表。
+   *
+   * isBot 交给存储层记（机器人是账号表里的真实账号，但界面上要能区分
+   * 「不能改角色」的那一个），canManage 只有群主为真——指定管理员是群主专属。
+   */
+  async function membersOf({ threadId, user }) {
+    if (!isAppThread(threadId)) return { ok: false, notFound: true }
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true }
+    ensureMembers(threadId, saved)
+    if (!members.isMember(threadId, user.id)) {
+      return { ok: false, forbidden: true, error: '你还没加入这个群' }
+    }
+    const myRole = members.roleOf(threadId, user.id)
+    return {
+      ok: true,
+      ownerId: members.get(threadId)?.ownerId ?? null,
+      canManage: myRole === 'owner',
+      canRename: user.role === 'admin' || myRole === 'owner' || myRole === 'admin',
+      members: members.list(threadId),
+    }
+  }
+
+  /** 群主指定/取消群管理员（bot 与群主由存储层拒绝） */
+  async function setMemberRole({ threadId, userId, role, user }) {
+    if (!isAppThread(threadId)) return { ok: false, notFound: true }
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true }
+    ensureMembers(threadId, saved)
+    if (members.roleOf(threadId, user.id) !== 'owner') {
+      return { ok: false, forbidden: true, error: '只有群主能指定群管理员' }
+    }
+    const result = members.setRole(threadId, userId, role)
+    if (!result.ok) return result
+    const info = await threadInfo(threadId, { userId: user.id })
+    return { ok: true, thread: info, members: members.list(threadId) }
   }
 
   /**
@@ -229,6 +359,11 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
   }) {
     const saved = get(threadId)
     if (!exists(saved)) return { ok: false, notFound: true, error: '没有这个群' }
+    // 老群在这里补一次成员表，否则群里的人自己发言会被路层的成员判断挡住
+    ensureMembers(threadId, saved)
+    if (members && !members.isMember(threadId, user.id)) {
+      return { ok: false, forbidden: true, error: '你还没加入这个群' }
+    }
 
     const initiator = {
       userId: user.id,
@@ -341,5 +476,5 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     return { ok: true, action: route.action, accepted: true }
   }
 
-  return { listThreads, threadInfo, createGroup, deliver }
+  return { listThreads, threadInfo, createGroup, deliver, joinGroup, renameGroup, membersOf, setMemberRole }
 }

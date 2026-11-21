@@ -137,6 +137,8 @@ class Thread {
     this.lastSeq = 0,
     this.canAct = false,
     this.botName,
+    this.memberCount = 0,
+    this.myRole,
   });
 
   final String threadId;
@@ -190,6 +192,12 @@ class Thread {
     return n.isEmpty ? 'AI员工' : n;
   }
 
+  /// 群成员数（含群主与机器人）。
+  final int memberCount;
+
+  /// 我在这个群里的角色：owner / admin / member（没加入时为 null）。
+  final String? myRole;
+
   /// 列表和标题用的名字：有需求名用需求名，还没提需求就退回群名。
   String get title {
     if (name?.isNotEmpty == true) return name!;
@@ -224,6 +232,105 @@ class Thread {
     lastSeq: (j['lastSeq'] as num?)?.toInt() ?? 0,
     canAct: j['canAct'] == true,
     botName: j['botName']?.toString(),
+    memberCount: (j['memberCount'] as num?)?.toInt() ?? 0,
+    myRole: j['myRole']?.toString(),
+  );
+}
+
+/// 群成员。机器人也是成员（服务端在账号表里给它建了真实账号）。
+class GroupMember {
+  const GroupMember({
+    required this.userId,
+    required this.nickname,
+    required this.role,
+    this.isBot = false,
+    this.joinedAt = 0,
+  });
+
+  final String userId;
+  final String nickname;
+
+  /// owner（群主）/ admin（群管理员）/ member（普通成员）
+  final String role;
+  final bool isBot;
+  final int joinedAt;
+
+  bool get isOwner => role == 'owner';
+  bool get isAdmin => role == 'admin' || role == 'owner';
+
+  /// 界面上显示的角色名。群主单独说清楚，不然「管理员」分不清是谁。
+  String get roleLabel {
+    if (isBot && isAdmin) return '机器人 · 管理员';
+    if (isOwner) return '群主';
+    if (role == 'admin') return '管理员';
+    return '成员';
+  }
+
+  factory GroupMember.fromJson(Map<String, dynamic> j) => GroupMember(
+    userId: (j['userId'] ?? '').toString(),
+    nickname: (j['nickname'] ?? '').toString(),
+    role: (j['role'] ?? 'member').toString(),
+    isBot: j['isBot'] == true,
+    joinedAt: (j['joinedAt'] as num?)?.toInt() ?? 0,
+  );
+}
+
+/// 群成员列表 + 我在这个群里能做什么
+class GroupMembers {
+  const GroupMembers({
+    required this.ownerId,
+    required this.canManage,
+    required this.canRename,
+    required this.members,
+  });
+
+  final String? ownerId;
+
+  /// 我是群主，能指定/取消群管理员
+  final bool canManage;
+
+  /// 我能改群名（系统管理员或群管理员）
+  final bool canRename;
+  final List<GroupMember> members;
+
+  factory GroupMembers.fromJson(Map<String, dynamic> j) => GroupMembers(
+    ownerId: j['ownerId']?.toString(),
+    canManage: j['canManage'] == true,
+    canRename: j['canRename'] == true,
+    members: (j['members'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(GroupMember.fromJson)
+        .toList(),
+  );
+}
+
+/// 按群号查到的群：只够判断「要不要加入」，不含任何消息。
+class GroupPreview {
+  const GroupPreview({
+    required this.threadId,
+    required this.groupName,
+    required this.memberCount,
+    required this.joined,
+    this.ownerNickname,
+  });
+
+  final String threadId;
+  final String? groupName;
+  final int memberCount;
+  final bool joined;
+  final String? ownerNickname;
+
+  String get title {
+    final n = groupName?.trim() ?? '';
+    return n.isEmpty ? '未命名群' : n;
+  }
+
+  factory GroupPreview.fromJson(Map<String, dynamic> j) => GroupPreview(
+    threadId: (j['threadId'] ?? '').toString(),
+    groupName: j['groupName']?.toString(),
+    memberCount: (j['memberCount'] as num?)?.toInt() ?? 0,
+    joined: j['joined'] == true,
+    ownerNickname: j['ownerNickname']?.toString(),
   );
 }
 

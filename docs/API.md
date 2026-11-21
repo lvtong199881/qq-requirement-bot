@@ -453,7 +453,8 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 
 ### `GET /api/threads`
 
-需要登录。
+需要登录。**只返回你已经加入的群**——群是私有的，系统管理员也一样：
+能管所有账号不等于能偷看所有群。
 
 ```jsonc
 {
@@ -671,6 +672,80 @@ App 自己按 `answers` + 对应卡片渲染（问题一行、选项缩进且字
 ```jsonc
 { "reason": "按钮颜色不对，应该用品牌蓝" }
 ```
+
+### 群成员与入群
+
+群是**私有**的：列表、详情、消息、发言都只给已经加入的人。非成员访问详情/消息返回
+`403`，带 `code: "not_member"`、`error: "你还没加入这个群"`——App 靠这个 code 区分
+「没权限进这个群」和「登录过期」，前者给「加入」按钮，后者才回登录页。
+
+角色三种，跟 QQ 一套习惯：
+
+| role | 谁 | 能做什么 |
+| --- | --- | --- |
+| `owner` | 建群的人（真人，不是机器人） | 改群名、指定/取消群管理员 |
+| `admin` | 群主指定的人 + 机器人账号（自动） | 改群名 |
+| `member` | 其余加入的人 | 聊天、@ 需求 bot、在卡片上拍板（拍板还要系统管理员权限） |
+
+系统管理员也只看得到自己加入的群：能管账号不等于能偷看所有群。
+
+#### `GET /api/threads/:id/preview`
+
+任何登录用户可调，用来在加入前确认「这是哪个群、几个人」。不含任何消息。
+
+```jsonc
+{ "ok": true, "preview": { "threadId": "t1a2b3c4d5e6", "groupName": "首页改版",
+  "memberCount": 3, "joined": false, "ownerNickname": "产品阿宝" } }
+```
+
+群不存在返回 `404`（`error: "没有这个群"`）。
+
+#### `POST /api/threads/:id/join`
+
+任何登录用户可调，**幂等**：已经在群里返回 `joined: false`，不算失败。
+
+```jsonc
+{ "ok": true, "joined": true, "thread": { ... } }
+```
+
+#### `GET /api/threads/:id/members`
+
+成员可看。非成员 `403`（`code: "not_member"`）。
+
+```jsonc
+{
+  "ok": true,
+  "ownerId": "u_23ff754b1af1ac0f",
+  "canManage": true,     // 我是群主，能指定管理员
+  "canRename": true,     // 我能改群名（系统管理员或群管理员）
+  "members": [
+    { "userId": "u_23ff754b1af1ac0f", "nickname": "产品阿宝", "role": "owner", "joinedAt": 1730000000000, "isBot": false },
+    { "userId": "u_bot", "nickname": "AI员工", "role": "admin", "joinedAt": 1730000000000, "isBot": true }
+  ]
+}
+```
+
+#### `PATCH /api/threads/:id`
+
+改群名。系统管理员或群管理员可改；成员也可，按后端判定。
+
+```jsonc
+{ "name": "登录体验" }
+```
+
+群名去空白后不能为空、不超过 40 字。成功返回 `{ ok: true, thread }`；
+没权限返回 `403`（`error: "只有群管理员能改群名"`）。
+
+#### `POST /api/threads/:id/members/:userId/role`
+
+只有群主能调。`role` 只能是 `admin` 或 `member`。
+
+```jsonc
+{ "role": "admin" }
+```
+
+群主不能改自己的角色（`"群主不能改自己的角色"`），机器人不能改（`"机器人账号自动就是群管理员"`）。
+成功返回最新的 `{ ok: true, members }`。
 
 ### `GET /api/threads/:id/artifacts/:token`
 

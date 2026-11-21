@@ -4,13 +4,16 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../state/auth.dart';
 import '../state/detail.dart';
 import 'format.dart';
+import 'group_settings_page.dart';
 import 'theme.dart';
 import 'widgets/ask_card.dart';
 import 'widgets/mentions.dart';
+import 'widgets/toast.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
 ///
@@ -83,7 +86,8 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   void _onUpdate() {
     final err = _c.actionError;
     if (err != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      // 输入区就在屏幕底部，SnackBar 会盖住它；toast 浮在输入区上方
+      showToast(context, err, error: true);
       _c.clearActionError();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -130,6 +134,33 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   // 通过/打回不再走这里：它们已经是消息流里的提问卡片，提交时和普通消息
   // 走同一条路径（带 answers），权限也由后端按 confirm 判。
 
+  Future<void> _openSettings(Thread? t) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => GroupSettingsPage(
+          auth: widget.auth,
+          threadId: widget.threadId,
+          seed: t,
+        ),
+      ),
+    );
+    // 改完群名回来，标题要跟着变
+    if (mounted) await _c.refreshNow();
+  }
+
+  /// 从别的群分享来的群号点进来时，人还没在群里：这里补一步加入。
+  Future<void> _joinGroup() async {
+    try {
+      final r = await widget.auth.client.joinGroup(widget.threadId);
+      if (!mounted) return;
+      showToast(context, r.joined ? '已加入这个群' : '你已经在群里了');
+      await _c.refreshNow();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      showToast(context, e.isNetwork ? '连不上服务器' : e.message, error: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -155,6 +186,13 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+            actions: [
+              IconButton(
+                tooltip: '群设置',
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () => _openSettings(t),
+              ),
+            ],
           ),
           body: Column(
             // 撑满整宽，否则只有 tag 的吸顶区会被 Column 居中，看着像缩进了一截
@@ -183,15 +221,24 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           : const SizedBox.shrink();
     }
     if (_c.error != null && _c.messages.isEmpty) {
+      // 没加入这个群是权限问题，不是网络问题：给一个「加入」比给「重试」有用
+      final notMember = _c.error!.contains('还没加入');
       return Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(AppSpace.xxl),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.cloud_off_outlined, size: 48, color: theme.colorScheme.error),
+              Icon(
+                notMember ? Icons.lock_outline : Icons.cloud_off_outlined,
+                size: 48,
+                color: theme.colorScheme.error,
+              ),
               const SizedBox(height: AppSpace.md),
-              Text('拉不到对话', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
+              Text(
+                notMember ? '还没进这个群' : '拉不到对话',
+                style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface),
+              ),
               const SizedBox(height: AppSpace.xs),
               Text(
                 _c.error!,
@@ -199,7 +246,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
                 style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: AppSpace.xl),
-              OutlinedButton(onPressed: _c.refreshNow, child: const Text('重试')),
+              if (notMember)
+                FilledButton(onPressed: _joinGroup, child: const Text('加入这个群'))
+              else
+                OutlinedButton(onPressed: _c.refreshNow, child: const Text('重试')),
             ],
           ),
         ),
@@ -778,7 +828,6 @@ class _FileContent extends StatelessWidget {
   Future<void> _download(BuildContext context) async {
     final url = message.artifactUrl;
     if (url == null) return;
-    final messenger = ScaffoldMessenger.of(context);
     try {
       final bytes = await auth.client.artifactBytes(url);
       final name = message.fileName ?? 'artifact.bin';
@@ -791,11 +840,11 @@ class _FileContent extends StatelessWidget {
       await file.writeAsBytes(bytes, flush: true);
 
       await Clipboard.setData(ClipboardData(text: file.path));
-      messenger.showSnackBar(
-        SnackBar(content: Text('已保存到 ${file.path}（路径已复制）')),
-      );
+      if (context.mounted) {
+        showToast(context, '已保存到 ${file.path}（路径已复制）');
+      }
     } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('下载失败：$e')));
+      if (context.mounted) showToast(context, '下载失败：$e', error: true);
     }
   }
 

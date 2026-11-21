@@ -2,13 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../state/auth.dart';
 import '../state/threads.dart';
 import 'format.dart';
+import 'scan_page.dart';
 import 'theme.dart';
 import 'thread_detail_page.dart';
+import 'widgets/avatar.dart';
 import 'widgets/stage.dart';
+import 'widgets/toast.dart';
 
 /// 群列表。
 ///
@@ -49,7 +53,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
       if (!mounted) return;
       final notice = widget.auth.flashNotice;
       if (notice != null && notice.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notice)));
+        showToast(context, notice);
         widget.auth.consumeNotice();
       }
     });
@@ -100,6 +104,20 @@ class _ThreadListPageState extends State<ThreadListPage> {
     await _open(created!);
   }
 
+  /// 加入别人的群：只知道群号也能进，扫码就是省去手输。
+  ///
+  /// 先查一下群叫什么、几个人，再让人确认加入——只凭一串群号直接进群，
+  /// 进错了还得再退，多一步确认反而更快。
+  Future<void> _join() async {
+    final joined = await showDialog<bool>(
+      context: context,
+      builder: (_) => _JoinDialog(auth: widget.auth),
+    );
+    if (joined == true && mounted) {
+      await widget.controller.refresh(silent: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -108,6 +126,11 @@ class _ThreadListPageState extends State<ThreadListPage> {
         appBar: AppBar(
           title: const Text('群'),
           actions: [
+            IconButton(
+              tooltip: '加入群',
+              icon: const Icon(Icons.group_add_outlined),
+              onPressed: _join,
+            ),
             if (widget.auth.perms.startRequirement)
               IconButton(
                 tooltip: '建群',
@@ -237,6 +260,11 @@ class _ThreadCard extends StatelessWidget {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    InitialAvatar(
+                      name: t.groupName ?? t.name ?? '未命名群',
+                      size: 40,
+                    ),
+                    const SizedBox(width: AppSpace.md),
                     Expanded(
                       child: Text(
                         // 这里是群列表，主身份是群名：一个群里可能换过几轮需求，
@@ -532,6 +560,182 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
                 )
               : const Text('建群'),
         ),
+      ],
+    );
+  }
+}
+
+/// 加入群：输群号或扫码，先看群名和人数再确认。
+///
+/// 群号就是 threadId，没有另造一套编号——多一套映射就多一处可能对不上的地方。
+class _JoinDialog extends StatefulWidget {
+  const _JoinDialog({required this.auth});
+
+  final AuthController auth;
+
+  @override
+  State<_JoinDialog> createState() => _JoinDialogState();
+}
+
+class _JoinDialogState extends State<_JoinDialog> {
+  final _id = TextEditingController();
+  GroupPreview? _preview;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _id.dispose();
+    super.dispose();
+  }
+
+  Future<void> _scan() async {
+    final value = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => const ScanPage(
+          hint: '对准群二维码',
+          fallbackHint: '扫不到就把群号手填进去',
+        ),
+      ),
+    );
+    if (value == null || value.isEmpty || !mounted) return;
+    _id.text = value;
+    await _lookup();
+  }
+
+  Future<void> _lookup() async {
+    final id = _id.text.trim();
+    if (id.isEmpty) {
+      setState(() => _error = '填个群号，或者点右上角扫一下');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+      _preview = null;
+    });
+    try {
+      final p = await widget.auth.client.groupPreview(id);
+      if (!mounted) return;
+      setState(() {
+        _preview = p;
+        _busy = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e.isNetwork ? '连不上服务器' : e.message;
+      });
+    }
+  }
+
+  Future<void> _join() async {
+    final p = _preview;
+    if (p == null) return;
+    if (p.joined) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final r = await widget.auth.client.joinGroup(p.threadId);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+      showToast(context, r.joined ? '已加入「${p.groupName}」' : '你已经在这个群里了');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e.isNetwork ? '连不上服务器' : e.message;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final p = _preview;
+    return AlertDialog(
+      title: const Text('加入群'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _id,
+            autofocus: true,
+            enabled: !_busy,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (_) => _lookup(),
+            decoration: InputDecoration(
+              labelText: '群号',
+              hintText: '比如：t9a1b2c3d4e5',
+              errorText: _error,
+              suffixIcon: IconButton(
+                tooltip: '扫码',
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: _busy ? null : _scan,
+              ),
+            ),
+          ),
+          if (p != null) ...[
+            const SizedBox(height: AppSpace.md),
+            Container(
+              padding: const EdgeInsets.all(AppSpace.sm),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(AppRadius.medium),
+              ),
+              child: Row(
+                children: [
+                  InitialAvatar(name: p.title, size: 40),
+                  const SizedBox(width: AppSpace.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.title, style: AppText.titleS, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(
+                          p.joined ? '你已经在这个群里' : '${p.memberCount} 个人',
+                          style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: const Text('取消'),
+        ),
+        if (p == null)
+          FilledButton(
+            onPressed: _busy ? null : _lookup,
+            child: _busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('查一下'),
+          )
+        else
+          FilledButton(
+            onPressed: _busy ? null : _join,
+            child: _busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(p.joined ? '进去看看' : '加入'),
+          ),
       ],
     );
   }

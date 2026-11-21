@@ -6,7 +6,17 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 /// 为什么不自己接相机：手写预览 + 对焦 + 旋转在 Android/iOS 上差异太大，
 /// 引入 mobile_scanner 换来的是「扫一下就能连」而不是一堆兼容性 bug。
 class ScanPage extends StatefulWidget {
-  const ScanPage({super.key});
+  const ScanPage({
+    super.key,
+    this.hint = '对准服务器启动日志里的二维码',
+    this.fallbackHint = '扫不到就把日志里那行地址手填进去',
+  });
+
+  /// 提示语跟着用途走：扫服务器地址和扫群二维码，想让人对准的东西不一样。
+  final String hint;
+
+  /// 扫不动时的退路也不一样：一个是手填地址，一个是手填群号。
+  final String fallbackHint;
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -95,10 +105,10 @@ class _ScanPageState extends State<ScanPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
-                  '对准服务器启动日志里的二维码',
+                Text(
+                  widget.hint,
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
                     height: 1.4,
@@ -107,7 +117,7 @@ class _ScanPageState extends State<ScanPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '扫不到就把日志里那行地址手填进去',
+                  widget.fallbackHint,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.7),

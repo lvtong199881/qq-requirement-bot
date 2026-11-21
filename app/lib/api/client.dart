@@ -22,6 +22,13 @@ class ApiException implements Exception {
   final String? roleLabel;
 
   bool get isAuth => statusCode == 401 || statusCode == 403;
+
+  /// 只有 401 才代表「登录态没了」。403 可能是「没加入这个群」，
+  /// 那种情况踢人回登录页是错的——人还在，只是这个群没权限。
+  bool get isUnauthenticated => statusCode == 401;
+
+  /// 没加入这个群：详情页要据此给出「加入」按钮而不是「重试」
+  bool get isNotMember => statusCode == 403 && code == 'not_member';
   bool get isNetwork => statusCode == null;
 
   @override
@@ -205,6 +212,52 @@ class ApiClient {
   Future<Thread> thread(String threadId) async {
     final m = await _send('GET', '/api/threads/${Uri.encodeComponent(threadId)}');
     return Thread.fromJson((m['thread'] as Map).cast<String, dynamic>());
+  }
+
+  /// 按群号查群：只知道群号的人也能看到「叫什么、几个人」，
+  /// 但看不到消息。用来做搜索加入前的确认。
+  Future<GroupPreview> groupPreview(String threadId) async {
+    final m = await _send('GET', '/api/threads/${Uri.encodeComponent(threadId)}/preview');
+    return GroupPreview.fromJson((m['preview'] as Map).cast<String, dynamic>());
+  }
+
+  /// 加入群。幂等：已经在群里时 joined 为 false，但不算失败。
+  Future<({bool joined, Thread? thread})> joinGroup(String threadId) async {
+    final m = await _send('POST', '/api/threads/${Uri.encodeComponent(threadId)}/join');
+    final raw = m['thread'];
+    return (
+      joined: m['joined'] == true,
+      thread: raw is Map ? Thread.fromJson(raw.cast<String, dynamic>()) : null,
+    );
+  }
+
+  /// 群成员 + 我的权限。
+  Future<GroupMembers> groupMembers(String threadId) async {
+    final m = await _send('GET', '/api/threads/${Uri.encodeComponent(threadId)}/members');
+    return GroupMembers.fromJson(m);
+  }
+
+  /// 改群名（系统管理员或群管理员）。
+  Future<Thread> renameGroup(String threadId, String name) async {
+    final m = await _send(
+      'PATCH',
+      '/api/threads/${Uri.encodeComponent(threadId)}',
+      body: {'name': name},
+    );
+    return Thread.fromJson((m['thread'] as Map).cast<String, dynamic>());
+  }
+
+  /// 群主指定/取消群管理员。
+  Future<List<GroupMember>> setMemberRole(String threadId, String userId, String role) async {
+    final m = await _send(
+      'POST',
+      '/api/threads/${Uri.encodeComponent(threadId)}/members/${Uri.encodeComponent(userId)}/role',
+      body: {'role': role},
+    );
+    return (m['members'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => GroupMember.fromJson(e.cast<String, dynamic>()))
+        .toList();
   }
 
   /// 增量拉消息。

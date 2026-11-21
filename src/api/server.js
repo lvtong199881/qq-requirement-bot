@@ -28,6 +28,11 @@ const RATE_MAX_FAILS = 20
  * @param {(o: {threadId:string, text:string, user:object, mentions?:string[]}) => Promise<object>} o.deliver
  *        把一条用户消息投进群里。普通聊天就地留下，@ 了需求 bot 才交给引擎
  * @param {(o: {name?:string, user:object}) => Promise<object>} o.createGroup  新建群
+ * @param {(o: {threadId:string, user:object}) => Promise<object>} o.joinGroup  加入群
+ * @param {(o: {threadId:string, name:string, user:object}) => Promise<object>} o.renameGroup  改群名
+ * @param {(o: {threadId:string, user:object}) => Promise<object>} o.membersOf  群成员列表
+ * @param {(o: {threadId:string, userId:string, role:string, user:object}) => Promise<object>} o.setMemberRole
+ * @param {import('../store/members.js').MemberStore} o.members  成员表：决定谁能看见哪个群
  * @param {{handle:Function, status:Function}=} o.engine  引擎通道（IM 独立部署时才有）
  * @param {string=} o.botName  agent 在群里的显示名，App 用它拼「@名字」，不在前端写死
  * @param {(...a:any[]) => void} o.log
@@ -41,6 +46,11 @@ export function createApiServer({
   listThreads,
   deliver,
   createGroup,
+  joinGroup,
+  renameGroup,
+  membersOf,
+  setMemberRole,
+  members,
   engine = null,
   botName = 'AI员工',
   log,
@@ -204,7 +214,7 @@ export function createApiServer({
       if (method === 'GET' && path === '/api/threads') {
         const user = requireUser(req, res)
         if (!user) return
-        const list = await listThreads()
+        const list = await listThreads({ userId: user.id })
         // 未读数：每个 thread 最后一条 seq 减去用户读到的位置。
         // 现在没有「已读位置」存储，先用消息总数当提示，够用且不用新表。
         const threads = list.map((t) => ({
@@ -276,6 +286,90 @@ export function createApiServer({
         return
       }
 
+      // ── 群成员与入群 ──
+      // 这几条单独放在详情路由之前：/preview 与 /join 不能被
+      // 「必须先加入才能看」的逻辑挡住，否则永远加不进去。
+
+      // 群号搜索：只看「存不存在、叫什么、几个人」，不给任何聊天内容
+      const previewMatch = path.match(/^\/api\/threads\/([^/]+)\/preview$/)
+      if (previewMatch && method === 'GET') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(previewMatch[1])
+        const info = await threadInfo(threadId, { userId: user.id })
+        if (!info) return json(res, 404, { ok: false, error: '没有这个群' })
+        return json(res, 200, {
+          ok: true,
+          preview: {
+            threadId,
+            groupName: info.groupName ?? null,
+            memberCount: info.memberCount ?? 0,
+            joined: Boolean(members?.isMember(threadId, user.id)),
+            ownerNickname: members?.list(threadId).find((m) => m.role === 'owner')?.nickname ?? null,
+          },
+        })
+      }
+
+      const joinMatch = path.match(/^\/api\/threads\/([^/]+)\/join$/)
+      if (joinMatch && method === 'POST') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(joinMatch[1])
+        const result = await joinGroup({ threadId, user })
+        if (result?.notFound) return json(res, 404, { ok: false, error: '没有这个群' })
+        if (result?.ok === false) return json(res, 400, { ok: false, error: result.error })
+        return json(res, 200, {
+          ok: true,
+          joined: result.joined,
+          thread: result.thread ? { ...result.thread, botName } : result.thread,
+        })
+      }
+
+      const membersMatch = path.match(/^\/api\/threads\/([^/]+)\/members$/)
+      if (membersMatch && method === 'GET') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(membersMatch[1])
+        const result = await membersOf({ threadId, user })
+        if (result?.notFound) return json(res, 404, { ok: false, error: '没有这个群' })
+        if (result?.forbidden) {
+          return json(res, 403, { ok: false, error: result.error, code: 'not_member' })
+        }
+        return json(res, 200, result)
+      }
+
+      const roleMatch = path.match(/^\/api\/threads\/([^/]+)\/members\/([^/]+)\/role$/)
+      if (roleMatch && method === 'POST') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(roleMatch[1])
+        const targetId = decodeURIComponent(roleMatch[2])
+        const body = await readBody(req)
+        const result = await setMemberRole({ threadId, userId: targetId, role: body.role, user })
+        if (result?.notFound) return json(res, 404, { ok: false, error: '没有这个群' })
+        if (result?.forbidden) {
+          return json(res, 403, { ok: false, error: result.error, code: 'forbidden' })
+        }
+        if (result?.ok === false) return json(res, 400, { ok: false, error: result.error })
+        return json(res, 200, result)
+      }
+
+      // 改群名：群管理员或系统管理员。放在详情之前，避免被成员闸门拦掉自己的群
+      const renameMatch = path.match(/^\/api\/threads\/([^/]+)$/)
+      if (renameMatch && method === 'PATCH') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const threadId = decodeURIComponent(renameMatch[1])
+        const body = await readBody(req)
+        const result = await renameGroup({ threadId, name: body.name, user })
+        if (result?.notFound) return json(res, 404, { ok: false, error: '没有这个群' })
+        if (result?.forbidden) {
+          return json(res, 403, { ok: false, error: result.error, code: 'forbidden' })
+        }
+        if (result?.ok === false) return json(res, 400, { ok: false, error: result.error })
+        return json(res, 200, result)
+      }
+
       // 单条需求详情 + 消息
       const threadMatch = path.match(/^\/api\/threads\/([^/]+)(\/[a-z]+)?$/)
       if (threadMatch) {
@@ -284,8 +378,18 @@ export function createApiServer({
         const threadId = decodeURIComponent(threadMatch[1])
         const sub = threadMatch[2]
 
-        const info = await threadInfo(threadId)
+        const info = await threadInfo(threadId, { userId: user.id })
         if (!info) return json(res, 404, { ok: false, error: '没有这个需求' })
+
+        // 群是私有的：没加入就看不到任何内容。preview / join 已经单独放行。
+        if (members && !members.isMember(threadId, user.id)) {
+          return json(res, 403, {
+            ok: false,
+            error: '你还没加入这个群',
+            code: 'not_member',
+          })
+        }
+
 
         if (method === 'GET' && !sub) {
           return json(res, 200, {

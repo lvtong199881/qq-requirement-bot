@@ -32,7 +32,7 @@ class ThreadDetailController extends ChangeNotifier {
   bool sending = false;
   String? error;
 
-  /// 操作失败（通过/打回/发送）的提示，界面用 SnackBar 显示后清掉。
+  /// 操作失败（通过/打回/发送）的提示，界面用 toast 显示后清掉。
   String? actionError;
 
   int _lastSeq = 0;
@@ -97,7 +97,9 @@ class ThreadDetailController extends ChangeNotifier {
       error = null;
     } on ApiException catch (e) {
       if (_disposed) return;
-      if (e.isAuth) {
+      // 401 才是登录态没了；403 可能是「没加入这个群」，
+      // 那种情况要在页面上给加入入口，不能把人踢回登录页。
+      if (e.isUnauthenticated) {
         await auth.logout();
         return;
       }

@@ -193,6 +193,8 @@ console.log('\n== 关键模块能被导入 ==')
     'src/api/engine.js',
     'src/im/router.js',
     'src/im/events.js',
+    'src/store/members.js',
+    'src/store/messages.js',
     'src/transport/transport.js',
     'src/transport/http.js',
   ]

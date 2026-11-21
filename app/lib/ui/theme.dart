@@ -78,6 +78,9 @@ abstract final class AppColors {
   static const candyPink = Color(0xFFFF7EB0);
   static const candyLilac = Color(0xFFA78BFA);
 
+  /// 头像底色就从这里挑：同一个名字永远同一个色，换设备也不变。
+  static const candies = [candySky, candyMint, candyLemon, candyPeach, candyPink, candyLilac];
+
   static Color _pick(BuildContext context, Color light, Color dark) =>
       Theme.of(context).brightness == Brightness.dark ? dark : light;
 
@@ -281,6 +284,8 @@ ThemeData buildTheme(Brightness brightness) {
       titleTextStyle: textTheme.titleMedium!.copyWith(color: scheme.onSurface),
       contentTextStyle: AppText.body.copyWith(color: scheme.onSurfaceVariant),
     ),
+    // 不用 SnackBar：提示统一走 widgets/toast.dart 的 showToast。
+    // 这里保留造型主题只是为了万一某个系统对话框内部用到时不难看。
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.medium)),

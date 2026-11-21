@@ -19,6 +19,7 @@ import { SessionStore } from './state.js'
 import { UserStore, roleLabelOf } from './account/store.js'
 import { MessageStore } from './store/messages.js'
 import { ArtifactStore } from './store/artifacts.js'
+import { MemberStore } from './store/members.js'
 import { EngineEvents } from './im/events.js'
 import { createThreadService } from './api/threads.js'
 import { createEngineApi } from './api/engine.js'
@@ -59,10 +60,16 @@ if (config.api?.enabled !== true) {
 const store = new SessionStore(config.repoRoot, config.stateDir)
 const stateDir = store.dir
 const users = new UserStore(stateDir)
+// 预设管理员先建，理由同 src/index.js：ensureBootstrap 只在空表时生效，
+// 而下面 ensureBot 会往表里塞一个账号。
+const boot = users.ensureBootstrap()
 // 机器人账号先落表，消息库才知道 role=bot 的消息该挂在谁名下
 const botUser = users.ensureBot({ nickname: config.bot?.name }).user
 const messages = new MessageStore(join(stateDir, 'messages'), { bot: botUser })
 const artifacts = new ArtifactStore(join(stateDir, 'artifacts'))
+// 成员表也归 IM 管：它才是「谁能看见哪个群」的唯一裁判，
+// 引擎那边不存成员关系，问权限一律回 IM 查。
+const members = new MemberStore(join(stateDir, 'members'))
 const events = new EngineEvents(join(stateDir, 'engine'))
 
 /**
@@ -147,6 +154,8 @@ const dispatch = async (ev) => {
 const threads = createThreadService({
   store,
   messages,
+  members,
+  botUser,
   dispatch,
   can,
   log,
@@ -157,10 +166,15 @@ const server = createApiServer({
   users,
   messages,
   artifacts,
+  members,
   threadInfo: threads.threadInfo,
   listThreads: threads.listThreads,
   deliver: threads.deliver,
   createGroup: threads.createGroup,
+  joinGroup: threads.joinGroup,
+  renameGroup: threads.renameGroup,
+  membersOf: threads.membersOf,
+  setMemberRole: threads.setMemberRole,
   engine: engineApi,
   botName: botUser.nickname,
   log,
@@ -189,7 +203,7 @@ server.listen(config.api.port, config.api.host, () => {
   }
   for (const url of urls.slice(0, 3)) printQr(url)
 
-  const boot = users.ensureBootstrap()
+  // 启动时已经建过（见 store 初始化那段，必须在 ensureBot 之前），这里只播报
   if (boot.created) {
     log(`已创建预设管理员：${boot.user.username} / 123456`)
     log('这个密码是公开的，登录后请立刻在「账号管理」里改掉')
