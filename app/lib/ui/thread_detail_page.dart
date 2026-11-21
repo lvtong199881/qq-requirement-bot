@@ -236,8 +236,10 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         final showMeta = older == null || older.role != m.role || m.at - older.at > 3 * 60 * 1000;
         final card = m.ask;
         if (card != null) {
+          // 卡片和气泡是两条消息，头顶必须留出间隔：贴在一起会让人以为
+          // 「Agent 那句话 + 这张卡片」是同一条消息里的两截圆角。
           return Padding(
-            padding: const EdgeInsets.only(bottom: AppSpace.sm),
+            padding: const EdgeInsets.only(top: AppSpace.sm),
             child: AskCardView(
               // 带上消息序号：列表增删消息时 Flutter 才会把同一个状态还给同一张卡
               key: ValueKey('ask-${m.seq}'),

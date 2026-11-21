@@ -84,10 +84,16 @@ class ThreadDetailController extends ChangeNotifier {
 
       final page = results[1] as ({List<Message> messages, int lastSeq});
       if (page.messages.isNotEmpty) {
-        messages = [...messages, ...page.messages];
+        // 按 seq 去重：服务端给的 lastSeq 只要比它返回的最新一条小一点
+        // （缓存没跟上、磁盘被外部改过），下一轮就会把同一批消息再发一遍，
+        // 聊天记录里就会并排出现两条一模一样的。
+        final seen = messages.map((m) => m.seq).toSet();
+        final fresh = page.messages.where((m) => seen.add(m.seq)).toList();
+        if (fresh.isNotEmpty) messages = [...messages, ...fresh];
       }
       // 用服务端给的值，不要自己 +1 猜：中间可能有别的客户端发的消息。
-      _lastSeq = page.lastSeq;
+      // 只进不退：拉回的 lastSeq 若比手里的小，按小的走会一直重复拉同一段。
+      if (page.lastSeq > _lastSeq) _lastSeq = page.lastSeq;
       error = null;
     } on ApiException catch (e) {
       if (_disposed) return;

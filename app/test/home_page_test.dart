@@ -281,6 +281,76 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  // 卡片和气泡是两条消息，贴在一起时看起来像一条消息被切成两个圆角。
+  testWidgets('气泡和提问卡片之间留出间隔', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'requirement',
+            'pending': false,
+            'stage': '需求澄清',
+            'stageStatus': '进行中',
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        final at = DateTime.now().millisecondsSinceEpoch;
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': at - 60000,
+              'role': 'bot',
+              'kind': 'text',
+              'payload': {'text': '收到，开始处理：加一个返回顶部按钮'},
+            },
+            {
+              'seq': 2,
+              'at': at,
+              'role': 'bot',
+              'kind': 'ask',
+              'payload': {
+                'title': '需要你拍板',
+                'submitLabel': '提交',
+                'questions': [
+                  {
+                    'id': 'q1',
+                    'title': '什么时候上线？',
+                    'kind': 'single',
+                    'options': [
+                      {'id': 'a', 'label': '这周'},
+                      {'id': 'b', 'label': '下周'},
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+          'lastSeq': 2,
+        });
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final bubble = tester.getRect(find.text('收到，开始处理：加一个返回顶部按钮'));
+    final card = tester.getRect(find.text('需要你拍板'));
+    // 气泡文字到卡片标题至少要跨过气泡内边距(8) + 卡片上间距(12)。
+    // 只断言「有间隔」不够：原来的 8 也是间隔，但肉眼看着是连在一起的。
+    expect(card.top - bubble.bottom, greaterThanOrEqualTo(16));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   // 回答了卡片的那条消息：问题一行、选项缩进一行、字号更小颜色更淡，
   // 否则十五道题在气泡里连成一片，看不出哪句是问哪句是答。
   testWidgets('卡片答案在气泡里分行缩进，问题比选项重', (tester) async {
@@ -369,6 +439,57 @@ void main() {
       tester.getTopLeft(option).dx,
       greaterThan(tester.getTopLeft(questionLine).dx),
     );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  // 服务端 lastSeq 只要落后一点，轮询就会把同一批消息再发一遍；
+  // 不去重的话聊天记录里会并排出现两条一模一样的。
+  testWidgets('轮询到重复 seq 时不会出现重影', (tester) async {
+    var polls = 0;
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'chat',
+            'pending': true,
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        polls++;
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': DateTime.now().millisecondsSinceEpoch,
+              'role': 'bot',
+              'kind': 'text',
+              'payload': {'text': '同一句话'},
+            },
+          ],
+          // 故意把 lastSeq 报小：第二轮 since=0 会把这句再发一次
+          'lastSeq': 0,
+        });
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('同一句话'), findsOneWidget);
+
+    // 3 秒一次的轮询：等它再拉一轮，返回的还是 seq 1
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(polls, greaterThan(1));
+    expect(find.text('同一句话'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
