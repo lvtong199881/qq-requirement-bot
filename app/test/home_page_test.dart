@@ -280,6 +280,98 @@ void main() {
     // 否则计时器会挂到下一个用例里
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  // 回答了卡片的那条消息：问题一行、选项缩进一行、字号更小颜色更淡，
+  // 否则十五道题在气泡里连成一片，看不出哪句是问哪句是答。
+  testWidgets('卡片答案在气泡里分行缩进，问题比选项重', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'requirement',
+            'pending': false,
+            'stage': '需求澄清',
+            'stageStatus': '进行中',
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        final at = DateTime.now().millisecondsSinceEpoch;
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': at,
+              'role': 'bot',
+              'kind': 'ask',
+              'payload': {
+                'title': '需要你拍板',
+                'submitLabel': '提交',
+                'questions': [
+                  {
+                    'id': 'q1',
+                    'title': '是否埋曝光？',
+                    'kind': 'single',
+                    'allowInput': true,
+                    'inputLabel': '自己写',
+                    'options': [
+                      {'id': 'a', 'label': '先只埋点击'},
+                      {'id': 'b', 'label': '先不做'},
+                    ],
+                  },
+                ],
+              },
+            },
+            {
+              'seq': 2,
+              'at': at + 1000,
+              'role': 'user',
+              'kind': 'text',
+              'payload': {
+                'text': '是否埋曝光？\n  A. 先只埋点击',
+                'askSeq': 1,
+                'answers': [
+                  {'qid': 'q1', 'optionIds': ['a'], 'input': ''},
+                ],
+              },
+            },
+          ],
+          'lastSeq': 2,
+        });
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 卡片上也写着同一句题干，所以只在这条气泡里找（气泡包在 SelectionArea 里）
+    final inBubble = find.byType(SelectionArea);
+    final questionLine = find.descendant(
+      of: inBubble,
+      matching: find.text('是否埋曝光？'),
+    );
+    final option = find.descendant(of: inBubble, matching: find.text('A. 先只埋点击'));
+
+    expect(questionLine, findsOneWidget);
+    expect(option, findsOneWidget);
+    final q = tester.widget<Text>(questionLine);
+    final o = tester.widget<Text>(option);
+    expect(o.style!.fontSize, lessThan(q.style!.fontSize!));
+    expect(o.style!.color, isNot(q.style!.color));
+    expect(
+      tester.getTopLeft(option).dx,
+      greaterThan(tester.getTopLeft(questionLine).dx),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 Future<AuthController> _readyAuth(

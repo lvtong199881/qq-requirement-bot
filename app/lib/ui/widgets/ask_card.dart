@@ -137,9 +137,15 @@ class _AskCardViewState extends State<AskCardView> {
         // 自己写的排最后一个选项的位置，和下发的选项字母对得上
         labels.add('${String.fromCharCode(65 + q.options.length)}. $typed');
       }
-      // 题号用卡片上的序号，不是「答过的第几条」
-      final head = _numbered.hasMatch(q.title) ? q.title : '${i + 1}. ${q.title}';
-      lines.add('$head ${labels.join('  ')}'.trimRight());
+      // 题号用卡片上的序号，不是「答过的第几条」；只有一道题时卡片上就不带序号
+      final numbered = card.questions.length > 1 && !_numbered.hasMatch(q.title);
+      final head = numbered ? '${i + 1}. ${q.title}' : q.title;
+      // 问题和选项分行：一行里塞「问题 A. 选项 B. 选项」读起来是一团，
+      // 选项缩进两格，纯文本客户端（面板、引擎日志）也看得清层级
+      lines.add(head);
+      for (final label in labels) {
+        lines.add('  $label');
+      }
     }
     return lines.join('\n');
   }

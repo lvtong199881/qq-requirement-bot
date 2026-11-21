@@ -579,12 +579,16 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
   "role": "user",
   "kind": "text",
   "payload": {
-    "text": "1. 弹窗时机？ A. 首次启动（推荐）",
+    // 纯文本版本给不认 answers 的客户端看：问题一行，选项缩进一行
+    "text": "弹窗时机？\n  A. 首次启动（推荐）",
     "askSeq": 7,
     "answers": [{ "qid": "q1", "optionIds": ["a"], "input": "" }]
   }
 }
 ```
+
+App 自己按 `answers` + 对应卡片渲染（问题一行、选项缩进且字号更小颜色更淡），
+`text` 只是给面板、引擎日志这类纯文本消费者的兜底。
 
 `ask` 的 `payload`：
 

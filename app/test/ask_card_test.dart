@@ -56,7 +56,7 @@ void main() {
     await tester.tap(submit);
     await tester.pump();
 
-    expect(sentText, '1. 弹窗时机？ A. 首次启动（推荐）');
+    expect(sentText, '弹窗时机？\n  A. 首次启动（推荐）');
     expect(sentAnswers?.length, 1);
     expect(sentAnswers?.first.qid, 'q1');
     expect(sentAnswers?.first.optionIds, ['a']);
@@ -96,7 +96,7 @@ void main() {
     await tester.pump();
 
     // 自己写的那句排在最后一个选项的位置：D
-    expect(sentText, contains('1. 先做哪几块？ A. 登录  C. 我的  D. 再加个设置页'));
+    expect(sentText, '先做哪几块？\n  A. 登录\n  C. 我的\n  D. 再加个设置页');
   });
 
   testWidgets('通过/打回：选打回必须能写理由', (tester) async {
@@ -263,7 +263,8 @@ void main() {
 
     expect(
       sentText,
-      'Q14 第 14 个问题？ C. 照旧版来，先别动埋点\nQ15 第 15 个问题？ A. 甲',
+      'Q14 第 14 个问题？\n  C. 照旧版来，先别动埋点\n'
+      'Q15 第 15 个问题？\n  A. 甲',
     );
     expect(sentAnswers?.map((a) => a.qid), ['q14', 'q15']);
     expect(sentAnswers?.first.input, '照旧版来，先别动埋点');
