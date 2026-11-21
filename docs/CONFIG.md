@@ -205,9 +205,9 @@ cloudflared tunnel run --url http://127.0.0.1:7881 qq-bot
   仓库里的 `scripts/avdmanager.cmd` 只在这一次调用里切到 Android Studio 自带的 JBR，不动全局环境。
 - AVD 存在 `%USERPROFILE%\.android\avd`，服务用 `emulator -list-avds` 发现，系统版本从各 AVD 的
   `config.ini` 里读（Android 5.0 ~ Android 17 有中文叫法）。
-- 模拟器的 ABI 是 x86_64，而 `flutter build apk` 的默认变体只带 arm64 时，装进模拟器会在启动
-  瞬间崩（`libflutter.so is for EM_AARCH64 ... instead of EM_X86_64`）。要在模拟器上跑，用
-  `flutter build apk --debug --target-platform=android-x64` 单独构建一份。
+- 模拟器的 ABI 是 x86_64，而本仓库给真机打的是 arm64 包，两者不通：把 arm64 包装进模拟器能装
+  上，但启动瞬间会崩（`libflutter.so is for EM_AARCH64 ... instead of EM_X86_64`）。不支持 x64，
+  模拟器只用于平台侧的设备管理，不是拿来跑这个 App 的。
 
 ## 编排
 
