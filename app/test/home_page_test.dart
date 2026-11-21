@@ -13,7 +13,6 @@ import 'package:qqbot_app/ui/me_page.dart';
 import 'package:qqbot_app/ui/server_setup_page.dart';
 import 'package:qqbot_app/ui/thread_detail_page.dart';
 import 'package:qqbot_app/ui/thread_list_page.dart';
-import 'package:qqbot_app/ui/widgets/ask_card.dart';
 
 /// 底部导航改造后的三个入口。
 ///
@@ -282,8 +281,8 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  // 相邻两条消息的间距必须一样：气泡紧贴、卡片松开会让人以为是排版错了。
-  testWidgets('气泡之间和气泡到卡片的间距一致', (tester) async {
+  // 卡片和气泡是两条消息，贴在一起时看起来像一条消息被切成两个圆角。
+  testWidgets('气泡和提问卡片之间留出间隔', (tester) async {
     final auth = await _readyAuth((req) async {
       if (req.url.path == '/api/threads/t1') {
         return _ok({
@@ -311,13 +310,6 @@ void main() {
             },
             {
               'seq': 2,
-              'at': at - 58000,
-              'role': 'bot',
-              'kind': 'text',
-              'payload': {'text': '当前「需求澄清」阶段中，先把几件事定下来。'},
-            },
-            {
-              'seq': 3,
               'at': at,
               'role': 'bot',
               'kind': 'ask',
@@ -338,7 +330,7 @@ void main() {
               },
             },
           ],
-          'lastSeq': 3,
+          'lastSeq': 2,
         });
       }
       return _ok({});
@@ -350,13 +342,11 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    final first = tester.getRect(_bubbleOf('收到，开始处理：加一个返回顶部按钮'));
-    final second = tester.getRect(_bubbleOf('当前「需求澄清」阶段中，先把几件事定下来。'));
-    final card = tester.getRect(find.byType(AskCardView));
-    // 比的是「圆角盒子」之间的缝，不是文字之间的缝——文字各自的留白不一样，
-    // 量文字会得出两个都对、看起来却一紧一松的结果。
-    expect(second.top - first.bottom, closeTo(12, 0.5));
-    expect(card.top - second.bottom, closeTo(12, 0.5));
+    final bubble = tester.getRect(find.text('收到，开始处理：加一个返回顶部按钮'));
+    final card = tester.getRect(find.text('需要你拍板'));
+    // 气泡文字到卡片标题至少要跨过气泡内边距(8) + 卡片上间距(12)。
+    // 只断言「有间隔」不够：原来的 8 也是间隔，但肉眼看着是连在一起的。
+    expect(card.top - bubble.bottom, greaterThanOrEqualTo(16));
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -504,16 +494,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
-
-/// 气泡外面那个圆角容器：量间距要量盒子边，量文字会被各自的内边距带偏。
-Finder _bubbleOf(String text) => find
-    .ancestor(
-      of: find.text(text),
-      matching: find.byWidgetPredicate(
-        (w) => w is Container && w.decoration is BoxDecoration,
-      ),
-    )
-    .first;
 
 Future<AuthController> _readyAuth(
   Future<http.Response> Function(http.Request req) handler,

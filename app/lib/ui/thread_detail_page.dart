@@ -536,10 +536,7 @@ class _Bubble extends StatelessWidget {
         : (message.nickname?.isNotEmpty == true ? message.nickname! : '成员');
 
     return Padding(
-      // 每条消息之间一律 12dp。曾经同一个人连说时只留 4dp 做「分组」，
-      // 结果气泡之间紧、气泡到卡片松，量下来就是一会儿挤一会儿散。
-      // 谁是同一个人在说话由上面那行「Agent · 14:26」表示，不靠间距压。
-      padding: const EdgeInsets.only(top: AppSpace.sm),
+      padding: EdgeInsets.only(top: showMeta ? AppSpace.sm : AppSpace.xxs),
       child: Column(
         crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
