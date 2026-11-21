@@ -10,7 +10,6 @@ import '../state/detail.dart';
 import 'format.dart';
 import 'theme.dart';
 import 'widgets/ask_card.dart';
-import 'widgets/stage.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
 ///
@@ -133,32 +132,13 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         final theme = Theme.of(context);
         return Scaffold(
           appBar: AppBar(
-            title: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  t?.title ?? '群',
-                  style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (t != null)
-                  Text(
-                    // 有需求时标题是需求名，群名退到副标题——群里可能有多个需求，
-                    // 用户要随时知道自己在哪个群里。
-                    // 纯聊天群没有阶段可说，写「群聊」比挂一个「待提需求」实在。
-                    (t.mode == 'chat' && t.name?.isNotEmpty != true)
-                        ? '群聊'
-                        : [
-                            if (t.name?.isNotEmpty == true) t.groupName,
-                            t.stage,
-                            t.stageStatus,
-                          ].where((e) => e != null && e.isNotEmpty).join(' · '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppText.caption.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-              ],
+            // 标题只留群名/需求名。阶段和状态挪到下面那排 tag 里——标题栏第二行
+            // 和下面的阶段信息说的是同一件事，两处重复等于把一屏切成三块。
+            title: Text(
+              t?.title ?? '群',
+              style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           body: Column(
@@ -303,42 +283,52 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         ),
         child: Column(
           children: [
-            // 通过/打回不再占一行按钮：它现在是消息流里的一张提问卡片
-            // （和「需要你拍板」的多选题是同一种东西）。按钮下沉成卡片之后，
-            // 一句话就能说清「在等哪一步、通过还是打回」，也不用在输入框
-            // 和按钮之间来回看。
-            // 两句话得一直摆在输入框上面，否则用户会以为「群里说话它就听得见」：
-            //   chat 群——没人知道这个群还能叫 agent 干活；
-            //   requirement 群——更常见的误解是「需求群里的每句话都算数」，
-            //   结果讨论半天发现它没听见（它确实只认 @）。
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpace.xs),
-              child: Row(
-                children: [
-                  Icon(
-                    canStart || !isChat ? Icons.smart_toy_outlined : Icons.lock_outline,
-                    size: 20,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: AppSpace.xs),
-                  Expanded(
-                    child: Text(
-                      isChat
-                          ? (canStart
-                              // 具体怎么 @ 由右边的按钮说，这行只讲「为什么」：
-                              // 两段都写全会在 360 宽的屏上折成两行，把输入框顶下去
-                              ? '想让它动手？'
-                              : '让 agent 动手得找管理员')
-                          : '它只看得见 @ 它的话',
-                      style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            // 只剩一个「@需求bot」标签：聊天本身不需要解释，需要解释的是
+            // 「怎么让它动手」——所以标签就是入口，点一下把「@需求bot 」填进输入框。
+            // 没权限时标签变灰带锁，点不动但还在，用户看得到「还能这样」。
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: AppSpace.xs),
+                child: Tooltip(
+                  message: canStart || !isChat ? '点一下，把「@需求bot」填进输入框' : '要让 agent 动手，得找管理员',
+                  child: InkWell(
+                    onTap: (canStart || !isChat) && !busy ? _mentionBot : null,
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: canStart || !isChat
+                            ? theme.colorScheme.primaryContainer
+                            : theme.colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            canStart || !isChat ? Icons.smart_toy_outlined : Icons.lock_outline,
+                            size: 14,
+                            color: canStart || !isChat
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '@需求bot',
+                            style: AppText.caption.copyWith(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: canStart || !isChat
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  if (canStart || !isChat)
-                    TextButton(
-                      onPressed: busy ? null : _mentionBot,
-                      child: const Text('@需求bot'),
-                    ),
-                ],
+                ),
               ),
             ),
             Row(
@@ -379,89 +369,143 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
   }
 }
 
-/// 吸顶区：阶段进度 + 卡住原因。
+/// 吸顶区：一行 tag（阶段 / 状态 / 分支）。
+///
+/// 原来这里是「阶段进度条 + 一整行等待原因」，两行内容把消息区压掉一块，
+/// 而且和标题栏第二行重复。现在只留 tag：阶段名一个、状态一个（卡住原因
+/// 点开看），分支一个。
 class _Header extends StatelessWidget {
   const _Header({required this.thread});
 
   final Thread thread;
 
+  /// 状态 tag 的文案。顺序即优先级：卡住 > 已完成 > 待决策 > 进行中。
+  String? get _statusLabel {
+    if (thread.blocked) return '卡住';
+    if (thread.finished) return '已完成';
+    if (thread.needsMe) return '待决策';
+    if (thread.running) return '进行中';
+    if ((thread.waitingLabel ?? '').isNotEmpty) return '等你确认';
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isChat = thread.mode == 'chat' && thread.name?.isNotEmpty != true;
+    final stage = (thread.stage ?? '').isNotEmpty
+        ? thread.stage!
+        : (isChat ? '群聊' : '待提需求');
+    final status = _statusLabel;
+    final reason = thread.waitingLabel ?? '';
+    final branch = thread.featureBranch ?? '';
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppInset.page,
         AppSpace.xs,
         AppInset.page,
-        AppSpace.sm,
+        AppSpace.xs,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Wrap(
+        spacing: AppSpace.xs,
+        runSpacing: AppSpace.xs,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          StageProgress(stages: thread.stages, currentLabel: thread.stage),
-          if ((thread.waitingLabel ?? '').isNotEmpty) ...[
-            const SizedBox(height: AppSpace.xs),
-            Builder(
-              builder: (context) {
-                // 卡住和「等你确认」是两种完全不同的处境：前者是它干不下去了，
-                // 后者是它在等你。同一个橙色会让人以为该点「通过」。
-                final tint = thread.blocked
-                    ? AppColors.blocked(context)
-                    : AppColors.waiting(context);
-                return Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpace.sm,
-                    vertical: AppSpace.xs,
-                  ),
-                  decoration: BoxDecoration(
-                    color: tint.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(AppRadius.medium),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        thread.blocked ? Icons.error_outline : Icons.schedule,
-                        size: 16,
-                        color: tint,
-                      ),
-                      const SizedBox(width: AppSpace.xs),
-                      Expanded(
-                        child: Text(
-                          thread.waitingLabel!,
-                          style: AppText.bodyS.copyWith(color: tint),
+          _Tag(
+            label: stage,
+            tint: AppColors.running(context),
+            icon: Icons.donut_small_outlined,
+          ),
+          if (status != null)
+            _Tag(
+              label: status,
+              tint: thread.blocked ? AppColors.blocked(context) : AppColors.waiting(context),
+              icon: thread.blocked ? Icons.error_outline : Icons.schedule,
+              // 原因可能很长（连错三轮那种），塞进 tag 会把整行撑成两行
+              onTap: reason.isEmpty
+                  ? null
+                  : () => showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: Text(status),
+                        content: SingleChildScrollView(
+                          child: SelectableText(
+                            reason,
+                            style: AppText.bodyS.copyWith(
+                              color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
                         ),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('知道了')),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
+                    ),
             ),
-          ],
-          if ((thread.featureBranch ?? '').isNotEmpty) ...[
-            const SizedBox(height: AppSpace.xs),
-            Row(
-              children: [
-                Icon(
-                  Icons.account_tree_outlined,
-                  size: 16,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: AppSpace.xs),
-                Expanded(
-                  child: Text(
-                    thread.featureBranch!,
-                    style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
+          if (branch.isNotEmpty)
+            _Tag(
+              label: branch,
+              tint: theme.colorScheme.onSurfaceVariant,
+              icon: Icons.account_tree_outlined,
+              maxWidth: 200,
             ),
-          ],
         ],
       ),
+    );
+  }
+}
+
+/// 小标签：圆角胶囊，12% 底色的同色文字。
+class _Tag extends StatelessWidget {
+  const _Tag({
+    required this.label,
+    required this.tint,
+    required this.icon,
+    this.onTap,
+    this.maxWidth,
+  });
+
+  final String label;
+  final Color tint;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final double? maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Container(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpace.xs, vertical: 2),
+      decoration: BoxDecoration(
+        color: tint.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: tint),
+          const SizedBox(width: 4),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth ?? 160),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppText.caption.copyWith(
+                color: tint,
+                fontWeight: FontWeight.w600,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (onTap == null) return body;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.pill),
+      child: body,
     );
   }
 }

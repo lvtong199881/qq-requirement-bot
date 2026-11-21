@@ -183,7 +183,7 @@ class _AskCardViewState extends State<AskCardView> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(AppSpace.md),
+      padding: const EdgeInsets.all(AppSpace.sm),
       decoration: BoxDecoration(
         color: scheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(AppRadius.medium),
@@ -194,8 +194,8 @@ class _AskCardViewState extends State<AskCardView> {
         children: [
           Row(
             children: [
-              Icon(Icons.smart_toy_outlined, size: 20, color: scheme.primary),
-              const SizedBox(width: AppSpace.xs),
+              Icon(Icons.smart_toy_outlined, size: 18, color: scheme.primary),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   card.title,
@@ -206,9 +206,9 @@ class _AskCardViewState extends State<AskCardView> {
               ),
             ],
           ),
-          const SizedBox(height: AppSpace.sm),
+          const SizedBox(height: AppSpace.xs),
           for (var i = 0; i < card.questions.length; i++) ...[
-            if (i > 0) const SizedBox(height: AppSpace.md),
+            if (i > 0) const SizedBox(height: AppSpace.sm),
             _Question(
               // 题干自带「Q14」这种编号时不再叠一层，否则卡片和自动回复里的题号都会变成「14. Q14 …」
               index: card.questions.length > 1 && !_numbered.hasMatch(card.questions[i].title)
@@ -229,7 +229,7 @@ class _AskCardViewState extends State<AskCardView> {
             const SizedBox(height: AppSpace.sm),
             Text(_error!, style: AppText.bodyS.copyWith(color: scheme.error)),
           ],
-          const SizedBox(height: AppSpace.md),
+          const SizedBox(height: AppSpace.sm),
           if (_locked)
             Text(
               '已提交',
@@ -297,9 +297,9 @@ class _Question extends StatelessWidget {
       children: [
         Text(
           index == null ? question.title : '$index. ${question.title}',
-          style: AppText.body.copyWith(fontWeight: FontWeight.w600),
+          style: AppText.bodyS.copyWith(fontSize: 15, height: 1.3, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: AppSpace.xs),
+        const SizedBox(height: 6),
         for (var i = 0; i < question.options.length; i++)
           Padding(
             padding: const EdgeInsets.only(bottom: AppSpace.xxs),
@@ -329,7 +329,13 @@ class _Question extends StatelessWidget {
               maxLines: 3,
               style: AppText.bodyS,
               onChanged: onTyped,
-              decoration: InputDecoration(hintText: question.inputLabel),
+              decoration: InputDecoration(
+                hintText: question.inputLabel,
+                isDense: true,
+                // 卡片里一屏要塞好几道题，输入框按表单默认的 12/16 内边距会
+                // 把整张卡撑得很长，这里收到 8/12
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
             ),
           ),
       ],
@@ -364,7 +370,7 @@ class _OptionRow extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.small),
       child: Padding(
         // 整行可点，热区靠内边距撑到 44 以上
-        padding: const EdgeInsets.symmetric(vertical: AppSpace.sm - AppSpace.xxs / 2),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
