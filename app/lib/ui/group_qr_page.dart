@@ -165,13 +165,18 @@ Future<Uint8List> renderGroupQrBytes(String threadId, {int size = 320}) async {
     ),
   );
   final side = size.toDouble();
+  // 二维码规范要求四周留 4 个模块的静区，否则不少扫码器贴边认不出来；
+  // 这里按边长的 8% 留白，扫起来和屏幕上那张一样好认。
+  final pad = side * 0.08;
+  final code = side - pad * 2;
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
   canvas.drawRect(
     Rect.fromLTWH(0, 0, side, side),
     Paint()..color = const Color(0xFFFFFFFF),
   );
-  painter.paint(canvas, Size(side, side));
+  canvas.translate(pad, pad);
+  painter.paint(canvas, Size(code, code));
   final image = await recorder.endRecording().toImage(size, size);
   final data = await image.toByteData(format: ui.ImageByteFormat.png);
   image.dispose();
