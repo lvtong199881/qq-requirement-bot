@@ -91,12 +91,25 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
    */
   const withMembers = (thread, userId) => {
     const lastReadSeq = userId ? members.lastReadOf(thread.threadId, userId) : 0
+    const preview = messages.preview?.(thread.threadId) ?? null
     return {
       ...thread,
       memberCount: members.count(thread.threadId),
       myRole: userId ? members.roleOf(thread.threadId, userId) : null,
       lastReadSeq,
       unread: userId ? messages.unreadCount(thread.threadId, { after: lastReadSeq, userId }) : 0,
+      // 列表卡片第二行：最后一条消息摘要。没有消息时是 null，App 自己降级成
+      // 「群聊」之类的占位，服务端不替它编文案。
+      lastMessage: preview
+        ? {
+            seq: preview.seq,
+            role: preview.role,
+            userId: preview.userId,
+            nickname: preview.nickname,
+            kind: preview.kind,
+            text: preview.text,
+          }
+        : null,
     }
   }
 

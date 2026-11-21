@@ -6,12 +6,10 @@ import '../api/client.dart';
 import '../api/models.dart';
 import '../state/auth.dart';
 import '../state/threads.dart';
-import 'format.dart';
 import 'scan_page.dart';
 import 'theme.dart';
 import 'thread_detail_page.dart';
 import 'widgets/avatar.dart';
-import 'widgets/stage.dart';
 import 'widgets/toast.dart';
 
 /// 群列表。
@@ -19,11 +17,9 @@ import 'widgets/toast.dart';
 /// 流程是「先建群，再在群里走需求」：群是容器，需求是群里跑的那条 flow。
 /// 所以这一页的主语是群——建群时只起个名字，真正要做什么等进群之后说。
 ///
-/// 设计取向：这是「处理待办」的界面，不是社交信息流。所以
-/// 1) 等我拍板的排最前并单独分组；
-/// 2) 每行都给出「现在在哪一步 + 状态」，而不是只留个标题；
-/// 3) 不做未读数红点——用户已经说了不需要推送，一个数字反而
-///    增加解释成本，把「等你确认」置顶更直接。
+/// 布局取向：一行一个群，像 IM 的会话列表——头像（右上角挂未读红点）、
+/// 群名、最后一条消息，全部单行省略。阶段、状态、待办理由这些细节都
+/// 留给群详情页去讲：列表只回答「哪个群有新东西」。
 ///
 /// 建群入口不放在这一页的浮动按钮上：底部导航已经占了一条，
 /// 再叠一个 FAB 会挡住列表最后一行。放 AppBar 的 + 上，位置稳定又不抢戏。
@@ -180,9 +176,6 @@ class _ThreadListPageState extends State<ThreadListPage> {
       );
     }
 
-    final waiting = c.threads.where((t) => t.needsMe).toList();
-    final others = c.threads.where((t) => !t.needsMe).toList();
-
     return RefreshIndicator(
       onRefresh: () => c.refresh(),
       child: ListView(
@@ -191,45 +184,10 @@ class _ThreadListPageState extends State<ThreadListPage> {
         padding: const EdgeInsets.fromLTRB(AppInset.page, AppSpace.xs, AppInset.page, AppSpace.xl),
         children: [
           if (c.engineOnline == false) _EngineOfflineBanner(botName: c.botName),
-          if (waiting.isNotEmpty) ...[
-            _SectionLabel(
-              text: '等你确认',
-              count: waiting.length,
-              color: AppColors.waiting(context),
-            ),
-            for (final t in waiting) _ThreadCard(thread: t, onTap: () => _open(t)),
-            const SizedBox(height: AppSpace.sm),
-          ],
-          if (others.isNotEmpty) ...[
-            if (waiting.isNotEmpty) const _SectionLabel(text: '其它'),
-            for (final t in others) _ThreadCard(thread: t, onTap: () => _open(t)),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel({required this.text, this.count, this.color});
-
-  final String text;
-  final int? count;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final tint = color ?? theme.colorScheme.onSurfaceVariant;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, AppSpace.xs, 0, AppSpace.xs),
-      child: Row(
-        children: [
-          Text(text, style: AppText.label.copyWith(color: tint)),
-          if (count != null) ...[
-            const SizedBox(width: AppSpace.xs),
-            Text('$count', style: AppText.caption.copyWith(color: tint)),
-          ],
+          // 不分「等你确认 / 其它」两组：这一页现在只回答「哪个群有新消息」，
+          // 排序交给服务端的最后活跃时间，分组会把同一件事说两遍。
+          for (final t in c.threads)
+            _ThreadCard(thread: t, myId: widget.auth.user?.id, onTap: () => _open(t)),
         ],
       ),
     );
@@ -272,11 +230,28 @@ class _UnreadBadge extends StatelessWidget {
   }
 }
 
+/// 一个群。就三样东西：头像（右上角挂未读红点）、群名、最后一条消息。
+///
+/// 阶段和状态一概不放在这里——列表只回答「哪个群有新东西」，要看进度
+/// 进群看。卡片上堆四五种信息，扫一眼反而挑不出该点哪个。
 class _ThreadCard extends StatelessWidget {
-  const _ThreadCard({required this.thread, required this.onTap});
+  const _ThreadCard({required this.thread, required this.onTap, this.myId});
 
   final Thread thread;
   final VoidCallback onTap;
+
+  /// 当前登录用户 id：用来判断最后一条是不是自己说的（决定加不加「我：」）
+  final String? myId;
+
+  /// 第二行文案。没人说过话时给一句占位，别留空行。
+  String _preview() {
+    final p = thread.lastMessage;
+    if (p == null) return thread.mode == 'chat' ? '群聊，还没人说话' : '还没提需求';
+    if (p.text.isEmpty) return '（没有文字的消息）';
+    // 只给自己发的加前缀：别人的话原样显示，加了昵称反而多一层噪声
+    final mine = p.role == 'user' && (p.userId == null || myId == null || p.userId == myId);
+    return mine ? '我：${p.text}' : p.text;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -289,107 +264,61 @@ class _ThreadCard extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(AppRadius.medium),
           child: Padding(
-            padding: const EdgeInsets.all(AppSpace.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.all(AppSpace.sm),
+            child: Row(
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                // 红点挂在头像右上角：群名可能很长，放头像上不会被挤掉，
+                // 也像 IM 那样一眼看到哪个群有新消息。
+                Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    // 红点挂在头像右上角：群名可能很长、右侧又有转圈，
-                    // 放头像上不会被挤掉，也像 IM 那样一眼看到哪个群有新消息。
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        InitialAvatar(
-                          name: t.groupName ?? t.name ?? '未命名群',
-                          size: 40,
-                        ),
-                        if (t.hasUnread)
-                          Positioned(top: -4, right: -6, child: _UnreadBadge(count: t.unread)),
-                      ],
-                    ),
-                    const SizedBox(width: AppSpace.md),
-                    Expanded(
-                      child: Text(
+                    InitialAvatar(name: t.groupName ?? t.name ?? '未命名群', size: 48),
+                    if (t.hasUnread)
+                      Positioned(top: -4, right: -6, child: _UnreadBadge(count: t.unread)),
+                  ],
+                ),
+                const SizedBox(width: AppSpace.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
                         // 这里是群列表，主身份是群名：一个群里可能换过几轮需求，
                         // 拿需求名当标题会让人以为列表里是另一批群。
                         t.groupName ?? t.name ?? '未命名群',
-                        style: AppText.titleS.copyWith(color: theme.colorScheme.onSurface),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (t.running) ...[
-                      const SizedBox(width: AppSpace.xs),
-                      SizedBox(
-                        width: AppSpace.md,
-                        height: AppSpace.md,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: theme.colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: AppSpace.xs),
-                Row(
-                  children: [
-                    // 聊天群没有阶段，「待提需求」这种状态挂在卡片上会让人
-                    // 以为有个需求卡住了；群聊本身的状态就是「群聊」
-                    if (t.mode != 'chat') StageBadge(status: t.stageStatus, dense: true),
-                    if (t.mode != 'chat' && (t.stageStatus ?? '').isNotEmpty)
-                      const SizedBox(width: AppSpace.xs),
-                    // 阶段名和时间放在同一个 Text 里：拆成两个 Row 子项时，
-                    // 长群名/大字号/字体回退都会把时间挤出屏幕，
-                    // 而这里真正必须看见的是「现在到哪一步」。
-                    Expanded(
-                      child: Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              // 聊天群没有阶段，显示「群聊」而不是留空：
-                              // 列表里一行空白会让人以为是数据没加载出来。
-                              text: t.stage ??
-                                  (t.mode == 'chat'
-                                      ? '群聊'
-                                      : (t.pending ? '还没提需求' : '')),
-                              style: AppText.bodyS.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            if ((t.stage ?? '').isNotEmpty || t.mode == 'chat')
-                              TextSpan(
-                                text: ' · ',
-                                style: AppText.bodyS.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            TextSpan(
-                              text: Fmt.relative(t.lastActiveAt),
-                              style: AppText.caption.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+                        style: AppText.titleS.copyWith(
+                          color: theme.colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: AppSpace.xxs),
+                      Text(
+                        _preview(),
+                        // 未读时第二行用正文色：一眼能看出「有新的」比只看红点更明确，
+                        // 颜色只是辅助，红点上的数字才是主信号
+                        style: AppText.bodyS.copyWith(
+                          color: t.hasUnread
+                              ? theme.colorScheme.onSurface
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
-                if ((t.waitingLabel ?? '').isNotEmpty) ...[
-                  const SizedBox(height: AppSpace.xs),
-                  Text(
-                    t.waitingLabel!,
-                    style: AppText.bodyS.copyWith(
-                      // 卡住的理由用红色：它和「在等你点通过」不是一回事
-                      color: t.blocked ? AppColors.blocked(context) : AppColors.waiting(context),
+                if (t.running) ...[
+                  const SizedBox(width: AppSpace.xs),
+                  SizedBox(
+                    width: AppSpace.md,
+                    height: AppSpace.md,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.colorScheme.primary,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ],

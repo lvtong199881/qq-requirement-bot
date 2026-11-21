@@ -185,6 +185,45 @@ export class MessageStore {
     return count
   }
 
+  /**
+   * 列表页卡片第二行要的那句话：最后一条消息讲了什么。
+   *
+   * 只读文件末尾几行，不整读——列表一次要几十个群，每群整读一遍
+   * 等于把全部历史读进内存就为了一行摘要。
+   *
+   * 返回 { text, role, userId, seq } 或 null（还没有消息）。
+   */
+  preview(threadId) {
+    const file = this.#file(threadId)
+    let text = ''
+    try {
+      if (!existsSync(file)) return null
+      text = readFileSync(file, 'utf8')
+    } catch {
+      return null
+    }
+    const lines = text.split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i]) continue
+      let row = null
+      try {
+        row = JSON.parse(lines[i])
+      } catch {
+        continue // 坏行跳过，继续往前找
+      }
+      if (typeof row?.seq !== 'number') continue
+      return {
+        seq: row.seq,
+        role: row.role ?? 'user',
+        userId: row.payload?.userId ?? null,
+        nickname: row.payload?.nickname ?? null,
+        kind: row.kind ?? 'text',
+        text: summaryOf(row),
+      }
+    }
+    return null
+  }
+
   /** 删除该需求的全部消息。取消/归档需求时调用 */
   clear(threadId) {
     const file = this.#file(threadId)
@@ -204,6 +243,30 @@ export class MessageStore {
         .map((f) => f.slice(0, -'.jsonl'.length))
     } catch {
       return []
+    }
+  }
+}
+
+/**
+ * 一行能看懂的摘要：非文本消息没有正文可看，用方括号标类型。
+ *
+ * 不带「我：」这类前缀——「我」是谁取决于看的人，那是 App 的事。
+ */
+function summaryOf(row) {
+  const p = row.payload && typeof row.payload === 'object' ? row.payload : {}
+  switch (row.kind) {
+    case 'ask':
+      // 卡片标题比「[提问]」有用：一眼知道在问什么
+      return String(p.title ?? '').trim() || '[需要你拍板]'
+    case 'image':
+      return '[图片]'
+    case 'file':
+      return '[文件]'
+    case 'stage':
+      return String(p.stage ?? '').trim() || '[阶段变化]'
+    default: {
+      const text = String(p.text ?? '').replace(/\s+/g, ' ').trim()
+      return text
     }
   }
 }

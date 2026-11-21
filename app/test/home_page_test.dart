@@ -204,8 +204,101 @@ void main() {
     expect(find.text('0'), findsNothing);
   });
 
-  // 规范要求 320 宽（最小的常见机型）不溢出。Flutter 把溢出当异常抛出来，
-  // 所以这里不用断言具体像素，跑到不抛就说明布局没崩。
+  // 卡片只留三样：头像（挂红点）、群名、最后一条消息。阶段/状态/时间
+  // 都收进详情页了——列表要回答的是「哪个群有新东西」，不是「跑到哪一步」。
+  testWidgets('群卡片只显示群名和最后一条消息', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        return _ok({
+          'threads': [
+            {
+              'threadId': 't1',
+              'groupName': '产品讨论',
+              'mode': 'requirement',
+              'pending': false,
+              'stage': '等待确认方案',
+              'stageStatus': '等你确认',
+              'waitingLabel': '确认一下首页那个弹窗要不要每次都弹',
+              'lastActiveAt': 1700000000000,
+              'lastMessage': {
+                'seq': 3,
+                'role': 'bot',
+                'kind': 'text',
+                'text': '这一轮我先拆成三块，你看看顺序对不对',
+              },
+            },
+          ],
+        });
+      }
+      if (req.url.path == '/api/engine/status') {
+        return _ok({'ok': true, 'online': true, 'botName': 'AI员工'});
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: ThreadListController(auth: auth))),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('产品讨论'), findsOneWidget);
+    expect(find.textContaining('这一轮我先拆成三块'), findsOneWidget);
+    // 阶段、状态、时间、等待理由都不该出现在卡片上
+    expect(find.textContaining('等待确认方案'), findsNothing);
+    expect(find.textContaining('等你确认'), findsNothing);
+    expect(find.textContaining('要不要每次都弹'), findsNothing);
+    expect(find.textContaining('年前'), findsNothing);
+  });
+
+  testWidgets('自己发的最后一条带「我：」前缀，别人的不带', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        return _ok({
+          'threads': [
+            {
+              'threadId': 't1',
+              'groupName': '我说最后一句',
+              'lastActiveAt': 1700000002000,
+              'lastMessage': {
+                'seq': 2,
+                'role': 'user',
+                // _readyAuth 里登录的账号 id 是 u1
+                'userId': 'u1',
+                'kind': 'text',
+                'text': '我先按这个方案做',
+              },
+            },
+            {
+              'threadId': 't2',
+              'groupName': '别人说最后一句',
+              'lastActiveAt': 1700000001000,
+              'lastMessage': {
+                'seq': 5,
+                'role': 'user',
+                'userId': 'u2',
+                'kind': 'text',
+                'text': '我这边看下来没问题',
+              },
+            },
+          ],
+        });
+      }
+      if (req.url.path == '/api/engine/status') {
+        return _ok({'ok': true, 'online': true, 'botName': 'AI员工'});
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: ThreadListController(auth: auth))),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('我：我先按这个方案做'), findsOneWidget);
+    // 别人的话原样显示：加昵称前缀只是多一层噪声
+    expect(find.text('我这边看下来没问题'), findsOneWidget);
+  });
+
   testWidgets('320 宽下群列表和建群弹窗都不溢出', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1.0;

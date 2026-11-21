@@ -481,6 +481,14 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
       "lastSeq": 42,
       "lastReadSeq": 40,
       "unread": 2,
+      "lastMessage": {
+        "seq": 42,
+        "role": "bot",
+        "userId": "u_bot",
+        "nickname": "AI员工",
+        "kind": "text",
+        "text": "这一轮我先拆成三块，你看看顺序对不对"
+      },
       "memberCount": 3,
       "myRole": "member",
       "canAct": true
@@ -496,6 +504,11 @@ App 里的「群」在服务端就是一个 thread，id 形如 `t1a2b3c4d5e6`，
 - `lastSeq` —— 这条需求最后一条消息的序号，App 用它当增量拉取的游标
 - `lastReadSeq` —— 你读到哪儿了（只进不退）
 - `unread` —— 别人发的、比 `lastReadSeq` 新的消息条数，列表页拿它做红点。**自己发的不算**：自己说句话就冒红点，那红点就不表示「有新东西我还没看」了
+- `lastMessage` —— 最后一条消息的摘要，列表卡片第二行就是它；群里一条消息都没有时为 `null`，「谁发的」和「说了什么」分开给，App 才知道要不要拼「我：」
+  - `role`（`user`/`bot`）、`userId`、`nickname` —— 谁说的
+  - `kind` —— 消息类型；图片和文件没有正文，`text` 已经换成 `[图片]`、`[文件]` 这样的占位
+  - `text` —— 一句话摘要；提问卡片用它的标题，比「[提问]」有用
+  - 服务端不拼「我：」这类前缀：「我」是谁取决于看的人，那是 App 的事
 - `canAct` —— 当前用户能不能通过/打回（普通成员为 `false`）
 
 ### `POST /api/threads/:id/read`

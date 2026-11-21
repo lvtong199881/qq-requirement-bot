@@ -774,6 +774,57 @@ console.log('\n== 未读红点：别人发的才算，自己读到哪里记哪�
   check('复原：member 仍有未读', true)
 }
 
+console.log('\n== 列表卡片第二行：最后一条消息摘要 ==')
+{
+  // 列表只回答「哪个群有新东西」，所以除了未读数还要给一句摘要。
+  // 摘要里不带「我：」——「我」是谁取决于看的人，那是 App 的事。
+  const all = messages.list(threadId, { limit: 500 }).messages
+  const last = all.at(-1)
+
+  const list = await api('GET', '/api/threads', { token: memberToken })
+  const item = (list.data?.threads ?? []).find((t) => t.threadId === threadId)
+  const preview = item?.lastMessage
+  check('列表带 lastMessage', !!preview, JSON.stringify(preview))
+  check('摘要对得上最后一条的 seq', preview?.seq === last?.seq, `${preview?.seq} vs ${last?.seq}`)
+  check('摘要带 role', preview?.role === last?.role, String(preview?.role))
+  check('摘要带 userId', preview?.userId === last?.payload?.userId, String(preview?.userId))
+  check('摘要文本就是那句话', preview?.text === last?.payload?.text, String(preview?.text))
+
+  // 非文本消息没有正文可看，换成方括号占位，别在卡片上留一片空白
+  messages.append(threadId, {
+    role: 'bot',
+    kind: 'image',
+    payload: { url: '/artifacts/x.png', name: 'shot.png', size: 1024 },
+  })
+  const withImage = await api('GET', '/api/threads', { token: memberToken })
+  const imageItem = (withImage.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('图片摘要显示 [图片]', imageItem?.lastMessage?.text === '[图片]', String(imageItem?.lastMessage?.text))
+  check('图片摘要 kind 是 image', imageItem?.lastMessage?.kind === 'image', String(imageItem?.lastMessage?.kind))
+
+  // 提问卡片：标题比「[提问]」有用，一眼知道在问什么
+  messages.append(threadId, {
+    role: 'bot',
+    kind: 'ask',
+    payload: {
+      title: '上线前确认',
+      questions: [{ id: 'q1', title: '这周能上吗', options: [{ id: 'a', label: '能' }] }],
+    },
+  })
+  const withAsk = await api('GET', '/api/threads', { token: memberToken })
+  const askItem = (withAsk.data?.threads ?? []).find((t) => t.threadId === threadId)
+  check('提问卡片摘要用它的标题', askItem?.lastMessage?.text === '上线前确认', String(askItem?.lastMessage?.text))
+
+  // 一个消息都没有的群：lastMessage 是 null，让 App 自己降级成占位文案
+  const fresh = await api('POST', '/api/threads', {
+    token: adminToken,
+    body: { name: '没人说话的群' },
+  })
+  const freshId = fresh.data?.threadId
+  const freshList = await api('GET', '/api/threads', { token: adminToken })
+  const freshItem = (freshList.data?.threads ?? []).find((t) => t.threadId === freshId)
+  check('空群的 lastMessage 是 null', freshItem?.lastMessage === null, JSON.stringify(freshItem?.lastMessage))
+}
+
 console.log('\n== 需求列表不混入 QQ 群 ==')
 {
   // 跑过 QQ 群的机器，.state 里躺着真实群记录（有 flow、legacy 是 undefined）。

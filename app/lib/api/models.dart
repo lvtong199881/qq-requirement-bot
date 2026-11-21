@@ -141,6 +141,7 @@ class Thread {
     this.myRole,
     this.lastReadSeq = 0,
     this.unread = 0,
+    this.lastMessage,
   });
 
   final String threadId;
@@ -209,6 +210,9 @@ class Thread {
 
   bool get hasUnread => unread > 0;
 
+  /// 最后一条消息的摘要，没有消息时为 null。列表卡片第二行用它。
+  final ThreadPreview? lastMessage;
+
   /// 列表和标题用的名字：有需求名用需求名，还没提需求就退回群名。
   String get title {
     if (name?.isNotEmpty == true) return name!;
@@ -247,7 +251,48 @@ class Thread {
     myRole: j['myRole']?.toString(),
     lastReadSeq: (j['lastReadSeq'] as num?)?.toInt() ?? 0,
     unread: (j['unread'] as num?)?.toInt() ?? 0,
+    lastMessage: ThreadPreview.maybe(j['lastMessage']),
   );
+}
+
+/// 群列表卡片第二行：最后一条消息讲了什么。
+///
+/// 「谁发的」和「说了什么」分开存：卡片上要拼「我：」还是「昵称：」取决于
+/// 看的人是谁，让服务端拼好就等于把「我」写死在一个公共字符串里。
+class ThreadPreview {
+  const ThreadPreview({
+    required this.seq,
+    required this.role,
+    required this.kind,
+    required this.text,
+    this.userId,
+    this.nickname,
+  });
+
+  final int seq;
+
+  /// user / bot：决定前缀显示「我」「昵称」还是 agent 的名字
+  final String role;
+  final String? userId;
+  final String? nickname;
+
+  /// text / image / file / ask / stage——图片文件没有正文，服务端已换成
+  /// 「[图片]」「[文件]」这样的占位，App 直接显示即可。
+  final String kind;
+  final String text;
+
+  static ThreadPreview? maybe(Object? raw) {
+    if (raw is! Map) return null;
+    final j = raw.cast<String, dynamic>();
+    return ThreadPreview(
+      seq: (j['seq'] as num?)?.toInt() ?? 0,
+      role: j['role']?.toString() ?? 'user',
+      userId: j['userId']?.toString(),
+      nickname: j['nickname']?.toString(),
+      kind: j['kind']?.toString() ?? 'text',
+      text: j['text']?.toString() ?? '',
+    );
+  }
 }
 
 /// 群成员。机器人也是成员（服务端在账号表里给它建了真实账号）。
