@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-/// 扫服务器的二维码，扫到就把内容 pop 回上一页。
+import 'widgets/toast.dart';
+
+/// 扫码：优先用相机，扫不动时可以改成从相册挑一张图。
 ///
 /// 为什么不自己接相机：手写预览 + 对焦 + 旋转在 Android/iOS 上差异太大，
 /// 引入 mobile_scanner 换来的是「扫一下就能连」而不是一堆兼容性 bug。
@@ -29,8 +32,11 @@ class _ScanPageState extends State<ScanPage> {
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
 
+  final ImagePicker _picker = ImagePicker();
+
   bool _handled = false;
   bool _torch = false;
+  bool _picking = false;
 
   @override
   void dispose() {
@@ -56,6 +62,41 @@ class _ScanPageState extends State<ScanPage> {
     } catch (_) {
       // 没有闪光灯的设备直接忽略，不值得弹错误
     }
+  }
+
+  /// 从相册挑一张图来认码。
+  ///
+  /// 相册里的图有两类特别常见：别人截图发过来的群二维码、
+  /// 以及相机扫不出来时先拍下来的照片。给这条退路，
+  /// 用户就不用「换个手机扫」或者「让对面重发一张」。
+  Future<void> _pickFromGallery() async {
+    if (_handled || _picking) return;
+    setState(() => _picking = true);
+    try {
+      final file = await _picker.pickImage(source: ImageSource.gallery);
+      if (file == null || !mounted) return; // 用户在相册里点了取消
+      final capture = await _controller.analyzeImage(file.path);
+      final found = _firstValue(capture);
+      if (!mounted) return;
+      if (found == null) {
+        showToast(context, '这张图里没找到二维码', error: true);
+        return;
+      }
+      _handled = true;
+      Navigator.of(context).pop(found);
+    } catch (err) {
+      if (mounted) showToast(context, '这张图没认出来：$err', error: true);
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  String? _firstValue(BarcodeCapture? capture) {
+    for (final barcode in capture?.barcodes ?? const <Barcode>[]) {
+      final value = barcode.rawValue?.trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return null;
   }
 
   @override
@@ -124,6 +165,13 @@ class _ScanPageState extends State<ScanPage> {
                     fontSize: 13,
                     height: 1.4,
                   ),
+                ),
+                const SizedBox(height: 16),
+                TextButton.icon(
+                  onPressed: _picking ? null : _pickFromGallery,
+                  icon: const Icon(Icons.photo_library_outlined, size: 20),
+                  label: const Text('从相册选图'),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
                 ),
               ],
             ),

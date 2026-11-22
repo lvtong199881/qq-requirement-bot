@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
@@ -8,6 +6,7 @@ import 'package:share_plus/share_plus.dart';
 
 import 'theme.dart';
 import 'widgets/avatar.dart';
+import 'widgets/qr_image.dart';
 import 'widgets/toast.dart';
 
 /// 群二维码：二维码里只放群号，扫出来就是群号，再走「加入群」那条路。
@@ -20,9 +19,9 @@ class GroupQrPage extends StatelessWidget {
   final String threadId;
   final String groupName;
 
-  /// 二维码转 PNG：保存到相册要用字节，不能把屏幕截图丢进去
+  /// 二维码转 PNG：保存到相册和分享都要用字节，不能把屏幕截图丢进去
   /// （快照受字体缩放、主题影响，别人扫出来一样，但看起来脏）。
-  Future<Uint8List> _qrPng({int size = 640}) => renderGroupQrBytes(threadId, size: size);
+  Future<Uint8List> _qrPng({int size = 640}) => renderQrPng(threadId, size: size);
 
   Future<void> _copy(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: threadId));
@@ -39,10 +38,20 @@ class GroupQrPage extends StatelessWidget {
     }
   }
 
+  /// 分享的是那张二维码图，不是群号文本。
+  ///
+  /// 收的人可能根本不在这个 App 里，一张能扫的图比一串「t9a1b2c3d4e5」直接；
+  /// 群名和群号仍然作为附言带上，方便对方看图时也知道是哪个群。
   Future<void> _share(BuildContext context) async {
     try {
+      final bytes = await _qrPng();
+      final file = await writeQrTempFile(threadId, bytes);
       await SharePlus.instance.share(
-        ShareParams(text: '加入群「$groupName」，群号：$threadId（在 App 里点「加入群」输入这个号）'),
+        ShareParams(
+          files: [XFile(file.path, mimeType: 'image/png')],
+          // 有些接收端只认文本、忽略图片，附言让它在那种情况下也不至于是一张白图
+          text: qrShareText(groupName, threadId),
+        ),
       );
     } catch (err) {
       if (context.mounted) showToast(context, '分享失败：$err', error: true);
@@ -150,35 +159,5 @@ class GroupQrPage extends StatelessWidget {
 }
 
 /// 给测试用：不经过相册/分享，只验证二维码真能画出来。
-///
-/// 手工铺白底而不是用 QrPainter 的 emptyColor：那个参数已弃用，
-/// 而且透明底的 PNG 某些相册/分享面板会渲染成一团黑。
-Future<Uint8List> renderGroupQrBytes(String threadId, {int size = 320}) async {
-  final painter = QrPainter(
-    data: threadId,
-    version: QrVersions.auto,
-    gapless: true,
-    eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF000000)),
-    dataModuleStyle: const QrDataModuleStyle(
-      dataModuleShape: QrDataModuleShape.square,
-      color: Color(0xFF000000),
-    ),
-  );
-  final side = size.toDouble();
-  // 二维码规范要求四周留 4 个模块的静区，否则不少扫码器贴边认不出来；
-  // 这里按边长的 8% 留白，扫起来和屏幕上那张一样好认。
-  final pad = side * 0.08;
-  final code = side - pad * 2;
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder);
-  canvas.drawRect(
-    Rect.fromLTWH(0, 0, side, side),
-    Paint()..color = const Color(0xFFFFFFFF),
-  );
-  canvas.translate(pad, pad);
-  painter.paint(canvas, Size(code, code));
-  final image = await recorder.endRecording().toImage(size, size);
-  final data = await image.toByteData(format: ui.ImageByteFormat.png);
-  image.dispose();
-  return data!.buffer.asUint8List();
-}
+Future<Uint8List> renderGroupQrBytes(String threadId, {int size = 320}) =>
+    renderQrPng(threadId, size: size);
