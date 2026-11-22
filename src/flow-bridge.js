@@ -251,14 +251,15 @@ export function createFlowBridge(deps) {
         await sendPlain(groupId, '直接说需求就行，比如：首页加个欢迎弹窗。', { replyTo })
         return
       }
-      // 发起需求只允许系统管理员。普通成员能看能说，但不能开新需求——
-      // 这是团队协作里的职责划分，不是技术限制。
+      // 发起需求的两条路：系统管理员，或这个群的群主/群管理员。
+      // 群内角色由调用方（index.js / engine.js）连着 threadId 一起查好，
+      // 这里只认 can 的结论——引擎这条路上 can 已经带上了群。
       if (can) {
         const perm = await can('startRequirement', initiator?.userId)
         if (!perm.ok) {
           await sendPlain(
             groupId,
-            `发起需求需要系统管理员权限（当前角色：${perm.roleLabel ?? perm.role ?? '未知'}）。已有需求可以直接回复「通过」「打回」参与。`,
+            `发起需求需要群主、群管理员或系统管理员权限（当前角色：${perm.roleLabel ?? perm.role ?? '未知'}）。已有需求可以直接回复「通过」「打回」参与。`,
             { replyTo },
           )
           return
@@ -779,7 +780,12 @@ export function createFlowBridge(deps) {
           profile: config.profile,
           // cwd 决定子进程的沙箱边界：dev 之后必须切到工作区，
           // 否则产物写在 worktree 里也超出工作区，照样被拒。
-          projectDir: st.flow.workDir || st.projectDir,
+          // merge 用专用合并工作区（varsFor 已区分，这里要跟上）——
+          // dsh 会按 cwd 归档会话，cwd 错了续跑的会话会因目录不一致被拒。
+          projectDir:
+            (checkpoint.id === 'merge' ? st.flow.vars?.mergeWorkDir : null) ||
+            st.flow.workDir ||
+            st.projectDir,
           sessionId,
           prompt,
           // 必须继承 bridge 的完整环境：spawn 的 env 是替换不是合并，

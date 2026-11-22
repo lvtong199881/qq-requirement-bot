@@ -71,7 +71,12 @@ export async function runFlow({ flow, ctx }) {
       vars: ctx.varsFor?.(cp, state) ?? {},
     })
 
-    const sessionId = state.roleSessions?.[cp.role] ?? null
+    // 续跑会话按角色取。但 merge 例外：它虽然也是 dev 角色，工作区却是
+    // 专用合并工作区（worktrees/_merge），与开发工作区目录不同——dsh 会校验
+    // 会话原始目录和当前 cwd，拿 dev 的旧会话续跑必然报
+    // "was recorded in ..., not ..."。merge 总是开新会话。
+    const sessionId =
+      cp.id === 'merge' ? null : (state.roleSessions?.[cp.role] ?? null)
     const result = await ctx.runAgent({ role: cp.role, checkpoint: cp, prompt, sessionId })
 
     // 回合结束就把 session 记下来：即使这一轮失败了，续跑也要接同一个会话

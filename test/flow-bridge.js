@@ -443,8 +443,8 @@ console.log('\n== 权限：只有系统管理员能发起需求 ==')
   })
   check('普通成员被拒', !saved.get('g1'), '不应该建 flow')
   check(
-    '提示需要系统管理员权限',
-    sent.some((t) => t.includes('需要系统管理员权限')),
+    '提示需要群主或管理员权限',
+    sent.some((t) => t.includes('需要群主、群管理员或系统管理员权限')),
     sent.join(' / '),
   )
   // 拒绝时要说人话，不能把内部的 role 枚举丢给用户看
