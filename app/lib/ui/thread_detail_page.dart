@@ -313,7 +313,9 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
               key: ValueKey('ask-${m.seq}'),
               card: card,
               state: _cardStates.putIfAbsent(m.seq, AskCardState.new),
-              canSubmit: widget.auth.perms.confirm,
+              // 能不能交卡片 = 能不能在这个群里拍板（群级权限），
+              // 不是账号层面的 confirm：群主在别的群是普通成员，就不该能交。
+              canSubmit: _c.canAct,
               answered: answers[m.seq],
               busy: _c.sending,
               onSubmit: (text, list) => _c.send(text, answers: list, askSeq: m.seq),
@@ -337,10 +339,12 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     final theme = Theme.of(context);
     final t = _c.thread;
     final busy = _c.sending;
-    // 群还是聊天模式：谁都能聊，只有管理员能把 agent 叫起来（@ 需求 bot）。
+    // 群还是聊天模式：谁都能聊，群主/群管理员和系统管理员能把 agent 叫起来。
     // 所以输入框永远可用，锁只锁在「叫 agent」这一步上。
     final isChat = (t?.mode ?? 'chat') == 'chat';
-    final canStart = widget.auth.perms.startRequirement;
+    // 用群级权限：同一个人在 A 群是群主能提需求，在 B 群是普通成员就不能。
+    // perms.startRequirement 是账号层面的，拿它锁这里会把群主误判成没权限。
+    final canStart = t?.canStart == true || widget.auth.perms.startRequirement;
 
     return SafeArea(
       top: false,

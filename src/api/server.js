@@ -84,6 +84,24 @@ export function createApiServer({
 
   const clearRate = (ip) => rate.delete(ip)
 
+  /**
+   * 带群内角色的权限判定。
+   *
+   * canAct / 通过 / 打回都是「我在这个群里能不能拍板」，光看账号角色不够：
+   * 群主和群管理员在自己群里也能拍板。群内角色在成员表里，所以这里
+   * 先查一次 members.roleOf，再交给 users.can 两路合起来判。
+   */
+  const canIn = (threadId, action, user) => {
+    let memberRole = null
+    try {
+      memberRole = threadId && members ? members.roleOf(threadId, user.id) : null
+    } catch {
+      // 成员文件读坏了不该让整个判定炸掉，退回只看账号角色
+      memberRole = null
+    }
+    return users.can(action, user, memberRole)
+  }
+
   /** 从 Authorization: Bearer xxx 里取 token */
   const bearer = (req) => {
     const h = String(req.headers.authorization ?? '')
@@ -218,11 +236,13 @@ export function createApiServer({
         if (!user) return
         const list = await listThreads({ userId: user.id })
         // unread 由 threads 服务算好（别人发的、我读到哪儿之后还剩多少），
-        // 这里只补 lastSeq 与 canAct——列表页的增量游标要用最新的 seq。
+        // 这里只补 lastSeq 与 canAct/canStart——列表页的增量游标要用最新的 seq。
+        // canAct/canStart 是「我在这个群里」能不能拍板/提需求，所以带 threadId 判。
         const threads = list.map((t) => ({
           ...t,
           lastSeq: messages.lastSeq(t.threadId),
-          canAct: users.can('confirm', user).ok,
+          canAct: canIn(t.threadId, 'confirm', user).ok,
+          canStart: canIn(t.threadId, 'startRequirement', user).ok,
         }))
         // 引擎在不在线决定 App 要不要显示「需求暂时不可用」——
         // 这个状态放列表里，省得前端为一个布尔值再打一次接口。
@@ -238,11 +258,14 @@ export function createApiServer({
       if (method === 'POST' && path === '/api/threads') {
         const user = requireUser(req, res)
         if (!user) return
-        const perm = users.can('startRequirement', user)
+        // 建群不限角色：群是私有的，建群的人就是这个群的群主，
+        // 然后他能在自己群里提需求。以前这里要求系统管理员，
+        // 结果普通成员连入口都没有，流程永远只能管理员一个人跑。
+        const perm = users.can('createGroup', user)
         if (!perm.ok) {
           return json(res, 403, {
             ok: false,
-            error: '建群需要系统管理员权限',
+            error: '建群需要管理员权限',
             code: 'forbidden',
             role: user.role,
             // 和 approve/reject 的 403 保持同一形状：前端只有一套错误解析
@@ -257,10 +280,20 @@ export function createApiServer({
 
         const result = await createGroup({ name, user })
         if (!result.ok) return json(res, 400, result)
-        // 建完群就进详情，先把名字带上，省得第一屏闪烁一次默认名字
+        // 建完群就进详情，先把名字带上，省得第一屏闪烁一次默认名字。
+        // canStart/canAct 一起算出来：建群的人刚成为群主，详情页要立刻
+        // 让他能 @ 需求 bot、能拍板，等下一次轮询才亮按钮会闪一下。
+        const tid = result.threadId ?? result.thread?.threadId
         return json(res, 200, {
           ...result,
-          thread: result.thread ? { ...result.thread, botName } : result.thread,
+          thread: result.thread
+            ? {
+                ...result.thread,
+                botName,
+                canAct: canIn(tid, 'confirm', user).ok,
+                canStart: canIn(tid, 'startRequirement', user).ok,
+              }
+            : result.thread,
         })
       }
 
@@ -412,7 +445,13 @@ export function createApiServer({
           return json(res, 200, {
             ok: true,
             // botName 跟着详情一起回：详情页的「@名字」和气泡作者名都要用
-            thread: { ...info, canAct: users.can('confirm', user).ok, botName },
+            // canAct/canStart 都按「我在这个群里」判：群主/群管理员能拍板、能提需求
+            thread: {
+              ...info,
+              canAct: canIn(threadId, 'confirm', user).ok,
+              canStart: canIn(threadId, 'startRequirement', user).ok,
+              botName,
+            },
             engine: engine ? engine.status() : null,
           })
         }
@@ -462,11 +501,12 @@ export function createApiServer({
         const actionMatch = sub?.match(/^\/(approve|reject)$/)
         if (method === 'POST' && actionMatch) {
           const action = actionMatch[1]
-          const perm = users.can('confirm', user)
+          // 群主/群管理员在自己群里也能拍板，所以带 threadId 判
+          const perm = canIn(threadId, 'confirm', user)
           if (!perm.ok) {
             return json(res, 403, {
               ok: false,
-              error: '通过和打回只有系统管理员能操作',
+              error: '通过和打回只有管理员能操作',
               code: 'forbidden',
               role: user.role,
               roleLabel: roleLabelOf(user.role),
@@ -549,9 +589,14 @@ function asciiFallback(name) {
 /**
  * 当前用户能做什么。前端拿到这个决定「按钮要不要置灰」，
  * 而不是自己硬编码 if (role === 'admin')——规则变了只改服务端一处。
+ *
+ * 注意这里没有 threadId，所以只能回答「账号层面」的权限：
+ * startRequirement / confirm 在这里对普通成员是 false，但他在自己建的群里
+ * 是群主，实际能提需求、能拍板。群内那一路要看 thread.canStart / canAct
+ * （详情和列表接口都会带上），别拿这里的值去锁群里的按钮。
  */
 function permissionsOf(user, users) {
-  const actions = ['startRequirement', 'confirm', 'command', 'comment', 'read']
+  const actions = ['createGroup', 'startRequirement', 'confirm', 'command', 'comment', 'read']
   const out = {}
   for (const a of actions) out[a] = users.can(a, user).ok
   return out

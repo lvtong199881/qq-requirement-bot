@@ -276,18 +276,26 @@ export class UserStore {
    * 返回 {ok, role}。保持签名不变，编排层一行都不用改。
    *
    * 动作 → 允许的角色：
-   *   startRequirement  发起新需求        admin
-   *   confirm           通过 / 打回       admin
+   *   startRequirement  发起新需求        admin 或群主/群管理员
+   *   confirm           通过 / 打回       admin 或群主/群管理员
    *   command           斜杠指令          admin
    *   release           交付              admin
    *   read              看板/消息         全体成员
    *   comment           补充说明          admin + member（成员能说话，但不能拍板）
+   *
+   * 第三个参数是「我在这个群里的角色」（owner/admin/member），由调用方从
+   * 成员表查好传进来。为什么要传而不是这里自己查：用户表只管账号，
+   * 群角色在成员表里，这个文件不该反向依赖群存储。
    */
-  can(action, user) {
+  can(action, user, memberRole = null) {
     const need = ACTION_ROLES[action] ?? []
     if (!user || user.disabled) return { ok: false, role: null, need }
     if (need.length === 0) return { ok: true, role: user.role }
     if (need.includes(user.role)) return { ok: true, role: user.role }
+    // 系统管理员之外的第二条路：群主/群管理员在自己群里可以发起需求和拍板。
+    // 建群的人自动是群主，所以「谁建的群谁能提」不需要额外规则。
+    const groupNeed = ACTION_GROUP_ROLES[action] ?? []
+    if (memberRole && groupNeed.includes(memberRole)) return { ok: true, role: user.role }
     return { ok: false, role: user.role, need }
   }
 
@@ -366,12 +374,27 @@ export class UserStore {
  * 换成了 admin/member 两档——App 里没有群，只有需求。
  */
 export const ACTION_ROLES = {
+  // 建群不限角色：谁都能建一个自己的群，建完他就是群主，然后在自己群里提需求。
+  // 这是「群是私有的」的直接推论——不给建群权，普通成员就永远进不了流程。
+  createGroup: [],
   startRequirement: [ROLES.admin],
   confirm: [ROLES.admin],
   command: [ROLES.admin],
   release: [ROLES.admin],
   read: [],
   comment: [],
+}
+
+/**
+ * 动作 → 允许的**群内**角色（成员表里的 owner/admin）。
+ *
+ * 单独一张表而不是把 owner/admin 塞进 ACTION_ROLES：那两档不是账号角色，
+ * 混进去之后「user.role === 'owner'」这类判断会被误伤。权限要两处来源，
+ * 就显式写成两处。
+ */
+export const ACTION_GROUP_ROLES = {
+  startRequirement: ['owner', 'admin'],
+  confirm: ['owner', 'admin'],
 }
 
 /** 对外暴露的用户字段：绝不能带 salt 和 passwordHash */

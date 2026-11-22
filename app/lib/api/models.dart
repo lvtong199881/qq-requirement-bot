@@ -84,14 +84,23 @@ class User {
 }
 
 /// 「这个人能做什么」。后端算好给前端，前端只负责置灰。
+///
+/// 这里只有**账号层面**的权限。群内那一路（我在这个群是群主/群管理员）
+/// 要看 [Thread.canStart] / [Thread.canAct]——同一个人在 A 群能提需求、
+/// 在 B 群不能，那是群决定的，不是账号决定的。
 class Perms {
   const Perms({
+    this.createGroup = false,
     this.startRequirement = false,
     this.confirm = false,
     this.command = false,
     this.comment = false,
     this.read = false,
   });
+
+  /// 能不能建群。建群不再限管理员：谁都能建一个自己的群当群主，
+  /// 所以「能不能提需求」的入口要看它，不能再去锁 startRequirement。
+  final bool createGroup;
 
   final bool startRequirement;
   final bool confirm;
@@ -100,6 +109,7 @@ class Perms {
   final bool read;
 
   factory Perms.fromJson(Map<String, dynamic> j) => Perms(
+    createGroup: j['createGroup'] == true,
     startRequirement: j['startRequirement'] == true,
     confirm: j['confirm'] == true,
     command: j['command'] == true,
@@ -136,6 +146,7 @@ class Thread {
     this.featureBranch,
     this.lastSeq = 0,
     this.canAct = false,
+    this.canStart = false,
     this.botName,
     this.memberCount = 0,
     this.myRole,
@@ -184,6 +195,10 @@ class Thread {
 
   /// 我能不能点通过/打回。普通成员能看到按钮，但这里会是 false。
   final bool canAct;
+
+  /// 我能不能在这个群里提需求（@ 需求 bot）。群主/群管理员和系统管理员为 true。
+  /// 和 [Perms.startRequirement] 的区别：那个是账号层面的，这个是**这个群**层面的。
+  final bool canStart;
 
   /// agent 在群里的显示名（服务端给，默认「AI员工」）。
   /// 名字可配置，所以界面上所有「@名字」都要用它拼，不能在代码里写死。
@@ -246,6 +261,7 @@ class Thread {
     featureBranch: j['featureBranch']?.toString(),
     lastSeq: (j['lastSeq'] as num?)?.toInt() ?? 0,
     canAct: j['canAct'] == true,
+    canStart: j['canStart'] == true,
     botName: j['botName']?.toString(),
     memberCount: (j['memberCount'] as num?)?.toInt() ?? 0,
     myRole: j['myRole']?.toString(),

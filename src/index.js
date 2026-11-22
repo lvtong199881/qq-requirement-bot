@@ -129,12 +129,16 @@ if (config.obsoleteKeys?.length) {
 /**
  * 动作级权限。
  *
- * 身份只有一个来源：.state/users.json 里的用户表（见 account/store.js）。
- * 以前这里还有一路「问 NapCat 这个 QQ 号在群里是什么角色」，App 化之后
- * 那个问题不再有意义——没有群，也没有 QQ 号。
+ * 身份有两个来源，都要看：
+ *   - .state/users.json 里的账号角色（系统管理员 / 普通成员）
+ *   - .state/members/members-<群>.json 里的群内角色（群主 / 群管理员 / 普通成员）
+ *
+ * 第二个来源是 App 化之后加的：群是私有的，建群的人就是群主，
+ * 他该能在自己群里提需求和拍板，而不是只有系统管理员能。
+ * 以前这里还有一路「问 NapCat 这个 QQ 号在群里是什么角色」，那个已经没了。
  *
  * @param {string} action startRequirement | confirm | command | release | read | comment
- * @param {string} groupId 会话标识（保留参数是为了不改 296 处调用点）
+ * @param {string} groupId 会话标识（同时用来查群内角色）
  * @param {string} userId  用户表里的 id
  */
 async function can(action, groupId, userId) {
@@ -143,7 +147,15 @@ async function can(action, groupId, userId) {
   const user = users.findById(uid)
   // 已停用的账号当作不存在：token 可能还没过期，但人已经被撤了
   if (!user || user.disabled) return { ok: false, role: null, roleLabel: null, need: [] }
-  const r = users.can(action, user)
+  // 群内角色从成员表查：groupId 为空时（引擎回调没带群）就没有这一路
+  let memberRole = null
+  try {
+    memberRole = groupId ? members.roleOf(groupId, uid) : null
+  } catch {
+    // 成员文件读坏了不该让整个权限判定炸掉：退回只看账号角色
+    memberRole = null
+  }
+  const r = users.can(action, user, memberRole)
   // roleLabel 也一并带出去：拒绝时用户看到的是「普通成员」而不是裸的 member
   return { ok: r.ok, role: user.role, roleLabel: roleLabelOf(user.role), need: r.need }
 }

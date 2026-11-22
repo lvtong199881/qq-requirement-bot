@@ -111,16 +111,24 @@ const engineApi = createEngineApi({
   artifacts,
   groups: store,
   users,
+  members,
   token,
   log,
   botName: botUser.nickname,
 })
 
-/** 权限裁决：用户表在 IM 这边，引擎每句话都回来问一次 */
-const can = async (action, _threadId, userId) => {
+/**
+ * 权限裁决：用户表在 IM 这边，引擎每句话都回来问一次。
+ *
+ * 群内角色（群主/群管理员）是第二套身份，存在成员表里。两处都查：
+ * 系统管理员在任何群都能提需求和拍板；群主/群管理员只在自己群里能。
+ * 建群的人自动是群主，所以「谁建的群谁能提」不需要额外规则。
+ */
+const can = async (action, threadId, userId) => {
   const user = users.findById(userId)
   if (!user) return { ok: false, error: '没有这个用户' }
-  const r = users.can(action, user)
+  const memberRole = threadId ? members.roleOf(threadId, userId) : null
+  const r = users.can(action, user, memberRole)
   const roleLabel = roleLabelOf(user.role)
   return r.ok
     ? { ok: true, role: user.role, roleLabel }

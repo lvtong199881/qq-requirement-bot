@@ -76,9 +76,14 @@ async function canOperate(groupId, userId) {
 
 问题：
 
-- **群管理员能发起需求**——按组织约定，发起只该由群主做
+- **群角色没有参与判定**——现在只看账号角色，群主在自己群里也提不了需求
 - **系统管理员没有显式建模**——它靠「白名单」混在同一个闸门里，无法表达「上帝权限」
 - 所有动作共用一套判断，无法按动作区分
+
+> 更新（现行口径）：发起需求的两条路是**系统管理员**，或**自己群里的群主/群管理员**。
+> 建群不限角色，谁建的群谁是群主，所以普通成员也有入口。下面第 3、4 节的表格
+> 反映的是目标设计，实现以 `src/account/store.js` 的 `ACTION_ROLES` /
+> `ACTION_GROUP_ROLES` 为准。
 
 ### 2.3 P1：没有并发控制
 
@@ -107,7 +112,7 @@ async function canOperate(groupId, userId) {
 | # | 目标 | 验收方式 |
 | --- | --- | --- |
 | G1 | 多个需求并行开发，互不干扰 | 两个需求同时 dev，各自产物落在正确分支 |
-| G2 | 权限符合组织模型 | 群管理员无法发起需求；系统管理员在任何群可操作 |
+| G2 | 权限符合组织模型 | 群主/群管理员能在自己群里发起需求；系统管理员在任何群可操作；非本群成员不能 |
 | G3 | 并发可控 | 100 个需求在推进时，同时执行的回合数不超过配置上限 |
 | G4 | 队列可见 | 面板显示排队需求、worktree 占用、执行槽占用 |
 | G5 | 重启不中断回合 | 重启期间正在跑的回合继续完成，重启后被捡回 |
@@ -409,20 +414,22 @@ try { await runAgent(...) } finally { executeGate.release() }
 
 | 动作 | owner | admin（群） | systemAdmin | member |
 | --- | --- | --- | --- | --- |
-| 发起需求 | ✅ | ❌ | ✅ | ❌ |
+| 发起需求 | ✅ | ✅ | ✅ | ❌ |
 | 阶段确认（通过/打回） | ✅ | ✅ | ✅ | ❌ |
 | 斜杠指令 | ✅ | ✅ | ✅ | ❌ |
-| release / 交付 | ❌ | ❌ | ✅ | ❌ |
+| release / 交付 | ✅ | ✅ | ✅ | ❌ |
+| 建群 | — | — | ✅ | ✅ |
 | 面板操作 | — | — | token 即授权 | — |
 
 #### 实现
 
 ```js
 const ACTIONS = {
-  startRequirement: ['owner', 'systemAdmin'],
+  createGroup:      ['owner', 'admin', 'systemAdmin', 'member'],   // 谁都能建群
+  startRequirement: ['owner', 'admin', 'systemAdmin'],
   confirm:          ['owner', 'admin', 'systemAdmin'],
   command:          ['owner', 'admin', 'systemAdmin'],
-  release:          ['systemAdmin'],
+  release:          ['owner', 'admin', 'systemAdmin'],
 }
 
 async function can(action, groupId, userId) {
@@ -641,7 +648,7 @@ for (const st of allStates()) {
 ## 8. 验收标准
 
 1. 两个需求同时进入 `dev`，各自的代码改动落在各自 `feature/<reqId>` 分支，主工作区不被切换
-2. 群管理员发起需求被拒绝，群主可以；系统管理员在任意群可发起、可确认
+2. 群主和群管理员在自己群里能发起需求；系统管理员在任意群可发起、可确认；非本群成员不能
 3. 同时推进 10 个需求时，实际并发回合数 ≤ 配置上限，面板能看到排队
 4. 需求 `merge` 成功后，worktree 被回收，`git worktree list` 不残留
 5. 重启进程时，正在跑的回合不被杀，重启后该阶段被正确捡回

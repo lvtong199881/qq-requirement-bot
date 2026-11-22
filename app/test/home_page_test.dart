@@ -751,6 +751,8 @@ const _me = {
     'roleLabel': '系统管理员',
   },
   'can': {
+    // 建群入口看的是 createGroup（人人可建），startRequirement 只管账号层面
+    'createGroup': true,
     'startRequirement': true,
     'confirm': true,
     'command': true,

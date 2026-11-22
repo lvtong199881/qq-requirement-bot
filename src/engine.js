@@ -101,10 +101,17 @@ async function api(path, { method = 'GET', body, timeoutMs = 60_000 } = {}) {
   return data
 }
 
-/** 权限裁决回 IM 问：用户表只有那边有，引擎不该自己判 */
-const can = async (action, userId) => {
+/**
+ * 权限裁决回 IM 问：用户表只有那边有，引擎不该自己判。
+ *
+ * threadId 也要带上：群主/群管理员在自己群里能提需求，离开群就只剩账号角色。
+ * IM 侧靠这个参数查成员表，不带的话「群主能提」在引擎这条路上就会失效。
+ */
+const can = async (action, userId, threadId = null) => {
   try {
-    return await api(`/api/engine/can?action=${encodeURIComponent(action)}&userId=${encodeURIComponent(userId ?? '')}`)
+    const q = new URLSearchParams({ action, userId: String(userId ?? '') })
+    if (threadId) q.set('threadId', String(threadId))
+    return await api(`/api/engine/can?${q.toString()}`)
   } catch (err) {
     log(`[engine] 权限查询失败：${err.message}`)
     // 查不到就当没权限：宁可拒绝，也不要因为连不上而放行
@@ -144,7 +151,7 @@ function handleEvent(ev) {
       initiator,
       // 卡片上勾了什么：有它就不用猜自然语言，逐条对得上的选择更可靠
       answers: Array.isArray(ev.answers) ? ev.answers : null,
-      can: (action, uid) => can(action, uid),
+      can: (action, uid) => can(action, uid, threadId),
     })
     .catch((err) => {
       log(`[engine] 群 ${threadId} 处理失败：${err.message}`)

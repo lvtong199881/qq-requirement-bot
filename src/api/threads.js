@@ -410,7 +410,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
         return {
           ok: false,
           forbidden: true,
-          error: '提需求需要系统管理员权限',
+          error: '提需求需要群主、群管理员或系统管理员权限',
           roleLabel: perm?.roleLabel ?? null,
         }
       }
@@ -424,7 +424,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
         return {
           ok: false,
           forbidden: true,
-          error: '通过和打回只有系统管理员能操作',
+          error: '通过和打回只有群主、群管理员或系统管理员能操作',
           roleLabel: perm?.roleLabel ?? null,
         }
       }
@@ -438,7 +438,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
         return {
           ok: false,
           forbidden: true,
-          error: '只有系统管理员能释放会话',
+          error: '只有群主、群管理员或系统管理员能释放会话',
           roleLabel: perm?.roleLabel ?? null,
         }
       }

@@ -46,7 +46,7 @@ class ThreadDetailController extends ChangeNotifier {
   ApiClient get _api => auth.client;
 
   /// 能不能点通过/打回。以服务端为准（thread.canAct 来自 /api/threads 的
-  /// `users.can('confirm', user)`），不在前端按 role 硬编码。
+  /// 群级判定：系统管理员，或这个群的群主/群管理员），不在前端按 role 硬编码。
   bool get canAct => thread?.canAct == true;
 
   /// 现在该不该显示通过/打回按钮：在等你确认、或者有阻塞时才有意义。

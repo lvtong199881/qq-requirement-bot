@@ -127,7 +127,10 @@ class _ThreadListPageState extends State<ThreadListPage> {
               icon: const Icon(Icons.group_add_outlined),
               onPressed: _join,
             ),
-            if (widget.auth.perms.startRequirement)
+            // 建群不限角色：群是私有的，谁都能建一个自己的群当群主，
+            // 然后在自己群里提需求。以前这里锁 startRequirement，
+            // 普通成员的「建群」入口直接消失，永远进不了流程。
+            if (widget.auth.perms.createGroup)
               IconButton(
                 tooltip: '建群',
                 icon: const Icon(Icons.add_comment_outlined),
@@ -167,7 +170,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
             ),
           Expanded(
             child: _EmptyState(
-              canCreate: widget.auth.perms.startRequirement,
+              canCreate: widget.auth.perms.createGroup,
               onCreate: _create,
               botName: c.botName,
             ),

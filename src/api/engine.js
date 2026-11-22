@@ -31,10 +31,11 @@ const KINDS = new Set(['text', 'image', 'file', 'stage', 'decision', 'ask'])
  * @param {import('../state.js').SessionStore} o.groups  群元数据（name/mode/engine）
  * @param {import('../account/store.js').UserStore} o.users
  * @param {string} o.token  引擎共享密钥
+ * @param {import('../store/members.js').MemberStore=} o.members  成员表：判群主/群管理员要它
  * @param {(...a:any[])=>void} o.log
  * @param {string} [o.botName]
  */
-export function createEngineApi({ events, messages, artifacts, groups, users, token, log, botName = 'AI员工' }) {
+export function createEngineApi({ events, messages, artifacts, groups, users, members = null, token, log, botName = 'AI员工' }) {
   let lastPollAt = 0
 
   // 从没连上过时返回 null（「不知道」），而不是 false（「掉线了」）：
@@ -138,11 +139,19 @@ export function createEngineApi({ events, messages, artifacts, groups, users, to
     if (method === 'GET' && path === '/api/engine/can') {
       const action = String(url.searchParams.get('action') ?? '').trim()
       const userId = String(url.searchParams.get('userId') ?? '').trim()
+      // 带上了群就再把群内角色算进去：群主/群管理员在自己群里能提需求
+      const threadId = String(url.searchParams.get('threadId') ?? '').trim()
       const user = userId ? users.findById(userId) : null
       if (!action) return json(res, 400, { ok: false, error: '缺少 action' }), true
       if (!user) return json(res, 200, { ok: false, error: '没有这个用户' }), true
       if (user.disabled) return json(res, 200, { ok: false, error: '账号已停用' }), true
-      const r = users.can(action, user)
+      let memberRole = null
+      try {
+        memberRole = threadId ? members?.roleOf(threadId, userId) : null
+      } catch {
+        memberRole = null
+      }
+      const r = users.can(action, user, memberRole)
       if (r.ok) return json(res, 200, { ok: true, role: user.role, roleLabel: roleLabelOf(user.role) }), true
       return json(res, 200, { ok: false, error: r.error, role: user.role, roleLabel: roleLabelOf(user.role) }), true
     }

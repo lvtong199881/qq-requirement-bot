@@ -140,7 +140,10 @@ const can = async (action, threadId, userId) => {
   if (isAppThread(threadId)) {
     const user = users.findById(String(userId))
     if (!user || user.disabled) return { ok: false, role: null, need: [] }
-    const r = users.can(action, user)
+    // 群内角色也要算进去，和 src/index.js 一样：群主/群管理员在自己群里
+    // 能提需求、能拍板。抄漏这一行的话「群主能提需求」这条测试会失败。
+    const memberRole = threadId ? members.roleOf(threadId, String(userId)) : null
+    const r = users.can(action, user, memberRole)
     return { ok: r.ok, role: user.role, need: r.need }
   }
   return { ok: true, role: 'owner' }
@@ -311,28 +314,37 @@ console.log('\n== /api/auth/me 告诉前端能做什么 ==')
   const a = await api('GET', '/api/auth/me', { token: adminToken })
   check('管理员 confirm 为 true', a.data?.can?.confirm === true)
   check('管理员 startRequirement 为 true', a.data?.can?.startRequirement === true)
+  check('管理员 createGroup 为 true', a.data?.can?.createGroup === true)
 
   const m = await api('GET', '/api/auth/me', { token: memberToken })
   check('普通成员 confirm 为 false', m.data?.can?.confirm === false)
   check('普通成员 read 为 true', m.data?.can?.read === true)
+  // 账号层面没有 startRequirement，但他在自己建的群里是群主，可以提需求。
+  // 这两件事分开：/api/auth/me 只回答「账号能干什么」，
+  // 群内权限要看 thread.canStart（下面「建群」那一节验它）。
   check('普通成员 startRequirement 为 false', m.data?.can?.startRequirement === false)
+  check('普通成员 createGroup 为 true', m.data?.can?.createGroup === true)
 }
 
-console.log('\n== 建群：只有管理员能建 ==')
+console.log('\n== 建群：谁都能建，建完自己就是群主 ==')
 let threadId = ''
 {
-  const denied = await api('POST', '/api/threads', {
+  // 群是私有的：不给普通成员建群权，他就永远进不了流程。
+  // 建群的人自动是群主，所以他能在自己群里提需求（下面验）。
+  const mine = await api('POST', '/api/threads', {
     token: memberToken,
-    body: { name: '首页改版' },
+    body: { name: '普通成员的群' },
   })
-  check('普通成员被拒 403', denied.status === 403, String(denied.status))
-  check('说明了需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
+  check('普通成员能建群', mine.status === 200 && mine.data?.ok === true, JSON.stringify(mine.data).slice(0, 200))
+  check('建完是群主', mine.data?.thread?.myRole === 'owner', mine.data?.thread?.myRole)
+  check('建完就能提需求', mine.data?.thread?.canStart === true, String(mine.data?.thread?.canStart))
+  check('建完就能拍板', mine.data?.thread?.canAct === true, String(mine.data?.thread?.canAct))
 
   const ok = await api('POST', '/api/threads', {
     token: adminToken,
     body: { name: '首页改版' },
   })
-  check('管理员能建群', ok.status === 200 && ok.data?.ok === true, JSON.stringify(ok.data).slice(0, 200))
+  check('管理员也能建群', ok.status === 200 && ok.data?.ok === true, JSON.stringify(ok.data).slice(0, 200))
   threadId = ok.data?.threadId
   check('返回了 threadId', typeof threadId === 'string' && threadId.startsWith('t'), threadId)
   check('threadId 被识别为 App 会话', isAppThread(threadId) === true)
@@ -525,13 +537,14 @@ console.log('\n== 群主指定群管理员 ==')
 
 console.log('\n== @AI员工 才算提需求 ==')
 {
-  // 普通成员 @ 一下也要被拒，否则 startRequirement 就被绕过去了
+  // 普通成员 @ 一下也要被拒，否则 startRequirement 就被绕过去了。
+  // 注意这里是别人建的群：他是成员不是群主，所以还是没权限。
   const before = messages.list(threadId, { limit: 100 }).messages.length
   const denied = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
     body: { text: '@AI员工 给首页加个欢迎弹窗', mentions: ['bot'] },
   })
-  check('普通成员提需求被拒 403', denied.status === 403, String(denied.status))
+  check('非群主的普通成员提需求被拒 403', denied.status === 403, String(denied.status))
   check('提示需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
   check('被拒的话没有落库', messages.list(threadId, { limit: 100 }).messages.length === before)
 
@@ -553,6 +566,34 @@ console.log('\n== @AI员工 才算提需求 ==')
   const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
   check('群变成需求模式', detail.data?.thread?.mode === 'requirement', detail.data?.thread?.mode)
   check('不再是待提需求', detail.data?.thread?.pending === false)
+}
+
+console.log('\n== 建群的人在群里就是群主，能提需求 ==')
+{
+  // 这条是这次改动的核心：普通成员自己建的群，他在里面是群主，
+  // 就该能 @ 需求 bot 把流程跑起来，不需要系统管理员帮忙。
+  const mine = await api('POST', '/api/threads', {
+    token: memberToken,
+    body: { name: '群主自己的群' },
+  })
+  const ownThread = mine.data?.threadId
+  check('群主建群成功', mine.status === 200 && typeof ownThread === 'string', ownThread)
+
+  const r = await api('POST', `/api/threads/${ownThread}/messages`, {
+    token: memberToken,
+    body: { text: '@AI员工 给 DoDroidAI 加个欢迎弹窗', mentions: ['bot'] },
+  })
+  check('群主能提需求', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data).slice(0, 200))
+  check(
+    '群主的这句话进了引擎',
+    delivered.some((d) => d.type === 'start' && d.text === '给 DoDroidAI 加个欢迎弹窗'),
+    JSON.stringify(delivered.slice(-3)),
+  )
+
+  const d = await api('GET', `/api/threads/${ownThread}`, { token: memberToken })
+  check('群主看到的 canStart 是 true', d.data?.thread?.canStart === true)
+  check('群主看到的 canAct 是 true', d.data?.thread?.canAct === true)
+  check('他自己的账号角色还是普通成员', d.data?.thread?.myRole === 'owner', d.data?.thread?.myRole)
 }
 
 console.log('\n== 消息顺序：用户的话必须在 bot 播报之前 ==')
@@ -613,7 +654,11 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
     body: cardBody,
   })
   check('普通成员点卡片提交被拒', deniedCard.status === 403, deniedCard.status)
-  check('拒绝原因是权限', deniedCard.data?.error === '通过和打回只有系统管理员能操作', deniedCard.data?.error)
+  check(
+    '拒绝原因是权限',
+    deniedCard.data?.error === '通过和打回只有群主、群管理员或系统管理员能操作',
+    deniedCard.data?.error,
+  )
 
   const picked = await api('POST', `/api/threads/${threadId}/messages`, {
     token: adminToken,
@@ -635,7 +680,7 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
     body: { text: '@AI员工 /release', mentions: ['bot'] },
   })
   check('普通成员 /release 被拒 403', rel.status === 403, String(rel.status))
-  check('拒绝原因是权限', rel.data?.error === '只有系统管理员能释放会话', rel.data?.error)
+  check('拒绝原因是权限', rel.data?.error === '只有群主、群管理员或系统管理员能释放会话', rel.data?.error)
 }
 
 console.log('\n== 通过/打回：普通成员看得见按钮，点了被拒 ==')
@@ -650,7 +695,7 @@ console.log('\n== 通过/打回：普通成员看得见按钮，点了被拒 =='
   check('普通成员通过被拒 403', denied.status === 403, String(denied.status))
   check(
     '提示只有管理员能操作',
-    /只有系统管理员/.test(denied.data?.error ?? ''),
+    /只有管理员能操作/.test(denied.data?.error ?? ''),
     denied.data?.error,
   )
   check('带上了自己的角色，前端可以解释原因', denied.data?.roleLabel === '普通成员', denied.data?.roleLabel)
