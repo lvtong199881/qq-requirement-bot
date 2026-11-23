@@ -53,12 +53,17 @@ export function runTurn({
   prompt,
   env,
   timeoutMs,
+  approvalPolicy,
   onEvent,
   signal,
   onChild,
 }) {
   const args = ['--profile', profile, '--json']
   if (sessionId) args.push('--session-id', sessionId)
+  // 审批策略透传给 dsh headless：dev/test/acceptance 这类要跑构建的无人值守
+  // 回合用 never，不然沙箱的默认审批会把 flutter test / gradle 全挡掉。
+  // ask 是 dsh 默认值，不传参数行为不变。
+  if (approvalPolicy === 'never') args.push('--approval-policy', 'never')
   // 用 "-" 从 stdin 读 prompt，避免超长需求被命令行长度限制截断
   args.push('-')
 

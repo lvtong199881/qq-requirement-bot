@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor } from '../src/flow-bridge.js'
+import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor, withToolPaths, warmupAndLease } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
 
@@ -501,6 +501,104 @@ console.log('\n== 审计：记录发起人与确认人 ==')
   const flow = saved.get('g1').flow
   check('确认人记录到 flow', flow.confirmer?.userId === 'u-admin2', JSON.stringify(flow.confirmer))
   check('确认人带阶段', flow.confirmer?.stage === 'req-questions', String(flow.confirmer?.stage))
+}
+
+console.log('\n== B1/B4：回合执行参数（approval-policy / toolPaths）==')
+{
+  // 默认 runTurn mock 的产物落盘逻辑先存下来，包一层记下透传参数再转发，
+  // 跑一个完整流程看 dev/review 回合分别拿到什么 approvalPolicy。
+  const { deps, saved } = makeDeps({ approval: 'auto' })
+  const innerRunTurn = deps.runTurn
+  const seen = []
+  deps.runTurn = async (o) => {
+    seen.push({ id: o.prompt.match(/（([\w-]+)）\s*$/m)?.[1] ?? '?', approvalPolicy: o.approvalPolicy })
+    return innerRunTurn(o)
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({
+    groupId: 'g1', text: '加个弹窗', replyTo: 1, st,
+    initiator: { userId: 'u1', nickname: 'n' },
+    can: async () => ({ ok: true, role: 'admin' }),
+  })
+  // 一路「通过」让流程走完 req-questions → ... → dev
+  for (let i = 0; i < 6; i++) {
+    await bridge.handleMessage({
+      groupId: 'g1', text: '通过', replyTo: 10 + i, st: saved.get('g1'),
+      initiator: { userId: 'u1', nickname: 'n' },
+      can: async () => ({ ok: true, role: 'admin' }),
+    })
+  }
+  const devCall = seen.find((s) => s.id === 'dev')
+  const reviewCall = seen.find((s) => s.id === 'review')
+  check('dev 回合带 approval-policy never（要跑构建，无人值守）', devCall?.approvalPolicy === 'never', JSON.stringify(devCall))
+  check('review 回合保持默认 ask', reviewCall?.approvalPolicy === 'ask', JSON.stringify(reviewCall))
+
+  // withToolPaths：存在的目录加到 PATH 前面，不存在的忽略
+  const dir = mkdtempSync(join(tmpdir(), 'toolpath-'))
+  const env = withToolPaths({ PATH: 'C:/original' }, [dir, 'C:/definitely/not/exist'])
+  check('存在的工具目录进 PATH 头部', env.PATH.startsWith(dir) && env.PATH.includes('C:/original'), env.PATH)
+  check('原 PATH 其余字段原样保留', env.PATH.split(';').length === 2, env.PATH)
+  const untouched = withToolPaths({ PATH: 'keep' }, null)
+  check('没配 toolPaths 时 env 原样返回', untouched.PATH === 'keep')
+  const allMissing = withToolPaths({ PATH: 'keep' }, ['C:/definitely/not/exist'])
+  check('全不存在的 toolPaths 不改 PATH', allMissing.PATH === 'keep')
+  rmSync(dir, { recursive: true, force: true })
+}
+
+console.log('\n== B3：设备预热（warmupAndLease）==')
+{
+  // 场景一：服务上有关着的模拟器 → 启动 → 等 running → 重新租成功
+  {
+    let started = null
+    let running = false
+    const emulator = {
+      list: async () => ({
+        ok: true,
+        items: [{ name: 'avd-cold', running }],
+      }),
+      start: async (name) => { started = name; running = true; return { ok: true } },
+      lease: async () => ({ ok: true, deviceId: 'avd-cold' }),
+    }
+    const logLines = []
+    const r = await warmupAndLease(emulator, {
+      reqId: 'req-x', stage: 'dev', platform: 'android',
+      log: (m) => logLines.push(m), maxWaitMs: 10_000,
+    })
+    check('预热后租到设备', r.ok === true && r.deviceId === 'avd-cold', JSON.stringify(r))
+    check('启动的是列表里那台离线设备', started === 'avd-cold')
+    check('日志说了预热', logLines.some((m) => m.includes('预热')), logLines.join())
+  }
+  // 场景二：没有离线模拟器 → 不瞎启动，直接报错
+  {
+    const emulator = {
+      list: async () => ({ ok: true, items: [{ name: 'a', running: true }] }),
+      start: async () => { throw new Error('不该被调用') },
+      lease: async () => ({ ok: false, error: 'x' }),
+    }
+    const r = await warmupAndLease(emulator, { reqId: 'r', stage: 'dev', platform: 'android' })
+    check('全是运行中设备时报「没有可预热的」', !r.ok && r.error.includes('没有可预热'), JSON.stringify(r))
+  }
+  // 场景三：start 失败 → 原因透传
+  {
+    const emulator = {
+      list: async () => ({ ok: true, items: [{ name: 'bad', running: false }] }),
+      start: async () => ({ ok: false, error: '镜像损坏' }),
+      lease: async () => ({ ok: false, error: 'x' }),
+    }
+    const r = await warmupAndLease(emulator, { reqId: 'r', stage: 'dev', platform: 'android' })
+    check('启动失败原因透传', !r.ok && r.error.includes('镜像损坏'), JSON.stringify(r))
+  }
+  // 场景四：启动了但一直不 running → 超时报错
+  {
+    const emulator = {
+      list: async () => ({ ok: true, items: [{ name: 'stuck', running: false }] }),
+      start: async () => ({ ok: true }),
+      lease: async () => ({ ok: false, error: 'x' }),
+    }
+    const r = await warmupAndLease(emulator, { reqId: 'r', stage: 'dev', platform: 'android', maxWaitMs: 100 })
+    check('一直不就绪按超时报错', !r.ok && r.error.includes('仍未就绪'), JSON.stringify(r))
+  }
 }
 
 rmSync(repoRoot, { recursive: true, force: true })

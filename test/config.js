@@ -79,6 +79,16 @@ console.log('\n== 空数组也照样报 ==')
   check('两个空数组都报', c.obsoleteKeys.length === 2, JSON.stringify(c.obsoleteKeys))
 }
 
+console.log('\n== toolPaths：子进程 PATH 补充目录 ==')
+{
+  const c = loadConfig(write('tools.json', { ...base, toolPaths: ['C:\\Program Files\\Git\\cmd', '  ', 'C:\\src\\flutter\\bin'] }))
+  check('字符串目录保留', c.toolPaths.length === 2 && c.toolPaths[0] === 'C:\\Program Files\\Git\\cmd', JSON.stringify(c.toolPaths))
+  const blank = loadConfig(write('tools-blank.json', base))
+  check('没配是空数组', Array.isArray(blank.toolPaths) && blank.toolPaths.length === 0)
+  const junk = loadConfig(write('tools-junk.json', { ...base, toolPaths: [42, null, 'ok'] }))
+  check('非字符串项被过滤', JSON.stringify(junk.toolPaths) === '["ok"]', JSON.stringify(junk.toolPaths))
+}
+
 rmSync(dir, { recursive: true, force: true })
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)
 process.exit(fail === 0 ? 0 : 1)

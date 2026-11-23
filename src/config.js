@@ -219,6 +219,9 @@ export function loadConfig(configPath) {
     verbose: raw.verbose === true,
     // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
     envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
+    // 子进程 PATH 补充目录：git/flutter/adb 装在非标准目录时配置这里，
+    // spawn 回合子进程时追加到 PATH 头部（env 是整体替换，不补就 ENOENT）
+    toolPaths: Array.isArray(raw.toolPaths) ? raw.toolPaths.filter((p) => typeof p === 'string' && p.trim()) : [],
     // 群消息文案覆盖：{ ack: '...', heartbeat: '...' }，缺的走内置默认
     messageTemplates:
       raw.messageTemplates &&
