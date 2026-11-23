@@ -242,6 +242,26 @@ console.log('\n== 评审有阻断 → 回开发修 → 复审放行 ==')
   check('修正复用 dev 的会话', calls.find((c) => c.id === 'fix').sessionId !== null || true)
 }
 
+console.log('\n== requireApproval 下评审链连跑（AUTO_CHAIN 直通）==')
+{
+  const { ctx, calls, start } = makeCase({
+    review: { receipt: { status: 'done', blockers: [{ severity: 'blocker', reason: '空指针' }] } },
+    're-review': { receipt: { status: 'done', blockers: [] } },
+  })
+  ctx.requireApproval = true
+  // 从 review 开始：评审 → 修正 → 复审 → 测试 应全程连跑不等人
+  const flow = { ...start(), current: 'review', status: 'running', vars: { userAnswer: '好' } }
+  const r = await runFlow({ flow, ctx })
+  const ids = calls.map((c) => c.id)
+  check('评审链连跑到底（review→fix→re-review→test）',
+    ids.join(' → ').includes('review → fix → re-review → test'), ids.join(' → '))
+  // test 完成后停在 test 等确认（wait_user 停在「刚完成的 checkpoint」上，
+  // waiting.advanceTo=acceptance；acceptance 不在 AUTO_CHAIN 白名单）
+  check('直通到等验收确认（停在 test，advanceTo=acceptance）',
+    r.stoppedAt === 'test' && r.flow.status === 'waiting_user' && r.flow.waiting?.advanceTo === 'acceptance',
+    `${r.stoppedAt}/${r.flow.status}/${r.flow.waiting?.advanceTo}`)
+}
+
 console.log('\n== wrapup 不派 agent ==')
 {
   const { ctx, calls, flowEvents, start } = makeCase({})

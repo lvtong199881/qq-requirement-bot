@@ -535,6 +535,29 @@ export function createFlowBridge(deps) {
   }
 
   function buildCtx({ groupId, st, replyTo, reqDir, aborter }) {
+    // 评审链（review/re-review/fix）的输入里带 <changedFiles>/<diff>：
+    // 直接把真实 diff 喂进 prompt，agent 不用自己跑 git（实测能省下小十分钟摸排）。
+    // 截断是防大 diff 撑爆 prompt；超限就让 agent 自己看完整版。
+    const ctxReviewDiff = (flow) => {
+      // 只对评审链算——其他阶段 input 里没有这两个占位符，
+      // 而且需求澄清阶段还没有工作区，跑 git 只会拿到一堆错误。
+      if (!['review', 're-review', 'fix'].includes(flow.current)) return { changedFiles: '', diff: '' }
+      const dir = flow.workDir || st.projectDir
+      const raw = readGitDiff(dir)
+      if (!raw) return { changedFiles: '（无改动）', diff: '（无改动）' }
+      // 从 diff 头里取目标路径：diff --git a/x b/y 里的 b/y 才是改动后的文件
+      const files = [...new Set(
+        [...raw.matchAll(/^diff --git a\/\S+ b\/(\S+)$/gm)].map((m) => m[1]),
+      )]
+      const lines = raw.split('\n')
+      const tooLong = lines.length > 2000
+      return {
+        changedFiles: files.length ? files.join('、') : '（无法从 diff 解析出文件名）',
+        diff: tooLong
+          ? `${lines.slice(0, 2000).join('\n')}\n（diff 过长已截断，完整内容请自行 git diff 查看）`
+          : raw,
+      }
+    }
     return {
       skillsDir,
       reqDir,
@@ -575,8 +598,8 @@ export function createFlowBridge(deps) {
         dataDir: reqDirOf(flow),
         // 目录树给对地方：dev 之后看工作区，之前看主仓库
         projectTree: listTop(flow.workDir ?? st.projectDir),
-        changedFiles: '',
-        diff: '',
+        changedFiles: ctxReviewDiff(flow).changedFiles,
+        diff: ctxReviewDiff(flow).diff,
         debugPackage: flow.vars?.debugPackage ?? '',
         screenshots: 'docs/ui-screenshots/',
         testAccount: '',

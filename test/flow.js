@@ -178,6 +178,33 @@ console.log('\n== 修正 → 复审 → 放行 ==')
   check('复审通过到 test', st.current === 'test', st.current)
 }
 
+console.log('\n== 评审链免确认：AUTO_CHAIN 白名单 ==')
+{
+  // 手动批准模式（requireApproval:true）下，评审链各阶段产出后直接推进，
+  // 不停下来等「通过」——质量由 reviewGate 把关，等人实测一次耗 90+ 分钟。
+  // 注意 opts 是 advance 的第 4 个参数，别塞进 verify。
+  const st = { ...start(), current: 'dev' }
+  const r = advance(st, { status: 'done', artifacts: [], summary: 'ok' }, { ok: true }, { requireApproval: true })
+  check('dev 产出后直通 review（不等通过）', r.state.current === 'review', `${r.action}/${r.state.current}`)
+
+  const st2 = { ...start(), current: 'review' }
+  const r2 = advance(st2, { status: 'done', blockers: [{ severity: 'suggestion', reason: 'x' }] }, { ok: true }, { requireApproval: true })
+  check('review 无阻断直通 test', r2.state.current === 'test', `${r2.action}/${r2.state.current}`)
+
+  const st3 = { ...start(), current: 'review' }
+  const r3 = advance(st3, { status: 'done', blockers: [{ severity: 'blocker', reason: 'x' }] }, { ok: true }, { requireApproval: true })
+  check('review 有阻断直通 fix', r3.state.current === 'fix', `${r3.action}/${r3.state.current}`)
+
+  const st4 = { ...start(), current: 'fix' }
+  const r4 = advance(st4, { status: 'done', artifacts: [], summary: 'ok' }, { ok: true }, { requireApproval: true })
+  check('fix 产出后直通 re-review', r4.state.current === 're-review', `${r4.action}/${r4.state.current}`)
+
+  // 白名单之外的阶段照旧等确认
+  const st5 = { ...start(), current: 'req-prd' }
+  const r5 = advance(st5, { status: 'done', artifacts: [], summary: 'ok' }, { ok: true }, { requireApproval: true })
+  check('req-prd 产出后仍等用户通过', r5.action === 'wait_user', `${r5.action}/${r5.state.current}`)
+}
+
 console.log('\n== bridge 自己执行的 checkpoint 不派 agent ==')
 {
   const merge = { ...start(), current: 'merge' }

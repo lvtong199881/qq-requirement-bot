@@ -601,6 +601,62 @@ console.log('\n== B3：设备预热（warmupAndLease）==')
   }
 }
 
+console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不受影响 ==')
+{
+  // gitDiff mock 返回带标准头的 diff：要能从里面解出文件名
+  const { deps, saved, agentCalls } = makeDeps({ approval: 'manual' })
+  deps.gitDiff = () => [
+    'diff --git a/app/lib/old.dart b/app/lib/new.dart',
+    'index 1111..2222 100644',
+    '--- a/app/lib/old.dart',
+    '+++ b/app/lib/new.dart',
+    '@@ -1 +1 @@',
+    '-a',
+    '+b',
+  ].join('\n')
+  const innerRunTurn = deps.runTurn
+  const prompts = []
+  deps.runTurn = async (o) => {
+    prompts.push(o.prompt)
+    return innerRunTurn(o)
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({
+    groupId: 'g1', text: '加个弹窗', replyTo: 1, st,
+    initiator: { userId: 'u1', nickname: 'n' },
+    can: async () => ({ ok: true, role: 'admin' }),
+  })
+  // 走到 dev：req-questions 等用户回答，此后 req-prd/design/tech-plan 每阶段都要「通过」
+  for (let i = 0; i < 5; i++) {
+    await bridge.handleMessage({
+      groupId: 'g1', text: '通过', replyTo: 10 + i, st: saved.get('g1'),
+      initiator: { userId: 'u1', nickname: 'n' },
+      can: async () => ({ ok: true, role: 'admin' }),
+    })
+  }
+  const ids = agentCalls.map((c) => c.id)
+  const devIdx = ids.indexOf('dev')
+  check('流程走到 dev', devIdx >= 0, ids.join(','))
+  if (devIdx >= 0) {
+    // dev 的 prompt 不该带 diff 内容（它自己就是写代码的，input 里也没有 <diff>）
+    check('dev prompt 不含 diff 注入', !prompts[devIdx].includes('diff --git a/app/lib/old.dart'), prompts[devIdx].slice(0, 200))
+    // 再走一轮「通过」进 review：评审链的 prompt 该带上真实 diff 和文件名
+    await bridge.handleMessage({
+      groupId: 'g1', text: '通过', replyTo: 20, st: saved.get('g1'),
+      initiator: { userId: 'u1', nickname: 'n' },
+      can: async () => ({ ok: true, role: 'admin' }),
+    })
+    const reviewIdx = agentCalls.findIndex((c) => c.id === 'review')
+    check('流程进了 review（评审链免确认直通）', reviewIdx > devIdx, agentCalls.map((c) => c.id).join(','))
+    if (reviewIdx > devIdx) {
+      check('review prompt 含 diff 内容', prompts[reviewIdx].includes('diff --git a/app/lib/old.dart'), prompts[reviewIdx].slice(0, 300))
+      check('review prompt 含改动文件名', prompts[reviewIdx].includes('app/lib/new.dart'), prompts[reviewIdx].slice(0, 300))
+      check('review prompt 无残留占位符', !prompts[reviewIdx].includes('<changedFiles>') && !prompts[reviewIdx].includes('<diff>'))
+    }
+  }
+}
+
 rmSync(repoRoot, { recursive: true, force: true })
 
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)

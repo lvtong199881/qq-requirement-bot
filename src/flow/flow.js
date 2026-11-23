@@ -380,10 +380,11 @@ export function advance(state, receipt, verify = { ok: true }, opts = {}) {
     return { action: 'wait_user', state: nextState, checkpoint: cp, reason: null }
   }
 
-  // 手动批准模式：每个派 agent 的阶段的产物都要人看过再往下走。
+  // 手动批准模式：各阶段产物要人看过再往下走。
   // 不加这段，approval=manual 形同虚设——实测 PRD 刚写完就直接进了设计，
   // 再往下就是开发改源码，没有人按住它。
-  if (opts.requireApproval && cp.role && !cp.waitUser && cp.id !== 'merge') {
+  // 例外：评审链（dev→review→fix→re-review）自动直通，见 AUTO_CHAIN 注释。
+  if (opts.requireApproval && cp.role && !cp.waitUser && cp.id !== 'merge' && !AUTO_CHAIN.has(cp.id)) {
     nextState.status = 'waiting_user'
     // agent 在这一阶段问的疑点不能因为「等确认」就丢掉，一起带给用户
     nextState.waiting = {
@@ -401,6 +402,12 @@ export function advance(state, receipt, verify = { ok: true }, opts = {}) {
 
   return { action: 'continue', state: nextState, checkpoint: getCheckpoint(nextId) }
 }
+
+// 评审链自动直通白名单：这段的产出互为输入、由 reviewGate 把质量关，
+// 每阶段停下来等人点「通过」实测一次要耗 90+ 分钟，而评审本身只要 15 分钟。
+// 人只在 test 前的确认点和异常路径（blocked / 返工超限）介入。
+// merge 不进白名单：合并进主分支必须人拍板；需求澄清靠 waitUser 单独拦。
+const AUTO_CHAIN = new Set(['dev', 'review', 'fix', 're-review'])
 
 /**
  * 用户回答完之后继续。

@@ -185,7 +185,8 @@ export function loadConfig(configPath) {
     bot: {
       name: raw.bot?.name || 'AI员工',
     },
-    // 顶层 approval 是所有需求的默认批准方式
+    // 顶层 approval 是所有需求的默认批准方式。
+    // manual 时评审链（dev/review/fix/re-review）仍自动直通，见 flow.js AUTO_CHAIN。
     approval: raw.approval === 'auto' ? 'auto' : 'manual',
     // 并发上限。以前这里还有三个消息限速字段（maxMessagesPerMinute /
     // chunkChars / maxChunksPerTurn），都是为 QQ 单条 4500 字上限和防封号
