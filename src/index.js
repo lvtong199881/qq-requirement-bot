@@ -57,6 +57,20 @@ try {
   process.exit(1)
 }
 
+// toolPaths 不只喂 agent 回合（withToolPaths），也要并进 bridge 自己的 PATH：
+// 建 worktree、发布发现文件这些是 bridge 进程直接调 git，从别的终端拉起时
+// PATH 里未必有 git（Windows 上尤其常见），第一回合就会 spawnSync git ENOENT。
+// 另：父进程的 PATH 里可能混着引号包裹的段（pwsh 拼带空格路径的产物），
+// spawnSync 按分号拆完后带着引号的段查不到目录——顺手剥干净再合并。
+{
+  const { delimiter } = await import('node:path')
+  const clean = (s) => s.replace(/^"+|"+$/g, '').trim()
+  const current = process.env.PATH.split(delimiter).map(clean).filter(Boolean)
+  const missing = (config.toolPaths ?? [])
+    .filter((p) => p && existsSync(p) && !current.includes(clean(p)))
+  process.env.PATH = [...missing, ...current].join(delimiter)
+}
+
 // 模型凭证：dsh 的 llm-pi-ai 按 provider 的 apiKeyEnv 读环境变量，
 // 所以启动时把所有可能用到的 key 一并备好，缺哪个由 provider 自己报错。
 const modelEnv = resolveModelEnv(config)
