@@ -90,12 +90,13 @@ class _AskCardViewState extends State<AskCardView> {
 
   bool get _canSubmit {
     if (_locked || _sending || widget.busy || !widget.canSubmit) return false;
-    // 只要求「至少答了一道」：agent 可能一次问十五个，硬性全答等于不让人提交，
-    // 漏掉的那几道它下一轮还会再问
+    // 每道题都必须答（选了选项或自己输入了文字）才能提交。
+    // 之前只要求「至少答一道」——Q1 漏答跟着提交出去了，agent 少一条
+    // 关键拍板只能靠猜，下一轮还得再问一遍。
     for (final q in widget.card.questions) {
-      if (!_draft(q.id).isEmpty) return true;
+      if (_draft(q.id).isEmpty) return false;
     }
-    return false;
+    return true;
   }
 
   void _toggle(AskQuestion q, String optionId) {
@@ -301,7 +302,7 @@ class _AskCardViewState extends State<AskCardView> {
                   style: AppText.caption.copyWith(color: scheme.onSurfaceVariant),
                 )
               else ...[
-                // 跳过 = 这题不答，直接看下一题；最后一题没什么可跳的
+                // 跳过 = 先翻过去，回头还得答；没答完前提交一直是灰的
                 if (!isLast)
                   TextButton(
                     onPressed: _sending ? null : () => _go(step + 1),

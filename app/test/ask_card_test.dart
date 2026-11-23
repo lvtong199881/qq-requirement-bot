@@ -233,54 +233,49 @@ void main() {
     // 卡片一次只显示一题，直接跳到第 14 题（翻十四次和用户实际做的事一样，只是慢）
     final state = AskCardState()..step = 13;
 
-    await tester.pumpWidget(
-      host(
-        AskCardView(
-          card: card(questions),
-          canSubmit: true,
-          state: state,
-          onSubmit: (text, answers) async {
-            sentText = text;
-            sentAnswers = answers;
-            return true;
-          },
-        ),
+    Widget buildAt(int step) => host(
+      AskCardView(
+        card: card(questions),
+        canSubmit: true,
+        state: state,
+        onSubmit: (text, answers) async {
+          sentText = text;
+          sentAnswers = answers;
+          return true;
+        },
       ),
     );
 
+    // 全答才能提交：1–13 题先各点一个选项
+    for (var i = 0; i < 13; i++) {
+      state.step = i;
+      await tester.pumpWidget(buildAt(i));
+      await tester.tap(find.text('甲'));
+      await tester.pump();
+    }
+
     // 第 14 题只写意见
+    state.step = 13;
+    await tester.pumpWidget(buildAt(13));
     await tester.enterText(find.byType(TextField), '照旧版来，先别动埋点');
     await tester.pump();
 
     // 第 15 题只点选项
     state.step = 14;
-    await tester.pumpWidget(
-      host(
-        AskCardView(
-          card: card(questions),
-          canSubmit: true,
-          state: state,
-          onSubmit: (text, answers) async {
-            sentText = text;
-            sentAnswers = answers;
-            return true;
-          },
-        ),
-      ),
-    );
+    await tester.pumpWidget(buildAt(14));
     await tester.tap(find.text('甲'));
     await tester.pump();
 
     await tester.tap(find.widgetWithText(FilledButton, '提交'));
     await tester.pump();
 
-    expect(
-      sentText,
-      'Q14 第 14 个问题？\n  C. 照旧版来，先别动埋点\n'
-      'Q15 第 15 个问题？\n  A. 甲',
-    );
-    expect(sentAnswers?.map((a) => a.qid), ['q14', 'q15']);
-    expect(sentAnswers?.first.input, '照旧版来，先别动埋点');
+    // 全答了：结构化答案 15 条，逐题都有
+    expect(sentAnswers?.length, 15);
+    expect(sentAnswers?.first.qid, 'q1');
+    // 题干自带 Q14 不重复编号；自己写的话占 C 位（两选项之后）
+    expect(sentText, contains('Q14 第 14 个问题？\n  C. 照旧版来，先别动埋点'));
+    expect(sentText, contains('Q15 第 15 个问题？\n  A. 甲'));
+    expect(sentAnswers?[13].input, '照旧版来，先别动埋点');
   });
 
   testWidgets('滑出视野再回来，写了一半的意见还在', (tester) async {
@@ -380,10 +375,22 @@ void main() {
     expect(find.text('2/3'), findsOneWidget);
     expect(tester.widget<FilledButton>(submit).onPressed, isNull);
 
-    // 跳过第 2 题 → 第 3 题，这时提交才亮
+    // 跳过第 2 题 → 第 3 题：跳过只是翻页，没答的题还压着提交
     await tester.tap(find.text('跳过'));
     await tester.pump();
     expect(find.text('3/3'), findsOneWidget);
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+
+    // 回到第 2 题：跳过前已经答过（登录+我的都在草稿里），不用再点——
+    // 再点一次会把选项 toggle 掉（多选可取消）
+    await tester.tap(find.byTooltip('上一题'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('下一题'));
+    await tester.pump();
+    // 第 3 题也没答，提交还是灰的
+    expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+    await tester.tap(find.text('这周'));
+    await tester.pump();
     expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
 
     // 上一题还能回去看
@@ -396,7 +403,12 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, '提交'));
     await tester.pump();
 
-    expect(sentText, '1. 弹窗时机？\n  A. 首次启动\n2. 先做哪几块？\n  A. 登录\n  B. 我的');
-    expect(sentAnswers?.map((a) => a.qid), ['q1', 'q2']);
+    expect(
+      sentText,
+      '1. 弹窗时机？\n  A. 首次启动\n'
+      '2. 先做哪几块？\n  A. 登录\n  B. 我的\n'
+      '3. 什么时候上线？\n  A. 这周',
+    );
+    expect(sentAnswers?.map((a) => a.qid), ['q1', 'q2', 'q3']);
   });
 }
