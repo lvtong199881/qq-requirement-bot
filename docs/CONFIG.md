@@ -150,8 +150,13 @@ cloudflared tunnel route dns qq-bot bot.example.com
 cloudflared tunnel run --url http://127.0.0.1:7881 qq-bot
 ```
 
-免费版 `xxx.trycloudflare.com` 每次重启换地址，App 里 baseURL 写死就废了，
-所以得有自己的域名（十来美元一年，DNS 和证书都免费）。
+免费版 `xxx.trycloudflare.com` 每次重启换地址。不买域名也能用：跑
+`scripts/tunnel-keepalive.ps1` 守护隧道并自动发布新地址到发现文件，
+App 端（内置 EndpointResolver）会在请求失败时拉发现文件自动换址，
+用户无感。App 里默认的发现地址在 `app/lib/main.dart` 的
+`_kDiscoveryUrl`，要改成你自己的 Gitee 仓库路径。买自己的域名
+（十来美元一年，DNS 和证书都免费）仍然更省心——发现文件最多存 3 个
+候选地址，兜底靠它不如固定域名稳。
 
 要注意的几点：
 
