@@ -113,11 +113,19 @@ console.log('\n== 跨文件调用必须先 import ==')
       }
     }
 
-    // 本文件调用、且是别处导出的名字 —— 必须在本文件的 import/定义里
+    // 本文件调用、且是别处导出的名字 —— 必须在本文件的 import/定义里。
+    // 动态 import(...).then(({fn}) => ...) 的解构参数已被上面的参数规则收进
+    // owned，但箭头函数体里的 ({ fn }) 解构要单独认。
     const missing = new Set()
     for (const m of src.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g)) {
       const name = m[2]
       if (exported.has(name) && !owned.has(name)) missing.add(name)
+    }
+    for (const m of src.matchAll(/\(\s*\{([^}]+)\}\s*\)\s*=>/g)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(':').pop().trim()
+        missing.delete(name)
+      }
     }
     if (missing.size) problems.push({ file: rel, names: [...missing].sort() })
   }

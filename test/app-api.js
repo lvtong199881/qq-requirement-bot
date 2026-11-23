@@ -224,6 +224,7 @@ console.log('\n== 首屏：有没改过密码的预设账号时给出账号和�
     deliver: threads.deliver,
     createGroup: threads.createGroup,
     log: () => {},
+    instanceId: 'inst_test123',
   })
   await new Promise((r) => presetSrv.listen(0, '127.0.0.1', r))
   const base = `http://127.0.0.1:${presetSrv.address().port}`
@@ -231,6 +232,7 @@ console.log('\n== 首屏：有没改过密码的预设账号时给出账号和�
   check('返回了预设账号名', r.presetAdmin === 'admin')
   check('返回了预设密码', r.presetPassword === '123456')
   check('有管理员了所以不催注册', r.needsFirstAdmin === false)
+  check('带实例指纹（App 换址时校验用）', r.instanceId === 'inst_test123', String(r.instanceId))
 
   // 改过密码之后这俩字段必须消失，否则 App 会一直显示一个登不进去的号码
   presetUsers.resetPassword(presetUsers.findByUsername('admin').id, 'my-own-pass')

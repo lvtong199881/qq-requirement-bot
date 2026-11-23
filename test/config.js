@@ -89,6 +89,18 @@ console.log('\n== toolPaths：子进程 PATH 补充目录 ==')
   check('非字符串项被过滤', JSON.stringify(junk.toolPaths) === '["ok"]', JSON.stringify(junk.toolPaths))
 }
 
+console.log('\n== discovery：隧道换址发现通道 ==')
+{
+  const off = loadConfig(write('disc-off.json', base))
+  check('没配默认关', off.discovery.enabled === false && off.discovery.rawUrl === '')
+  const on = loadConfig(write('disc-on.json', {
+    ...base,
+    discovery: { enabled: true, rawUrl: 'https://gitee.com/u/repo/raw/main/endpoint.json' },
+  }))
+  check('配了就开', on.discovery.enabled === true)
+  check('rawUrl 原样带出', on.discovery.rawUrl === 'https://gitee.com/u/repo/raw/main/endpoint.json')
+}
+
 rmSync(dir, { recursive: true, force: true })
 console.log(`\n结果：${pass} 通过 / ${fail} 失败\n`)
 process.exit(fail === 0 ? 0 : 1)

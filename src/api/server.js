@@ -57,6 +57,8 @@ export function createApiServer({
   botName = 'AI员工',
   log,
   allowedOrigin = '',
+  /** 实例指纹：隧道换址后 App 靠它确认「新地址还是同一台后端」，防被指到假服务器 */
+  instanceId = '',
 }) {
   /** @type {Map<string, {fails:number, resetAt:number}>} */
   const rate = new Map()
@@ -174,6 +176,7 @@ export function createApiServer({
           // 预设密码是固定的，写在代码里也是公开的。
           // 只在这一刻跟着账号名一起给，改过就都不给了。
           presetPassword: preset ? '123456' : null,
+          instanceId,
         })
       }
 

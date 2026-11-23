@@ -21,6 +21,7 @@ import { createBridgeServer } from './ui/server.js'
 import { join as pathJoin } from 'node:path'
 import { SessionStore, GroupStateMachine, STATES } from './state.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { UserStore, roleLabelOf } from './account/store.js'
 import { MessageStore } from './store/messages.js'
 import { ArtifactStore } from './store/artifacts.js'
@@ -95,6 +96,19 @@ const artifacts = new ArtifactStore(pathJoin(store.dir, 'artifacts'))
 // 成员表：谁能看见哪个群。和用户表分开——用户表是全系统的账号，
 // 成员表是「这个人进过这个群」，两件事的写频率也差得远。
 const members = new MemberStore(pathJoin(store.dir, 'members'))
+
+// 实例指纹：装机时生成一次、永久不变。App 拿它确认「新隧道地址后面
+// 还是同一台后端」——发现通道（endpoint.json）被人改指向别的服务器时，
+// App 靠这个值拒绝换址，token 不会发去假冒后端。
+const instanceIdFile = pathJoin(store.dir, 'instance-id')
+let instanceId = ''
+try {
+  instanceId = readFileSync(instanceIdFile, 'utf8').trim()
+} catch {}
+if (!instanceId) {
+  instanceId = `inst_${randomUUID().replaceAll('-', '').slice(0, 20)}`
+  writeFileSync(instanceIdFile, instanceId)
+}
 
 // 投递门面：编排层只说「说给谁听」，存储细节全在这里，见 transport/transport.js
 const transport = createTransport({ messages, artifacts, log })
@@ -653,6 +667,7 @@ function startAppApi() {
     botName: botUser.nickname,
     log,
     allowedOrigin: config.api.allowedOrigin ?? '',
+    instanceId,
   })
 
   server.once('error', (err) => {
@@ -672,6 +687,22 @@ function startAppApi() {
         : [`http://${address}:${port}`]
     runtime.info(`App API：${(urls[0] ?? `http://${address}:${port}`)}/healthz`)
     for (const url of urls.slice(0, 3)) printQr(url)
+
+    // 配了发现通道就把当前地址发上去：App 断链时拉这个文件就能自愈。
+    // 异步发，不阻塞启动；失败只打日志。
+    if (config.discovery?.enabled && config.discovery.rawUrl) {
+      import('./endpoint-publisher.js')
+        .then(({ publishEndpoint }) =>
+          publishEndpoint({
+            rawUrl: config.discovery.rawUrl,
+            giteeToken: config.discovery.giteeToken,
+            instanceId,
+            urls,
+            log,
+          }),
+        )
+        .catch((err) => log(`[discovery] 发布异常：${err?.message ?? err}`))
+    }
 
     // 预设管理员：新装的系统不该要求人先会注册才能进去。
     // 启动时已经建过了（见 store 初始化那段，必须在 ensureBot 之前），这里只负责播报。

@@ -317,6 +317,19 @@ export function loadConfig(configPath) {
       engineToken: typeof raw.api?.engineToken === 'string' ? raw.api.engineToken.trim() : '',
     },
 
+    // ── 隧道换址发现通道 ──
+    // 免费版 trycloudflare 每次重启换域名，App 里写死的地址会失效。
+    // 发现通道：把 {instanceId, urls} 发布到一个稳定的 raw 地址（Gitee），
+    // App 断链时拉它拿到候选地址逐个验证后静默换。
+    // disabled / 没配 = 只打日志不发布（App 侧自动换址能力自然退化关闭）。
+    discovery: {
+      enabled: raw.discovery?.enabled === true,
+      rawUrl: typeof raw.discovery?.rawUrl === 'string' ? raw.discovery.rawUrl.trim() : '',
+      // gitee 私人令牌：rawUrl 是 gitee contents API 形态时必填
+      giteeToken:
+        typeof raw.discovery?.giteeToken === 'string' ? raw.discovery.giteeToken.trim() : '',
+    },
+
     // 需求引擎要去连哪台 IM。只有 src/engine.js 读它；
     // 单机跑的 index.js 不看这段，行为和以前一样。
     im: {
