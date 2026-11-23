@@ -139,8 +139,11 @@ console.log('\n== clearReceipt ==')
 console.log('\n== verifyOutputs：文件模式 ==')
 {
   const cp = getCheckpoint('req-prd') // output = 需求卡片.md、PRD.md
-  rmSync(join(reqDir, '需求卡片.md'), { force: true })
-  rmSync(join(reqDir, 'PRD.md'), { force: true })
+  // 不用 force:true：node 24 Windows 上对深层不存在路径 rmSync force 会触发
+  // libuv fail-fast（0xC0000409）整个进程无声退出，先判断存在再删绕开。
+  const removeIfPresent = (p) => { try { rmSync(p) } catch (e) { if (e.code !== 'ENOENT') throw e } }
+  removeIfPresent(join(reqDir, '需求卡片.md'))
+  removeIfPresent(join(reqDir, 'PRD.md'))
 
   let r = verifyOutputs({ checkpoint: cp, reqDir })
   check('两个都缺时报两个', r.missing.length === 2, r.missing.join())
