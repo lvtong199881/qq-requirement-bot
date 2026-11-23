@@ -169,6 +169,48 @@ console.log('\n== 回合进程失败（无回执）→ 按返工处理 ==')
   check('最终 blocked', r.flow.status === 'blocked', r.flow.status)
 }
 
+console.log('\n== 回执落盘晚于进程退出 → 轮询等到，不误判返工 ==')
+{
+  const id = `case${++caseSeq}`
+  const caseReqDir = join(root, 'docs/requirements', id)
+  mkdirSync(caseReqDir, { recursive: true })
+  const ctx = {
+    skillsDir,
+    reqDir: caseReqDir,
+    gitDiff: () => '+++ b/a.js',
+    setGitDiff: () => {},
+    varsFor: () => ({}),
+    persist: () => {},
+    // 真 bridge 里常见：runAgent 返回时进程已退出，回执却晚 ~2 秒才落盘。
+    // 旧版单次读取会把这种回合误判成「没写回执」烧掉一轮返工。
+    // 产物文件本身是即时的，只有回执迟到——精确复现竞态。
+    runAgent: async ({ checkpoint }) => {
+      writeFileSync(join(caseReqDir, '待提问清单.md'), '内容')
+      setTimeout(() => {
+        writeFileSync(
+          join(caseReqDir, receiptFile(checkpoint.id)),
+          JSON.stringify({ status: 'done', summary: '晚到的回执' }),
+        )
+      }, 2000)
+      return { ok: true, sessionId: 'sid-late' }
+    },
+  }
+  const flow = initialState({ reqId: id, projectDir: root })
+  const r = await runFlow({ flow, ctx })
+  check('回执晚到也能推进（没有烧返工轮次）', r.flow.rounds['req-questions'] === undefined, JSON.stringify(r.flow.rounds))
+  check('停在等用户（正常进入下一站前的 waitUser）', r.stoppedAt === 'req-questions' && r.flow.status === 'waiting_user', `${r.stoppedAt}/${r.flow.status}`)
+}
+
+console.log('\n== 进程成功 + 产物在 + 回执没写 → 产物校验放行（usable=进程成功）==')
+{
+  const { ctx, flowEvents, start } = makeCase({
+    'req-questions': { ok: true, receipt: null }, // 文件由 mock 按 output 清单写，回执不写
+  })
+  const r = await runFlow({ flow: start(), ctx })
+  check('没烧返工轮次', r.flow.rounds['req-questions'] === undefined, JSON.stringify(r.flow.rounds))
+  check('推进到等用户', r.stoppedAt === 'req-questions' && r.flow.status === 'waiting_user', `${r.stoppedAt}/${r.flow.status}`)
+}
+
 console.log('\n== 角色卡缺失 → 直接抛配置错误 ==')
 {
   const { ctx, start } = makeCase({})
