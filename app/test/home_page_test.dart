@@ -100,6 +100,36 @@ void main() {
     expect(find.text('退出登录'), findsNothing);
   });
 
+  testWidgets('静默换址不重建首页：baseUrl 变了首页状态还在', (tester) async {
+    // 换址（隧道域名变了）只动 auth._client/baseUrl，不动 stage。
+    // HomePage 的 key 固定是 'home'（不含 baseUrl），Element 树整棵复用，
+    // 群列表已加载的内容、滚动位置都保住——用户侧零感知。
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        return _ok({'threads': [
+          {'threadId': 't1', 'groupName': '换址也不闪的群', 'canStart': true, 'canAct': true},
+        ]});
+      }
+      return _ok({});
+    });
+    final controller = ThreadListController(auth: auth);
+    await tester.pumpWidget(
+      MaterialApp(home: HomePage(key: const ValueKey('home'), auth: auth, controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('换址也不闪的群'), findsOneWidget);
+
+    // 模拟换址：同一个 auth 实例静默换到新域名（mock handler 不分域名）
+    await auth.swapServerSilently('https://new-tunnel.example.com');
+    await tester.pump();
+
+    // key 固定 → 首页没有重建，列表内容原样保留
+    expect(find.text('换址也不闪的群'), findsOneWidget);
+    expect(find.text('还没有群'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('建群只问群名，需求进去再说', (tester) async {
     final auth = await _readyAuth((req) async {
       if (req.url.path == '/api/threads') return _ok({'threads': []});
@@ -117,8 +147,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 空列表也要有建群入口：以前只有 FAB，列表空了才有按钮
-    await tester.tap(find.byTooltip('建群'));
+    // 空列表也要有建群入口：以前只有 FAB，列表空了才有按钮。
+    // 入口收进了 + 菜单：先点开菜单，再点菜单里的「建群」项
+    // （空态页也有一个内联「建群」按钮，得从 MenuAnchor 里挑菜单那个）。
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(MenuItemButton),
+      matching: find.text('建群'),
+    ));
     await tester.pumpAndSettle();
 
     expect(find.text('建个群'), findsOneWidget);
@@ -128,6 +165,34 @@ void main() {
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.maxLines, 1);
     expect(find.text('发出去'), findsNothing);
+  });
+
+  testWidgets('标题栏 + 菜单收拢建群、加入群、刷新三个操作', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') return _ok({'threads': []});
+      return _ok({});
+    });
+    final controller = ThreadListController(auth: auth);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    // 栏上只剩一个 +，三个操作都收进菜单
+    expect(find.byTooltip('加入群'), findsNothing);
+    expect(find.byTooltip('刷新'), findsNothing);
+    expect(find.text('建群'), findsOneWidget); // 空态页的内联按钮
+    expect(find.text('加入群'), findsNothing);
+    expect(find.text('刷新'), findsNothing);
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+
+    // 菜单里三个操作齐全：建群不限角色，菜单项无条件显示
+    expect(find.text('建群'), findsNWidgets(2)); // 菜单项 + 空态按钮
+    expect(find.text('加入群'), findsOneWidget);
+    expect(find.text('刷新'), findsOneWidget);
   });
 
   testWidgets('引擎没连上时列表顶部提示，但群还能进', (tester) async {
@@ -334,7 +399,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byTooltip('建群'));
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('建群'));
     await tester.pumpAndSettle();
     expect(find.text('建个群'), findsOneWidget);
     expect(tester.takeException(), isNull);

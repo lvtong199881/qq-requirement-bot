@@ -34,6 +34,9 @@ class ThreadListPage extends StatefulWidget {
 }
 
 class _ThreadListPageState extends State<ThreadListPage> {
+  /// 标题栏 + 菜单的开关：open/close 都走它，菜单锚在按钮下方。
+  final MenuController _menu = MenuController();
+
   /// 首屏加载超过 1 秒才出转圈：网络快的时候闪一下转圈比什么都不显示更晃眼。
   bool _slowLoad = false;
   Timer? _slowTimer;
@@ -122,27 +125,45 @@ class _ThreadListPageState extends State<ThreadListPage> {
         appBar: AppBar(
           title: const Text('群'),
           actions: [
-            IconButton(
-              tooltip: '加入群',
-              icon: const Icon(Icons.group_add_outlined),
-              onPressed: _join,
-            ),
-            // 建群不限角色：群是私有的，谁都能建一个自己的群当群主，
-            // 然后在自己群里提需求。以前这里锁 startRequirement，
-            // 普通成员的「建群」入口直接消失，永远进不了流程。
-            if (widget.auth.perms.createGroup)
-              IconButton(
-                tooltip: '建群',
-                icon: const Icon(Icons.add_comment_outlined),
-                onPressed: _create,
+            MenuAnchor(
+              controller: _menu,
+              // 一切操作都收进 +：栏上只留一个稳定的入口，
+              // 「加入群」这类低频动作不必常驻占位。
+              menuChildren: [
+                // 建群不限角色：群是私有的，谁都能建一个自己的群当群主，
+                // 然后在自己群里提需求。以前这里锁 startRequirement，
+                // 普通成员的「建群」入口直接消失，永远进不了流程。
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.add_comment_outlined),
+                  onPressed: () {
+                    _menu.close();
+                    _create();
+                  },
+                  child: const Text('建群'),
+                ),
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.group_add_outlined),
+                  onPressed: () {
+                    _menu.close();
+                    _join();
+                  },
+                  child: const Text('加入群'),
+                ),
+                MenuItemButton(
+                  leadingIcon: const Icon(Icons.refresh),
+                  onPressed: () {
+                    _menu.close();
+                    setState(() => _slowLoad = true);
+                    widget.controller.refresh();
+                  },
+                  child: const Text('刷新'),
+                ),
+              ],
+              child: IconButton(
+                tooltip: '更多操作',
+                icon: const Icon(Icons.add),
+                onPressed: _menu.open,
               ),
-            IconButton(
-              tooltip: '刷新',
-              icon: const Icon(Icons.refresh),
-              onPressed: () {
-                setState(() => _slowLoad = true);
-                widget.controller.refresh();
-              },
             ),
           ],
         ),
@@ -169,11 +190,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
               child: _EngineOfflineBanner(botName: c.botName),
             ),
           Expanded(
-            child: _EmptyState(
-              canCreate: widget.auth.perms.createGroup,
-              onCreate: _create,
-              botName: c.botName,
-            ),
+            child: _EmptyState(onCreate: _create, botName: c.botName),
           ),
         ],
       );
@@ -334,13 +351,8 @@ class _ThreadCard extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({
-    required this.canCreate,
-    required this.onCreate,
-    required this.botName,
-  });
+  const _EmptyState({required this.onCreate, required this.botName});
 
-  final bool canCreate;
   final VoidCallback onCreate;
   final String botName;
 
@@ -362,18 +374,17 @@ class _EmptyState extends StatelessWidget {
             Text('还没有群', style: AppText.titleM.copyWith(color: theme.colorScheme.onSurface)),
             const SizedBox(height: AppSpace.xs),
             Text(
-              canCreate ? '先建个群。想聊天就聊，要干活就 @$botName 说一句。' : '等管理员建第一个群。',
+              // 建群人人可建，不再有「等管理员」这一态
+              '先建个群。想聊天就聊，要干活就 @$botName 说一句。',
               textAlign: TextAlign.center,
               style: AppText.bodyS.copyWith(color: theme.colorScheme.onSurfaceVariant),
             ),
-            if (canCreate) ...[
-              const SizedBox(height: AppSpace.xl),
-              FilledButton.icon(
-                onPressed: onCreate,
-                icon: const Icon(Icons.add, size: 20),
-                label: const Text('建群'),
-              ),
-            ],
+            const SizedBox(height: AppSpace.xl),
+            FilledButton.icon(
+              onPressed: onCreate,
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('建群'),
+            ),
           ],
         ),
       ),

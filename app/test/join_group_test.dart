@@ -53,7 +53,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('加入群'));
+    // 加入群收进了 + 菜单：先点开菜单，再点「加入群」项
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加入群'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 't9');
