@@ -13,7 +13,7 @@ import { loadConfig, reloadConfigInto, resolveModelEnv } from './config.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
 import { getCheckpoint, CHECKPOINTS } from './flow/flow.js'
-import { readReceipt } from './flow/orchestrator.js'
+import { readReceipt, readReceiptWithRetry } from './flow/orchestrator.js'
 import { sleep } from './ui/format.js'
 import { Runtime } from './runtime.js'
 import { InstanceRegistry } from './instances.js'
@@ -227,25 +227,47 @@ function recoverInterruptedFlows() {
     const cp = getCheckpoint(flow.current)
     if (!cp) continue
 
-    const reqDir = flow.dataDir ?? join(flow.projectDir, 'docs/requirements', flow.reqId)
-    const receipt = readReceipt(reqDir, cp.id)
+    // 单个群的恢复失败不该拖垮其他群：catch 住继续下一组
+    recoverOneFlow(groupId, st, cp).catch((err) => log(`[${groupId}] 恢复检查失败：${err.message}`))
+  }
+}
 
+async function recoverOneFlow(groupId, st, cp) {
+  const flow = st.flow
+  const reqDir = flow.dataDir ?? join(flow.projectDir, 'docs/requirements', flow.reqId)
+  // 重启瞬间读不到回执不一定是没写：子进程可能还活着、正要落盘。
+  // 先看 pid，活着就轮询等回执出现，而不是立刻提示用户「被打断了」。
+  if (pidAlive(flow.activeTurn?.pid)) {
+    log(`[${groupId}] 「${cp.label}」的子进程还活着（pid ${flow.activeTurn.pid}），等它写完回执`)
+    const receipt = await readReceiptWithRetry(reqDir, cp.id, { attempts: 30, intervalMs: 2000 })
     if (receipt.ok) {
-      log(`[${groupId}] 「${cp.label}」的回合已完成（回执在），自动接着往下走`)
+      log(`[${groupId}] 「${cp.label}」的回合已完成（回执补读到了），自动接着往下走`)
       flowBridge
         .handleMessage({ groupId, text: '继续', replyTo: null, st, initiator: null, can: null })
         .catch((err) => log(`[${groupId}] 恢复失败：${err.message}`))
-    } else if (pidAlive(flow.activeTurn?.pid)) {
-      // 子进程还活着：只是 bridge 换了进程，回合本身没断。
-      // 这时提示「重跑」会让用户白等一次，也会让两份产物打架。
-      log(`[${groupId}] 「${cp.label}」的子进程还活着（pid ${flow.activeTurn.pid}），等它写完回执`)
-    } else if (st.recoverNotifiedFor !== cp.id) {
-      log(`[${groupId}] 「${cp.label}」的回合被打断，等用户发继续`)
-      store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
-      sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
     } else {
-      log(`[${groupId}] 「${cp.label}」仍等待用户发继续（已提示过，不重复发）`)
+      log(`[${groupId}] 「${cp.label}」的子进程已退出但回执始终没出现，交用户决策`)
+      if (st.recoverNotifiedFor !== cp.id) {
+        store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
+        sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+      }
     }
+    return
+  }
+
+  const receipt = readReceipt(reqDir, cp.id)
+
+  if (receipt.ok) {
+    log(`[${groupId}] 「${cp.label}」的回合已完成（回执在），自动接着往下走`)
+    flowBridge
+      .handleMessage({ groupId, text: '继续', replyTo: null, st, initiator: null, can: null })
+      .catch((err) => log(`[${groupId}] 恢复失败：${err.message}`))
+  } else if (st.recoverNotifiedFor !== cp.id) {
+    log(`[${groupId}] 「${cp.label}」的回合被打断，等用户发继续`)
+    store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
+    sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+  } else {
+    log(`[${groupId}] 「${cp.label}」仍等待用户发继续（已提示过，不重复发）`)
   }
 }
 // 延后一点：等 App API 起来、状态机就绪后再补发提示

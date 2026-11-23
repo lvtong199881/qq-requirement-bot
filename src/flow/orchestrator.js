@@ -128,6 +128,20 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
   if (devWorkDir) {
     lines.push(`- 【开发工作区】要合并的分支在那里（用 git fetch <路径> feature/<需求标识> 拉过来）：${devWorkDir}`)
   }
+  // 合并回合必须把需求文档一起归档进仓库。上轮实测：文档躺在 dev 工作区里
+  // 没 add，合并提交不带 docs，收尾终检在仓库里找不到 5 份必交文档，
+  // 只能人工补拷——所以把「docs 进合并提交」写成合并回合的硬性产物要求。
+  if (checkpoint.id === 'merge' && vars?.docsSourceDir) {
+    lines.push(
+      '【文档归档（合并提交的一部分）】',
+      `- 开发全程的需求文档在：${vars.docsSourceDir}`,
+      '- 合并提交必须包含 docs/requirements/<需求标识>/ 下的全部文档（需求卡片、PRD、设计说明、技术方案、评审/测试/验收报告等），',
+      '  缺一样收尾终检过不了，合并就不算完成。',
+      '- 文档从上面那个目录拷进合并工作区的 docs/requirements/<需求标识>/，git add 后随合并提交一起进主分支。',
+      '- 你对文档内容只做搬运不做改写；发现缺文档就写回执 blockers，不要自己编内容补。',
+      '',
+    )
+  }
   if (workDir) {
     lines.push(
       `- 代码（源码、单测、构建配置）改这里：${workDir}`,
@@ -225,6 +239,26 @@ export function clearReceipt(reqDir, checkpointId) {
     unlinkSync(join(reqDir, receiptFile(checkpointId)))
   } catch {
     /* 不存在就算了，正常情况 */
+  }
+}
+
+/**
+ * 带重试的回执读取。
+ *
+ * 为什么不能像 readReceipt 那样读一次就下结论：runAgent 返回只说明 dsh
+ * 进程退出了，agent「回合完成」的最后一件事往往是写回执——进程退出和
+ * 文件落盘之间有肉眼可见的时间差。实测三个回合（review/test/acceptance）
+ * 全被误报「没写回执」，实际都写了。轮询几秒等它落盘，比误判成返工便宜得多。
+ */
+export async function readReceiptWithRetry(reqDir, checkpointId, { attempts = 10, intervalMs = 1000 } = {}) {
+  for (let i = 0; ; i++) {
+    const result = readReceipt(reqDir, checkpointId)
+    if (result.ok) return result
+    // 只在「文件还没出现」时重试；文件存在但内容坏了（JSON 解析失败、结构
+    // 不合规）重试也不会变好，直接把原因交给调用方。
+    if (!result.reason?.includes(`没有写 ${receiptFile(checkpointId)}`)) return result
+    if (i >= attempts - 1) return result
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
 }
 

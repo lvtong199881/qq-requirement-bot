@@ -12,7 +12,7 @@
  * 不需要起真进程。这是它比旧版 handler 好测的地方。
  */
 import { advance, currentCheckpoint, needsAgent } from './flow.js'
-import { buildPrompt, readReceipt, verifyOutputs, readSkill, clearReceipt } from './orchestrator.js'
+import { buildPrompt, readReceiptWithRetry, verifyOutputs, readSkill, clearReceipt } from './orchestrator.js'
 
 /** 防御性上限：正常流程十几个 checkpoint，到 100 一定是状态机出了问题 */
 const MAX_STEPS = 100
@@ -88,7 +88,8 @@ export async function runFlow({ flow, ctx }) {
     // 只是收尾时挂住（工具卡死、超时）。这种情况重跑一遍代价很大，产物却是真的。
     // 但不能无条件信产物——中途崩溃时上一轮的旧文件还在，会误判通过，
     // 所以判据是「进程成功 或 回执合法」，两者都不成立才走返工。
-    const receiptResult = readReceipt(ctx.reqDir, cp.id)
+    // 读不到不立刻下结论：agent 落盘比进程退出晚是常态（竞态），轮询等它。
+    const receiptResult = await readReceiptWithRetry(ctx.reqDir, cp.id)
     const usable = result?.ok === true || receiptResult.ok
     const verify = usable
       ? verifyOutputs({ checkpoint: cp, reqDir: ctx.reqDir, gitDiff: ctx.gitDiff() })

@@ -11,7 +11,7 @@
  * 副作用（发消息、起进程、写盘）都通过 deps 注入，方便单测。
  */
 import { join, basename, dirname } from 'node:path'
-import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync, copyFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
@@ -53,6 +53,54 @@ export function makeReqId() {
 export function makeReqName(text) {
   const t = String(text ?? '').trim().replace(/\s+/g, ' ')
   return t.slice(0, 30) || '未命名需求'
+}
+
+/**
+ * 把配置里的 toolPaths 追加到子进程 PATH 前面。
+ *
+ * spawn 的 env 是整体替换，bridge 自己继承到的 PATH 未必包含 git/flutter/adb
+ * （Windows 上尤其常见：这些工具装在自定义目录，只有用户会话的 PATH 有）。
+ * 回合里跑不了 git 的症状是 spawnSync ENOENT，agent 只能瞎猜原因。
+ * toolPaths 是目录数组，存在才加——不存在的路径塞进 PATH 只会拖慢查找。
+ */
+export function withToolPaths(env, toolPaths) {
+  if (!Array.isArray(toolPaths) || !toolPaths.length) return env
+  const exists = toolPaths.filter((p) => p && existsSync(p))
+  if (!exists.length) return env
+  const sep = process.platform === 'win32' ? ';' : ':'
+  return { ...env, PATH: [...exists, env.PATH ?? ''].join(sep) }
+}
+
+/**
+ * 设备预热：lease 拿不到时，找一台匹配平台的离线模拟器启动，等它 running 再租。
+ *
+ * 三步都可能失败，但失败的原因不同：start 失败（镜像损坏/端口占用）不值得
+ * 重试；启动后等不到 running 是慢不是坏，多等几轮；最终 lease 再失败就把
+ * 错误交回去，走原来的「启动一台模拟器后回复继续」提示。
+ * 总预算 3 分钟：模拟器冷启动通常 30~90 秒，超了大概率是真有问题。
+ */
+export async function warmupAndLease(emulator, { reqId, stage, platform, log = () => {}, maxWaitMs = 180_000 }) {
+  const listed = await emulator.list({ platform })
+  const candidates = (listed.items ?? []).filter((d) => !d.running)
+  if (!listed.ok || !candidates.length) {
+    return { ok: false, error: '没有可预热的离线模拟器' }
+  }
+  const name = candidates[0].name
+  log(`设备预热：启动模拟器 ${name}`)
+  const started = await emulator.start(name, { platform })
+  if (!started.ok) return { ok: false, error: `启动模拟器 ${name} 失败：${started.error}` }
+
+  const deadline = Date.now() + maxWaitMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 5000))
+    const again = await emulator.list({ platform })
+    const dev = (again.items ?? []).find((d) => d.name === name)
+    if (dev?.running) {
+      log(`模拟器 ${name} 已启动，重新申请租约`)
+      return emulator.lease({ reqId, stage, platform })
+    }
+  }
+  return { ok: false, error: `模拟器 ${name} 启动超过 ${Math.round(maxWaitMs / 1000)}s 仍未就绪` }
 }
 
 /** 把回执里的 decisions 渲染成给人看的列表（替代旧的 [[ASK]] JSON 渲染） */
@@ -536,6 +584,9 @@ export function createFlowBridge(deps) {
         mergeInfo:
           `feature 分支：${flow.vars?.featureBranch ?? `feature/${flow.reqId}`}\n` +
           `主分支：${flow.vars?.mainBranch ?? (() => { try { return detectMainBranch(st.projectDir) } catch { return 'main' } })()}`,
+        // 合并回合的文档归档源：dev 全程的文档躺在开发工作区（没有随代码提交），
+        // prompt 不指路的话 agent 只会合并分支，docs 永远进不了主仓库。
+        docsSourceDir: reqDirOf(flow),
       }),
       onCheckpointStart: async (cp) => {
         // 记下阶段开始时刻，心跳要报「这一阶段已经跑了多久」。
@@ -550,11 +601,22 @@ export function createFlowBridge(deps) {
         // 这类极难排查的问题，而且完全没有报错。
         if (cp.needsDevice && !deviceSlots.has(groupId)) {
           // 带平台：安卓需求不该拿到鸿蒙模拟器
-          const granted = await emulator.lease({
+          let granted = await emulator.lease({
             reqId: st.flow.reqId,
             stage: cp.id,
             platform: platform.id,
           })
+          // 没有运行中的设备时先预热再租：服务上有配好的但关着的模拟器，
+          // 直接把错误甩给用户要人去点启动，一轮就耗十几分钟。启动一台
+          // 匹配平台的、等它 running、重新租——全程对用户无感。
+          if (!granted.ok && !granted.offline) {
+            granted = await warmupAndLease(emulator, {
+              reqId: st.flow.reqId,
+              stage: cp.id,
+              platform: platform.id,
+              log: (m) => log(`[${groupId}] ${m}`),
+            })
+          }
           if (!granted.ok) {
             throw new Error(
               `「${cp.label}」需要设备，但模拟器服务没给：${granted.error}` +
@@ -778,6 +840,11 @@ export function createFlowBridge(deps) {
           },
           dshBin: config.dshBin,
           profile: config.profile,
+          // dev/test/acceptance 要跑 flutter test、gradle 这类构建命令，沙箱的
+          // 默认审批模式会挡掉它们，回合只能交出没验证过的代码（补验证要主会话
+          // 再花近一个半小时）。headless 的 --approval-policy never 就是给这种
+          // 无人值守场景准备的：不弹审批，全部放行。
+          approvalPolicy: ['dev', 'test', 'acceptance'].includes(checkpoint.id) ? 'never' : 'ask',
           // cwd 决定子进程的沙箱边界：dev 之后必须切到工作区，
           // 否则产物写在 worktree 里也超出工作区，照样被拒。
           // merge 用专用合并工作区（varsFor 已区分，这里要跟上）——
@@ -790,7 +857,9 @@ export function createFlowBridge(deps) {
           prompt,
           // 必须继承 bridge 的完整环境：spawn 的 env 是替换不是合并，
           // 只传 key 的话 Windows 上 dsh.cmd 连 PATH 里的 node 都找不到。
-          env: { ...process.env, ...modelEnv },
+          // dev/test/acceptance 回合还要跑 git/flutter/adb，这些工具常装在
+          // 非标准目录且不在系统 PATH 里——配置 toolPaths 补进来（B4 治本）。
+          env: withToolPaths({ ...process.env, ...modelEnv }, config.toolPaths),
           // 按阶段取超时：dev/test/acceptance 跑构建和逐条核对，给足时间；
           // 其余阶段默认半小时。配置里没写的阶段退回 default。
           timeoutMs: stageTimeoutMs(checkpoint.id, config),
@@ -877,12 +946,12 @@ export function createFlowBridge(deps) {
 
   /** commit / wrapup 这两个 checkpoint 由 bridge 自己干 */
 
-/**
- * 猜应用 ID（装包/卸载时用）：鸿蒙读 AppScope/app.json5 的 bundleName，
- * Android 读 build.gradle 的 applicationId。猜不到就留占位符——
- * 猜错比留空更糟，会让 agent 照着错的 ID 去卸载别人的包。
- */
-function guessArtifactId(projectDir) {
+  /**
+   * 猜应用 ID（装包/卸载时用）：鸿蒙读 AppScope/app.json5 的 bundleName，
+   * Android 读 build.gradle 的 applicationId。猜不到就留占位符——
+   * 猜错比留空更糟，会让 agent 照着错的 ID 去卸载别人的包。
+   */
+  function guessArtifactId(projectDir) {
   const tries = [
     ['AppScope/app.json5', /"?bundleName"?\s*:\s*"([^"]+)"/],
     ['app/build.gradle', /applicationId\s*=?\s*["']([^"']+)["']/],
@@ -1016,6 +1085,12 @@ async function doMerge({ groupId, flow, st, log, config }) {
   async function bridgeAction({ groupId, cp, flow, st, replyTo }) {
     if (cp.id === 'wrapup') {
       const reqDir = reqDirOf(flow)
+      // 终检前先兜底：文档可能留在 dev/merge 工作区没随提交进仓库（上轮实测），
+      // 能自动找回来就不停下来等人。
+      const recovered = backfillFinalArtifacts(reqDir, flow)
+      if (recovered.length) {
+        log(`[${groupId}] 收尾兜底拷回产物：${recovered.join('、')}（来源：开发/合并工作区）`)
+      }
       const missing = checkFinalArtifacts(reqDir)
       if (missing.length) {
         log(`[${groupId}] 收尾缺产物（${reqDir}）：${missing.join('、')}`)
@@ -1380,6 +1455,41 @@ export function uniqueReqId(projectDir, base) {
 function checkFinalArtifacts(reqDir) {
   const must = ['需求卡片.md', 'PRD.md', '技术方案.md', '测试报告.md', '验收文档.md']
   return must.filter((f) => !existsSync(join(reqDir, f)))
+}
+
+/**
+ * 收尾缺产物的兜底：从已知的历史存放点把文档拷回收尾目录再查一遍。
+ * 上轮实测：文档在 dev 工作区里没随合并提交进仓库、回收执路径又写了别的
+ * 工作区——三处各有几份，终检总会漏。与其停下来等人补拷，不如按固定
+ * 搜索顺序自动找回来：dev 工作区（agent 干活的地方，最全）→ 合并工作区
+ * （归档副本）→ scratch 本身（跳过，是目标目录）。
+ * 返回补拷回来的文件名列表（空数组 = 没找回任何东西）。
+ */
+function backfillFinalArtifacts(reqDir, flow) {
+  const missing = checkFinalArtifacts(reqDir)
+  if (!missing.length) return []
+
+  const devDir = flow?.workDir ? join(flow.workDir, 'docs/requirements', flow.reqId) : null
+  const mergeDir = flow?.vars?.mergeWorkDir
+    ? join(flow.vars.mergeWorkDir, 'docs/requirements', flow.reqId)
+    : null
+  const sources = [devDir, mergeDir].filter((d) => d && d !== reqDir)
+
+  const recovered = []
+  for (const f of missing) {
+    for (const src of sources) {
+      const from = join(src, f)
+      if (!existsSync(from)) continue
+      try {
+        copyFileSync(from, join(reqDir, f))
+        recovered.push(f)
+        break
+      } catch {
+        /* 拷不动就试下一个来源 */
+      }
+    }
+  }
+  return recovered
 }
 
 /**
