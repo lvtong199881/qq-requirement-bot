@@ -16,7 +16,7 @@ description: 验收 agent —— 相当于产品经理，代表需求方验收�
 
 ## 本阶段做什么
 
-读：`PRD.md`（验收标准全篇）、`需求卡片.md`、`设计说明.md`、`figma-import/design-spec.json`（或线上 Figma 稿）、`docs/ui-screenshots/`、debug 包路径 / 版本 / 安装与启动方式。
+读：`PRD.md`（验收标准全篇）、`需求卡片.md`、`设计说明.md`、`design/`（SVG 设计源与 boxes.json）、`docs/ui-screenshots/`、debug 包路径 / 版本 / 安装与启动方式。
 
 做：
 

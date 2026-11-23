@@ -558,6 +558,22 @@ export function createFlowBridge(deps) {
           : raw,
       }
     }
+    // 设计阶段的 <screenshots>：给实文件清单而不是目录名——
+    // agent 拿目录名还得自己 ls，目录不存在时更是白跑一轮。
+    const listReferenceShots = (dir) => {
+      const out = []
+      for (const sub of ['docs/ui-screenshots', 'docs/ui-compare']) {
+        const abs = join(dir, sub)
+        try {
+          for (const f of readdirSync(abs)) {
+            if (/\.(png|jpg|jpeg|webp)$/i.test(f)) out.push(`${sub}/${f}`)
+          }
+        } catch {
+          // 目录不存在就跳过——新项目第一版没有截图库是常态
+        }
+      }
+      return out.length ? out.join('\n') : '（没有参照截图，按新页面处理）'
+    }
     return {
       skillsDir,
       reqDir,
@@ -601,7 +617,12 @@ export function createFlowBridge(deps) {
         changedFiles: ctxReviewDiff(flow).changedFiles,
         diff: ctxReviewDiff(flow).diff,
         debugPackage: flow.vars?.debugPackage ?? '',
-        screenshots: 'docs/ui-screenshots/',
+        // 参照截图给实文件清单，不给目录名——agent 拿着目录名还得自己 ls 一轮，
+        // 而且目录可能不存在（新项目第一版）；空串让占位符提示「没有参照截图」
+        screenshots: listReferenceShots(st.projectDir),
+        // 自带渲染器所在目录（设计阶段用）：skill 正文会被内联进 prompt，
+        // 但 agent 不知道 skill 装在哪——指路变量替它把绝对路径带上
+        skillAssets: join(skillsDir, cp.role, 'assets'),
         testAccount: '',
         envHints: config.envHints ?? '',
         mergeInfo:

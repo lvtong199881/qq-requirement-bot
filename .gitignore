@@ -23,3 +23,5 @@ app/android/build/
 
 # NapCat 登录二维码（临时，且随时过期）
 napcat-qrcode.png
+
+.tmp-svggen-test/

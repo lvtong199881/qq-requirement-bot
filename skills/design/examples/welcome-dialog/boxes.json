@@ -1,0 +1,333 @@
+{
+  "F01_empty_zh_light": [],
+  "F02_dialog_zh_light": [
+    {
+      "name": "body",
+      "type": "frame",
+      "width": 320,
+      "height": 339.7
+    },
+    {
+      "name": "title",
+      "type": "text",
+      "width": 272,
+      "height": 26,
+      "lines": [
+        "欢迎使用 DoDroidAI"
+      ]
+    },
+    {
+      "name": "intro",
+      "type": "text",
+      "width": 272,
+      "height": 21,
+      "lines": [
+        "说一句话，让手机替你做事。"
+      ]
+    },
+    {
+      "name": "features",
+      "type": "frame",
+      "width": 272,
+      "height": 236.7
+    },
+    {
+      "name": "feature.1",
+      "type": "frame",
+      "width": 272,
+      "height": 80.8
+    },
+    {
+      "name": "feature.1.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.1.text",
+      "type": "frame",
+      "width": 260,
+      "height": 80.8
+    },
+    {
+      "name": "feature.1.title",
+      "type": "text",
+      "width": 90,
+      "height": 20.25,
+      "lines": [
+        "按住说话就行"
+      ]
+    },
+    {
+      "name": "feature.1.desc",
+      "type": "text",
+      "width": 260,
+      "height": 56.55,
+      "lines": [
+        "语音识别和朗读在手机本地完成；首次使用需",
+        "联网下载语音模型（默认 Wi-Fi ",
+        "下自动下载）。"
+      ]
+    },
+    {
+      "name": "feature.2",
+      "type": "frame",
+      "width": 272,
+      "height": 61.95
+    },
+    {
+      "name": "feature.2.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.2.text",
+      "type": "frame",
+      "width": 260,
+      "height": 61.95
+    },
+    {
+      "name": "feature.2.title",
+      "type": "text",
+      "width": 150,
+      "height": 20.25,
+      "lines": [
+        "它会动手，不只是聊天"
+      ]
+    },
+    {
+      "name": "feature.2.desc",
+      "type": "text",
+      "width": 260,
+      "height": 37.7,
+      "lines": [
+        "发短信、记笔记前会先请你确认；闹钟、日历",
+        "等操作直接执行。"
+      ]
+    },
+    {
+      "name": "feature.3",
+      "type": "frame",
+      "width": 272,
+      "height": 61.95
+    },
+    {
+      "name": "feature.3.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.3.text",
+      "type": "frame",
+      "width": 229.58,
+      "height": 61.95
+    },
+    {
+      "name": "feature.3.title",
+      "type": "text",
+      "width": 135,
+      "height": 20.25,
+      "lines": [
+        "会话和笔记留在本机"
+      ]
+    },
+    {
+      "name": "feature.3.desc",
+      "type": "text",
+      "width": 229.58,
+      "height": 37.7,
+      "lines": [
+        "保存在本机，会话可随时导出；使用 AI ",
+        "时内容会发送给你配置的服务商。"
+      ]
+    },
+    {
+      "name": "footer",
+      "type": "frame",
+      "width": 320,
+      "height": 80
+    },
+    {
+      "name": "button",
+      "type": "frame",
+      "width": 280,
+      "height": 48
+    },
+    {
+      "name": "buttonLabel",
+      "type": "text",
+      "width": 60,
+      "height": 18,
+      "lines": [
+        "开始使用"
+      ]
+    }
+  ],
+  "F03_dialog_zh_dark": [
+    {
+      "name": "body",
+      "type": "frame",
+      "width": 320,
+      "height": 339.7
+    },
+    {
+      "name": "title",
+      "type": "text",
+      "width": 272,
+      "height": 26,
+      "lines": [
+        "欢迎使用 DoDroidAI"
+      ]
+    },
+    {
+      "name": "intro",
+      "type": "text",
+      "width": 272,
+      "height": 21,
+      "lines": [
+        "说一句话，让手机替你做事。"
+      ]
+    },
+    {
+      "name": "features",
+      "type": "frame",
+      "width": 272,
+      "height": 236.7
+    },
+    {
+      "name": "feature.1",
+      "type": "frame",
+      "width": 272,
+      "height": 80.8
+    },
+    {
+      "name": "feature.1.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.1.text",
+      "type": "frame",
+      "width": 260,
+      "height": 80.8
+    },
+    {
+      "name": "feature.1.title",
+      "type": "text",
+      "width": 90,
+      "height": 20.25,
+      "lines": [
+        "按住说话就行"
+      ]
+    },
+    {
+      "name": "feature.1.desc",
+      "type": "text",
+      "width": 260,
+      "height": 56.55,
+      "lines": [
+        "语音识别和朗读在手机本地完成；首次使用需",
+        "联网下载语音模型（默认 Wi-Fi ",
+        "下自动下载）。"
+      ]
+    },
+    {
+      "name": "feature.2",
+      "type": "frame",
+      "width": 272,
+      "height": 61.95
+    },
+    {
+      "name": "feature.2.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.2.text",
+      "type": "frame",
+      "width": 260,
+      "height": 61.95
+    },
+    {
+      "name": "feature.2.title",
+      "type": "text",
+      "width": 150,
+      "height": 20.25,
+      "lines": [
+        "它会动手，不只是聊天"
+      ]
+    },
+    {
+      "name": "feature.2.desc",
+      "type": "text",
+      "width": 260,
+      "height": 37.7,
+      "lines": [
+        "发短信、记笔记前会先请你确认；闹钟、日历",
+        "等操作直接执行。"
+      ]
+    },
+    {
+      "name": "feature.3",
+      "type": "frame",
+      "width": 272,
+      "height": 61.95
+    },
+    {
+      "name": "feature.3.icon",
+      "type": "icon",
+      "width": 22,
+      "height": 22
+    },
+    {
+      "name": "feature.3.text",
+      "type": "frame",
+      "width": 229.58,
+      "height": 61.95
+    },
+    {
+      "name": "feature.3.title",
+      "type": "text",
+      "width": 135,
+      "height": 20.25,
+      "lines": [
+        "会话和笔记留在本机"
+      ]
+    },
+    {
+      "name": "feature.3.desc",
+      "type": "text",
+      "width": 229.58,
+      "height": 37.7,
+      "lines": [
+        "保存在本机，会话可随时导出；使用 AI ",
+        "时内容会发送给你配置的服务商。"
+      ]
+    },
+    {
+      "name": "footer",
+      "type": "frame",
+      "width": 320,
+      "height": 80
+    },
+    {
+      "name": "button",
+      "type": "frame",
+      "width": 280,
+      "height": 48
+    },
+    {
+      "name": "buttonLabel",
+      "type": "text",
+      "width": 60,
+      "height": 18,
+      "lines": [
+        "开始使用"
+      ]
+    }
+  ]
+}

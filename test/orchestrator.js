@@ -160,19 +160,19 @@ console.log('\n== verifyOutputs：文件模式 ==')
 
 console.log('\n== verifyOutputs：目录模式 ==')
 {
-  const cp = getCheckpoint('design') // output 含 figma-import/
+  const cp = getCheckpoint('design') // output 含 design/
   for (const f of ['设计说明.md']) writeFileSync(join(reqDir, f), '内容')
   mkdirSync(join(reqDir, 'design-images'), { recursive: true })
   writeFileSync(join(reqDir, 'design-images/a.png'), 'x')
 
   let r = verifyOutputs({ checkpoint: cp, reqDir })
-  check('空目录算缺', r.missing.includes('figma-import/'), r.missing.join())
+  check('空目录算缺', r.missing.includes('design/'), r.missing.join())
 
-  mkdirSync(join(reqDir, 'figma-import'), { recursive: true })
+  mkdirSync(join(reqDir, 'design'), { recursive: true })
   r = verifyOutputs({ checkpoint: cp, reqDir })
-  check('空目录仍然算缺（要看里面有没有文件）', !r.ok && r.missing.includes('figma-import/'))
+  check('空目录仍然算缺（要看里面有没有文件）', !r.ok && r.missing.includes('design/'))
 
-  writeFileSync(join(reqDir, 'figma-import/design-spec.json'), '{}')
+  writeFileSync(join(reqDir, 'design/layouts.json'), '{}')
   r = verifyOutputs({ checkpoint: cp, reqDir })
   check('目录里有文件就通过', r.ok, r.reason)
 }

@@ -1,0 +1,1106 @@
+{
+  "requirement": "示例：首页欢迎弹窗（形状对齐金标准 a7efpfbp）",
+  "designTokens": {
+    "fonts": {
+      "android": {
+        "latin": "Roboto",
+        "cjk": "Noto Sans CJK SC（系统回落）",
+        "stack": "Roboto, 'Noto Sans SC', 'Noto Sans CJK SC', sans-serif"
+      },
+      "preview": {
+        "stack": "'Segoe UI', 'Microsoft YaHei', 'Noto Sans SC', sans-serif",
+        "reason": "Windows 出图环境无 Roboto/Noto Sans CJK，使用系统字体近似；Android 真机以系统字体为准"
+      },
+      "parallel": "PingFang SC（iOS 设计习惯）不适用于本 Android 项目；本项目字体为系统默认，无需降级，仅出图环境字体近似"
+    },
+    "colors": {
+      "light": {
+        "surface": "#FFFFFF",
+        "onSurface": "#171A1F",
+        "onSurfaceVariant": "#5B6270",
+        "primary": "#4D6BFE",
+        "onPrimary": "#FFFFFF",
+        "scrim": "rgba(0, 0, 0, 0.54)",
+        "shadow": "0 8px 24px rgba(0, 0, 0, 0.18)"
+      },
+      "dark": {
+        "surface": "#161920",
+        "onSurface": "#E6E8EC",
+        "onSurfaceVariant": "#A6ADBB",
+        "primary": "#8FA6FF",
+        "onPrimary": "#0A1F5C",
+        "scrim": "rgba(0, 0, 0, 0.54)",
+        "shadow": "0 8px 24px rgba(0, 0, 0, 0.55)"
+      }
+    },
+    "typography": {
+      "title": {
+        "fontSize": 20,
+        "fontWeight": 600,
+        "lineHeight": 1.3,
+        "colorToken": "onSurface",
+        "androidStyle": "TextStyle(fontSize: 20, fontWeight: w600, height: 1.3)"
+      },
+      "intro": {
+        "fontSize": 15,
+        "fontWeight": 400,
+        "lineHeight": 1.4,
+        "colorToken": "onSurfaceVariant",
+        "androidStyle": "TextStyle(fontSize: 15, height: 1.4)"
+      },
+      "featureTitle": {
+        "fontSize": 15,
+        "fontWeight": 600,
+        "lineHeight": 1.35,
+        "colorToken": "onSurface",
+        "androidStyle": "TextStyle(fontSize: 15, fontWeight: w600, height: 1.35)"
+      },
+      "featureDesc": {
+        "fontSize": 13,
+        "fontWeight": 400,
+        "lineHeight": 1.45,
+        "colorToken": "onSurfaceVariant",
+        "androidStyle": "TextStyle(fontSize: 13, height: 1.45)"
+      },
+      "button": {
+        "fontSize": 15,
+        "fontWeight": 600,
+        "lineHeight": 1.2,
+        "colorToken": "onPrimary",
+        "androidStyle": "TextStyle(fontSize: 15, fontWeight: w600)"
+      }
+    },
+    "radius": {
+      "dialog": 16,
+      "pill": 999
+    },
+    "icons": {
+      "size": 22,
+      "strokeWidth": 1.75,
+      "viewport": 24,
+      "colorToken": "primary",
+      "items": {
+        "mic": {
+          "materialName": "Icons.mic_none",
+          "svg": "<path d=\"M12 3.2a2.8 2.8 0 0 0-2.8 2.8v6a2.8 2.8 0 0 0 5.6 0V6A2.8 2.8 0 0 0 12 3.2Z\"/><path d=\"M5.5 11.2a6.5 6.5 0 0 0 13 0\"/><path d=\"M12 17.7v3.1\"/><path d=\"M8.6 20.8h6.8\"/>"
+        },
+        "phone": {
+          "materialName": "Icons.phone_android",
+          "svg": "<path d=\"M8.4 2.4h7.2a2.2 2.2 0 0 1 2.2 2.2v14.8a2.2 2.2 0 0 1-2.2 2.2H8.4a2.2 2.2 0 0 1-2.2-2.2V4.6a2.2 2.2 0 0 1 2.2-2.2Z\"/><path d=\"M10.4 4.9h3.2\"/><path d=\"M11 19.2h2\"/>"
+        },
+        "lock": {
+          "materialName": "Icons.lock_outline",
+          "svg": "<path d=\"M7.2 10.2h9.6a2 2 0 0 1 2 2v6.6a2 2 0 0 1-2 2H7.2a2 2 0 0 1-2-2v-6.6a2 2 0 0 1 2-2Z\"/><path d=\"M8.4 10.2V7.4a3.6 3.6 0 0 1 7.2 0v2.8\"/><circle cx=\"12\" cy=\"15\" r=\"1.05\" fill=\"currentColor\" stroke=\"none\"/>"
+        }
+      }
+    }
+  },
+  "copy": {
+    "zh": {
+      "title": "欢迎使用 DoDroidAI",
+      "intro": "说一句话，让手机替你做事。",
+      "features": [
+        {
+          "icon": "mic",
+          "title": "按住说话就行",
+          "desc": "语音识别和朗读在手机本地完成；首次使用需联网下载语音模型（默认 Wi-Fi 下自动下载）。"
+        },
+        {
+          "icon": "phone",
+          "title": "它会动手，不只是聊天",
+          "desc": "发短信、记笔记前会先请你确认；闹钟、日历等操作直接执行。"
+        },
+        {
+          "icon": "lock",
+          "title": "会话和笔记留在本机",
+          "desc": "保存在本机，会话可随时导出；使用 AI 时内容会发送给你配置的服务商。"
+        }
+      ],
+      "button": "开始使用"
+    },
+    "en": {
+      "title": "Welcome to DoDroidAI",
+      "intro": "Say it, and let your phone do it.",
+      "features": [
+        {
+          "icon": "mic",
+          "title": "Just hold to talk",
+          "desc": "Speech recognition and read-aloud run on your phone; voice models download once over the network (automatic on Wi-Fi)."
+        },
+        {
+          "icon": "phone",
+          "title": "It acts, not just chats",
+          "desc": "Sending texts and saving notes ask for your confirmation first; alarms and calendar events run directly."
+        },
+        {
+          "icon": "lock",
+          "title": "Chats and notes stay on this phone",
+          "desc": "Stored locally; chats can be exported anytime. AI requests go to the provider you configure."
+        }
+      ],
+      "button": "Get started"
+    }
+  },
+  "components": {
+    "welcomeDialog": {
+      "type": "frame",
+      "name": "dialog",
+      "x": 20,
+      "y": 24,
+      "width": 320,
+      "radius": 16,
+      "fill": "surface",
+      "layout": {
+        "mode": "vertical",
+        "padding": 0,
+        "spacing": 0
+      },
+      "children": [
+        {
+          "type": "frame",
+          "name": "body",
+          "layout": {
+            "mode": "vertical",
+            "padding": [
+              20,
+              24,
+              8,
+              24
+            ]
+          },
+          "children": [
+            {
+              "type": "text",
+              "name": "title",
+              "textRef": "{{LOCALE}}.title",
+              "typography": "title"
+            },
+            {
+              "type": "text",
+              "name": "intro",
+              "textRef": "{{LOCALE}}.intro",
+              "typography": "intro",
+              "margin": [
+                8,
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "type": "frame",
+              "name": "features",
+              "layout": {
+                "mode": "vertical",
+                "padding": 0
+              },
+              "margin": [
+                20,
+                0,
+                0,
+                0
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "name": "feature.1",
+                  "layout": {
+                    "mode": "horizontal",
+                    "padding": 0,
+                    "align": "start"
+                  },
+                  "margin": [
+                    0,
+                    0,
+                    0,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "name": "feature.1.icon",
+                      "icon": "{{ICON1}}",
+                      "width": 22,
+                      "height": 22,
+                      "margin": [
+                        2,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "name": "feature.1.text",
+                      "layout": {
+                        "mode": "vertical",
+                        "padding": 0
+                      },
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "name": "feature.1.title",
+                          "textRef": "{{LOCALE}}.features[0].title",
+                          "typography": "featureTitle"
+                        },
+                        {
+                          "type": "text",
+                          "name": "feature.1.desc",
+                          "textRef": "{{LOCALE}}.features[0].desc",
+                          "typography": "featureDesc",
+                          "margin": [
+                            4,
+                            0,
+                            0,
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "name": "feature.2",
+                  "layout": {
+                    "mode": "horizontal",
+                    "padding": 0,
+                    "align": "start"
+                  },
+                  "margin": [
+                    16,
+                    0,
+                    0,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "name": "feature.2.icon",
+                      "icon": "{{ICON2}}",
+                      "width": 22,
+                      "height": 22,
+                      "margin": [
+                        2,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "name": "feature.2.text",
+                      "layout": {
+                        "mode": "vertical",
+                        "padding": 0
+                      },
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "name": "feature.2.title",
+                          "textRef": "{{LOCALE}}.features[1].title",
+                          "typography": "featureTitle"
+                        },
+                        {
+                          "type": "text",
+                          "name": "feature.2.desc",
+                          "textRef": "{{LOCALE}}.features[1].desc",
+                          "typography": "featureDesc",
+                          "margin": [
+                            4,
+                            0,
+                            0,
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "name": "feature.3",
+                  "layout": {
+                    "mode": "horizontal",
+                    "padding": 0,
+                    "align": "start"
+                  },
+                  "margin": [
+                    16,
+                    0,
+                    0,
+                    0
+                  ],
+                  "children": [
+                    {
+                      "type": "icon",
+                      "name": "feature.3.icon",
+                      "icon": "{{ICON3}}",
+                      "width": 22,
+                      "height": 22,
+                      "margin": [
+                        2,
+                        0,
+                        0,
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "name": "feature.3.text",
+                      "layout": {
+                        "mode": "vertical",
+                        "padding": 0
+                      },
+                      "margin": [
+                        0,
+                        0,
+                        0,
+                        12
+                      ],
+                      "children": [
+                        {
+                          "type": "text",
+                          "name": "feature.3.title",
+                          "textRef": "{{LOCALE}}.features[2].title",
+                          "typography": "featureTitle"
+                        },
+                        {
+                          "type": "text",
+                          "name": "feature.3.desc",
+                          "textRef": "{{LOCALE}}.features[2].desc",
+                          "typography": "featureDesc",
+                          "margin": [
+                            4,
+                            0,
+                            0,
+                            0
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "name": "footer",
+          "layout": {
+            "mode": "vertical",
+            "padding": [
+              12,
+              20,
+              20,
+              20
+            ]
+          },
+          "children": [
+            {
+              "type": "frame",
+              "name": "button",
+              "height": 48,
+              "radius": 999,
+              "fill": "primary",
+              "layout": {
+                "mode": "vertical",
+                "padding": 0,
+                "align": "center",
+                "justify": "center"
+              },
+              "children": [
+                {
+                  "type": "text",
+                  "name": "buttonLabel",
+                  "textRef": "{{LOCALE}}.button",
+                  "typography": "button",
+                  "align": "center"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "frames": [
+    {
+      "id": "F01_empty_zh_light",
+      "name": "F01 空态·浅色·中文",
+      "theme": "light",
+      "locale": "zh",
+      "fontScale": 1,
+      "canvas": {
+        "width": 360,
+        "height": 800,
+        "deviceScale": 3
+      },
+      "background": {
+        "type": "screenshot",
+        "src": "assets/reference/home-light.png"
+      },
+      "scrim": true,
+      "ac": [
+        "AC-1",
+        "AC-3"
+      ],
+      "notes": "基准帧：只有底图 + 遮罩，弹窗未出现。"
+    },
+    {
+      "id": "F02_dialog_zh_light",
+      "name": "F02_dialog_zh_light",
+      "theme": "light",
+      "locale": "zh",
+      "fontScale": 1,
+      "canvas": {
+        "width": 360,
+        "height": 800,
+        "deviceScale": 3
+      },
+      "background": {
+        "type": "screenshot",
+        "src": "assets/reference/home-light.png"
+      },
+      "scrim": true,
+      "changeScope": "dialog-only",
+      "ac": [
+        "AC-2",
+        "AC-15"
+      ],
+      "notes": "常规态。",
+      "content": {
+        "type": "frame",
+        "name": "dialog",
+        "x": 20,
+        "y": 24,
+        "width": 320,
+        "radius": 16,
+        "fill": "surface",
+        "layout": {
+          "mode": "vertical",
+          "padding": 0,
+          "spacing": 0,
+          "align": "stretch"
+        },
+        "children": [
+          {
+            "type": "frame",
+            "name": "body",
+            "layout": {
+              "mode": "vertical",
+              "padding": [
+                20,
+                24,
+                8,
+                24
+              ],
+              "align": "stretch"
+            },
+            "children": [
+              {
+                "type": "text",
+                "name": "title",
+                "textRef": "zh.title",
+                "typography": "title"
+              },
+              {
+                "type": "text",
+                "name": "intro",
+                "textRef": "zh.intro",
+                "typography": "intro",
+                "margin": [
+                  8,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              {
+                "type": "frame",
+                "name": "features",
+                "layout": {
+                  "mode": "vertical",
+                  "padding": 0,
+                  "align": "stretch"
+                },
+                "margin": [
+                  20,
+                  0,
+                  0,
+                  0
+                ],
+                "children": [
+                  {
+                    "type": "frame",
+                    "name": "feature.1",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.1.icon",
+                        "icon": "mic",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.1.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.1.title",
+                            "textRef": "zh.features[0].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.1.desc",
+                            "textRef": "zh.features[0].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "frame",
+                    "name": "feature.2",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      16,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.2.icon",
+                        "icon": "phone",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.2.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.2.title",
+                            "textRef": "zh.features[1].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.2.desc",
+                            "textRef": "zh.features[1].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "frame",
+                    "name": "feature.3",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      16,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.3.icon",
+                        "icon": "lock",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.3.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.3.title",
+                            "textRef": "zh.features[2].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.3.desc",
+                            "textRef": "zh.features[2].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "name": "footer",
+            "layout": {
+              "mode": "vertical",
+              "padding": [
+                12,
+                20,
+                20,
+                20
+              ],
+              "align": "stretch"
+            },
+            "children": [
+              {
+                "type": "frame",
+                "name": "button",
+                "height": 48,
+                "radius": 999,
+                "fill": "primary",
+                "layout": {
+                  "mode": "vertical",
+                  "padding": 0,
+                  "align": "center",
+                  "justify": "center"
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "name": "buttonLabel",
+                    "textRef": "zh.button",
+                    "typography": "button",
+                    "align": "center"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "F03_dialog_zh_dark",
+      "name": "F03_dialog_zh_dark",
+      "theme": "dark",
+      "locale": "zh",
+      "fontScale": 1,
+      "canvas": {
+        "width": 360,
+        "height": 800,
+        "deviceScale": 3
+      },
+      "background": {
+        "type": "screenshot",
+        "src": "assets/reference/home-dark.png"
+      },
+      "scrim": true,
+      "changeScope": "dialog-only",
+      "ac": [
+        "AC-2",
+        "AC-15"
+      ],
+      "notes": "常规态。",
+      "content": {
+        "type": "frame",
+        "name": "dialog",
+        "x": 20,
+        "y": 24,
+        "width": 320,
+        "radius": 16,
+        "fill": "surface",
+        "layout": {
+          "mode": "vertical",
+          "padding": 0,
+          "spacing": 0,
+          "align": "stretch"
+        },
+        "children": [
+          {
+            "type": "frame",
+            "name": "body",
+            "layout": {
+              "mode": "vertical",
+              "padding": [
+                20,
+                24,
+                8,
+                24
+              ],
+              "align": "stretch"
+            },
+            "children": [
+              {
+                "type": "text",
+                "name": "title",
+                "textRef": "zh.title",
+                "typography": "title"
+              },
+              {
+                "type": "text",
+                "name": "intro",
+                "textRef": "zh.intro",
+                "typography": "intro",
+                "margin": [
+                  8,
+                  0,
+                  0,
+                  0
+                ]
+              },
+              {
+                "type": "frame",
+                "name": "features",
+                "layout": {
+                  "mode": "vertical",
+                  "padding": 0,
+                  "align": "stretch"
+                },
+                "margin": [
+                  20,
+                  0,
+                  0,
+                  0
+                ],
+                "children": [
+                  {
+                    "type": "frame",
+                    "name": "feature.1",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.1.icon",
+                        "icon": "mic",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.1.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.1.title",
+                            "textRef": "zh.features[0].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.1.desc",
+                            "textRef": "zh.features[0].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "frame",
+                    "name": "feature.2",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      16,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.2.icon",
+                        "icon": "phone",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.2.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.2.title",
+                            "textRef": "zh.features[1].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.2.desc",
+                            "textRef": "zh.features[1].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "frame",
+                    "name": "feature.3",
+                    "layout": {
+                      "mode": "horizontal",
+                      "padding": 0,
+                      "align": "start"
+                    },
+                    "margin": [
+                      16,
+                      0,
+                      0,
+                      0
+                    ],
+                    "children": [
+                      {
+                        "type": "icon",
+                        "name": "feature.3.icon",
+                        "icon": "lock",
+                        "width": 22,
+                        "height": 22,
+                        "margin": [
+                          2,
+                          0,
+                          0,
+                          0
+                        ]
+                      },
+                      {
+                        "type": "frame",
+                        "name": "feature.3.text",
+                        "layout": {
+                          "mode": "vertical",
+                          "padding": 0
+                        },
+                        "margin": [
+                          0,
+                          0,
+                          0,
+                          12
+                        ],
+                        "children": [
+                          {
+                            "type": "text",
+                            "name": "feature.3.title",
+                            "textRef": "zh.features[2].title",
+                            "typography": "featureTitle"
+                          },
+                          {
+                            "type": "text",
+                            "name": "feature.3.desc",
+                            "textRef": "zh.features[2].desc",
+                            "typography": "featureDesc",
+                            "margin": [
+                              4,
+                              0,
+                              0,
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "name": "footer",
+            "layout": {
+              "mode": "vertical",
+              "padding": [
+                12,
+                20,
+                20,
+                20
+              ],
+              "align": "stretch"
+            },
+            "children": [
+              {
+                "type": "frame",
+                "name": "button",
+                "height": 48,
+                "radius": 999,
+                "fill": "primary",
+                "layout": {
+                  "mode": "vertical",
+                  "padding": 0,
+                  "align": "center",
+                  "justify": "center"
+                },
+                "children": [
+                  {
+                    "type": "text",
+                    "name": "buttonLabel",
+                    "textRef": "zh.button",
+                    "typography": "button",
+                    "align": "center"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

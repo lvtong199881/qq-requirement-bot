@@ -43,7 +43,7 @@ Flutter App → /api/* → bridge
 | --- | --- | --- |
 | 需求澄清 | 需求 agent | `待提问清单.md` |
 | 需求定稿 | 需求 agent（同一会话） | `需求卡片.md`、`PRD.md` |
-| 设计 | 设计 agent | `设计说明.md`、`figma-import/`、`design-images/` |
+| 设计 | 设计 agent | `设计说明.md`、`design/`（SVG 设计源）、`design-images/` |
 | 技术方案 | 方案 agent | `技术方案.md` |
 | 开发 | 开发 agent | 源码、单元测试、debug 包；自己 commit + push |
 | 代码评审 | 评审 agent | `代码评审报告.md`（阻断/应修/建议三级） |
@@ -128,7 +128,7 @@ App 自己的说明在 [app/README.md](app/README.md)。
 ## 已知限制
 
 1. **回合之间进程重启**。shell 环境、临时变量不跨回合；进度靠状态机落盘的 `flow` 字段和产物文件续跑。
-2. **设计阶段依赖 Figma MCP**。会话里没注入 `mcp__figma__*` 时，稿子只能出本地导入包，画布上没有 `fileKey`/`node-id`——不影响下游，但 Figma 里看不到。
+2. **设计稿字体是出图环境的近似**。SVG/PNG 由本地渲染器生成，中文用 Microsoft YaHei/Noto 近似——真机上以系统字体（如 MiSans）为准；差异记录在设计说明里。
 3. **一个阶段一个回合，长阶段可能超时**。超时按阶段配：开发 / 测试 / 验收默认 60 分钟，其余 30 分钟，面板「设置 → 阶段超时」可调。超时是中断不是重试，中断后发「继续」从当前阶段重跑。
 4. **Mac 得常开**。bridge 要 spawn 回合、跑 git、读写本地目录，搬不到 Cloudflare Workers 上去。
 5. **不强推消息**。App 靠轮询（列表 5 秒、详情 3 秒），不开着就收不到——这是刻意的，省掉推送服务那一整套。

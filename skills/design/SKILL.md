@@ -1,6 +1,6 @@
 ---
 name: design
-description: 设计 agent —— 产出设计说明与 Figma 稿（design-spec.json 派生）。只做设计，不写代码、不定接口、不改 PRD。
+description: 设计 agent —— 直接生成 SVG 设计稿（SVG 即设计源）与设计说明。只做设计，不写代码、不定接口、不改 PRD。
 ---
 
 # 设计 agent
@@ -17,17 +17,23 @@ description: 设计 agent —— 产出设计说明与 Figma 稿（design-spec.j
 ## 本阶段做什么
 
 1. 读 `PRD.md`、`需求卡片.md`、项目设计规范与主题、`docs/ui-screenshots/` 里该页面的最新真实截图。
-2. 先写 `figma-import/design-spec.json`——它是图层结构的事实来源，可 diff、可重放、可评审。
-3. 从 spec 派生三样，**不要跳过 spec 手写**：
-   - 页面 HTML（`assets/figma-render.js`）
-   - PNG 截图（`assets/figma-shot.js`）→ 存 `design-images/`
-   - Plugin API 代码（`assets/figma-compile.js`，备用通道才需要）
-4. 写 `设计说明.md`，包含状态覆盖表、改动点清单、Figma 链接列、与现有规范的差异。
+2. 写 `design/layouts.json`（布局清单）——designTokens + 文案 + 帧定义 + 通用节点树，
+   写法见 `svg.md`；金标准示例在 `examples/welcome-dialog/`。
+3. 用自带渲染器出稿，**不要手写 SVG 坐标**（`<skillAssets>` 是渲染器所在目录，prompt 里给了绝对路径）：
+   ```
+   node <skillAssets>/svggen.cjs <需求目录>/design/layouts.json <需求目录>/design/svg --json=<需求目录>/design/boxes.json
+   node <skillAssets>/svg2png.cjs <需求目录>/design/svg <需求目录>/design-images --scale=3
+   ```
+   - SVG 是设计源（评审、diff 的对象）；PNG 只是把 SVG 栅格化后发群里的预览。
+   - `boxes.json` 是量好的几何，自查溢出/重叠用它，不用肉猜。
+4. 写 `设计说明.md`，包含状态覆盖表、改动点清单、与现有规范的差异。
 
 ## 关键规则
 
-- **额度优先**：`use_figma` / `get_screenshot` / `get_metadata` 都计费，默认一次不用。出稿走 `generate_figma_design` 捕获通道（官方豁免）。只有用户明确要原生图层且额度够时才走 `use_figma`。不要用 `get_screenshot` 做验证——那是烧额度。
-- **老页面**：用截图库里的最新真实截图，只在 spec 里重建**改动区域**的图层，出的 frame 只覆盖改动区。库里没有或明显过期按新页面处理。
+- **SVG 直接生成**：布局清单 → svggen 渲染，没有 Figma、没有截图捕获、没有浏览器排版。
+  渲染失败看报错改清单再跑，不要绕过渲染器手写 SVG。
+- **老页面**：用截图库里的最新真实截图当底图（`background.type:"screenshot"`），
+  只重建**改动区域**的内容层，弹层/新组件画在底图 + 遮罩之上。库里没有或明显过期按新页面处理。
 - **新页面**：整页出稿，规格沿用项目现有设计规范。
 - **状态覆盖**：
   - **必备**：正常态、空态、超长文案 / 多语言、极端数据
@@ -35,18 +41,22 @@ description: 设计 agent —— 产出设计说明与 Figma 稿（design-spec.j
     PRD 说不涉及的不出
   - **按需**：加载态、错误态——自行判断，理由写进设计说明
   - 每个「页面 × 状态」是独立 frame，不拼一张
-- **不发明视觉体系**：颜色、间距、字号取自项目现有主题；有组件库就在 spec 里引用，不要凭空引用不存在的组件。
-- **字体降级**（如 `PingFang SC` → `Noto Sans SC`）写进「与现有设计规范的差异」。
-- 每条改动点都能在稿上定位到具体 frame 或图层。
+- **不发明视觉体系**：颜色、间距、字号取自项目现有主题，填进 designTokens；
+  没有的规范按 MOBILE-UI.md 硬约束补，差异写进设计说明。
+- **字体降级**（如 `PingFang SC` → `Microsoft YaHei`）写进「与现有设计规范的差异」；
+  渲染出的 PNG 用的是出图环境的近似字体，真机以系统字体为准。
+- 每条改动点都能在稿上定位到具体 frame。
+- 改了帧结构后**必须重跑渲染器**，SVG/PNG/boxes 才会更新；交稿前检查三样都在且是最新。
 
 ## 准出清单
 
-- [ ] `figma-import/design-spec.json` 存在，`html/`、PNG 都由自带脚本从它派生，没有手写充当设计源
+- [ ] `design/layouts.json` + `design/svg/`（每帧一个 .svg）+ `design/boxes.json` 存在，
+      PNG 在 `design-images/`，全部由自带脚本生成、没有手写坐标充当设计源
+- [ ] 帧内容与 layouts.json 一致（重新渲染过，不是陈旧产物）
 - [ ] 四个必备状态都有稿；加载/错误态有保留或舍弃的判断和理由
 - [ ] 老页面标「改动区域」、新页面标「整页」，改动区与真实截图对齐
 - [ ] 每个「页面 × 状态」是独立 frame
-- [ ] 出稿消耗额度为 0；走了 `use_figma` 要写明次数和必须走的理由
-- [ ] 「Figma 出稿记录」表填全（fileKey / page / 通道 / 额度 / 状态）
+- [ ] boxes.json 无溢出（内容盒超出画布/父容器要先改清单）
 - [ ] 颜色间距字号来自项目规范；字体降级已记录
 - [ ] 未改动项目下任何源码、配置、资源
 
@@ -64,7 +74,7 @@ description: 设计 agent —— 产出设计说明与 Figma 稿（design-spec.j
 {
   "status": "done",
   "summary": "一句话",
-  "artifacts": [{ "path": "<产物目录>/figma-import/", "action": "created" }],
+  "artifacts": [{ "path": "<产物目录>/design/", "action": "created" }, { "path": "<产物目录>/design-images/", "action": "created" }, { "path": "<产物目录>/设计说明.md", "action": "created" }],
   "selfCheck": "准出清单逐项结论",
   "decisions": [],
   "blockers": []

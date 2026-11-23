@@ -366,13 +366,13 @@ console.log('\n== 返工不播「完成」 ==')
 console.log('\n== 卡住后用户说一句，重新试 ==')
 {
   const { deps, saved, sent } = makeDeps({
-    replyPlan: { 'req-questions': { receipt: { status: 'blocked', blockers: [{ reason: '缺 Figma 授权' }] } } },
+    replyPlan: { 'req-questions': { receipt: { status: 'blocked', blockers: [{ reason: '缺设计参照截图' }] } } },
   })
   const bridge = createFlowBridge(deps)
   const st = newState()
   await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 加弹窗', replyTo: 7, st, initiator: null })
   check('卡住状态', saved.get('g1').flow.status === 'blocked')
-  check('群里说明了卡点', sent.some((t) => t.includes('Figma')))
+  check('群里说明了卡点', sent.some((t) => t.includes('设计参照')))
 
   // 用户给指示后重试：这次让它成功
   const retryDeps = makeDeps()

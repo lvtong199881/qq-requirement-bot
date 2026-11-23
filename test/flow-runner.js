@@ -151,7 +151,7 @@ console.log('\n== agent 要用户拍板 → 停下 ==')
 console.log('\n== agent 报阻塞 → 停下 ==')
 {
   const { ctx, start } = makeCase({
-    'req-questions': { receipt: { status: 'blocked', blockers: [{ reason: '缺 Figma 授权' }] } },
+    'req-questions': { receipt: { status: 'blocked', blockers: [{ reason: '缺设计参照截图' }] } },
   })
   const r = await runFlow({ flow: start(), ctx })
   check('状态 blocked', r.flow.status === 'blocked')
