@@ -142,12 +142,16 @@ class ThreadDetailController extends ChangeNotifier {
     actionError = null;
     notifyListeners();
     try {
-      await _api.sendMessage(
-        threadId,
-        trimmed,
-        mentions: mentions,
-        answers: answers,
-        askSeq: askSeq,
+      // 走 runWithFailover：隧道换址后发送自愈——失败→静默换址→重试一次，
+      // 用户视角里「消息发出去了」，不知道后面换过地址。
+      await auth.runWithFailover(
+        (c) => c.sendMessage(
+          threadId,
+          trimmed,
+          mentions: mentions,
+          answers: answers,
+          askSeq: askSeq,
+        ),
       );
       // 后端是先落库再返回的，所以紧跟着的这次拉取一定包含刚发的那条。
       // 不做本地乐观插入：那要做文本去重，一旦后端改措辞就会重影。
@@ -163,9 +167,10 @@ class ThreadDetailController extends ChangeNotifier {
     }
   }
 
-  Future<bool> approve() => _decide(() => _api.approve(threadId));
+  Future<bool> approve() => _decide(() => auth.runWithFailover((c) => c.approve(threadId)));
 
-  Future<bool> reject(String reason) => _decide(() => _api.reject(threadId, reason));
+  Future<bool> reject(String reason) =>
+      _decide(() => auth.runWithFailover((c) => c.reject(threadId, reason)));
 
   Future<bool> _decide(Future<void> Function() run) async {
     sending = true;

@@ -25,6 +25,7 @@ class CredentialStore {
   static const _kBaseUrl = 'server_base_url';
   static const _kToken = 'auth_token';
   static const _kUsername = 'auth_username';
+  static const _kInstanceId = 'server_instance_id';
 
   Future<Creds?> load() async {
     try {
@@ -44,6 +45,19 @@ class CredentialStore {
 
   Future<void> saveBaseUrl(String baseUrl) =>
       _storage.write(key: _kBaseUrl, value: baseUrl);
+
+  /// 后端实例指纹：换址时校验「新地址后面还是同一台后端」。
+  /// 首次连接时从 /api/auth/status 学到，永久保留。
+  Future<String?> readInstanceId() async {
+    try {
+      return await _storage.read(key: _kInstanceId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> saveInstanceId(String id) =>
+      _storage.write(key: _kInstanceId, value: id);
 
   Future<void> saveSession({required String token, required String username}) async {
     await _storage.write(key: _kToken, value: token);

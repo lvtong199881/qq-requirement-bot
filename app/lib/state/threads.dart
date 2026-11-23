@@ -66,9 +66,10 @@ class ThreadListController extends ChangeNotifier {
     }
     try {
       // 顺手查一下引擎在不在。查不到不影响列表本身：引擎离线时
-      // 群照样能聊，只是 @ 了它没人接。
+      // 群照样能聊，只是 @ 了它没人接。走 runWithFailover：
+      // 隧道换址后这里自愈——探测失败→静默换址→重试，列表不闪错误页。
       final results = await Future.wait<Object?>([
-        _api.listThreads(),
+        auth.runWithFailover((c) => c.listThreads()),
         _api.engineOnline().catchError((_) => null),
       ]);
       final page = results[0] as ({List<Thread> threads, String? botName});

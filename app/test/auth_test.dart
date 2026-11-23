@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:qqbot_app/api/client.dart';
 import 'package:qqbot_app/api/credentials.dart';
+import 'package:qqbot_app/api/endpoint_resolver.dart';
 import 'package:qqbot_app/state/auth.dart';
 
 /// 登录状态机的行为。
@@ -302,5 +303,157 @@ void main() {
     final auth = authWith((_) async => jsonOk({}));
     await auth.restore();
     expect(() => auth.client, throwsStateError);
+  });
+
+  group('隧道换址自愈', () {
+    /// 带发现通道的 auth：old 域名一概网络异常（模拟隧道被回收），
+    /// new 域名全绿（healthz 由 resolver 自己打，这里只管 /me 和业务）。
+    AuthController failoverAuth({
+      required String knownInstanceId,
+      required List<String> discoveryUrls,
+      String instanceIdFromDiscovery = 'inst_a',
+    }) {
+      FlutterSecureStorage.setMockInitialValues({
+        'server_base_url': 'http://old.example.com',
+        'auth_token': 'good',
+        'auth_username': 'abao',
+        'server_instance_id': knownInstanceId,
+      });
+      final shared = MockClient((req) async {
+        if (req.url.host == 'discovery') {
+          return http.Response(
+            jsonEncode({'instanceId': instanceIdFromDiscovery, 'urls': discoveryUrls}),
+            200,
+          );
+        }
+        if (req.url.host == 'old.example.com') {
+          // old 域名：restore 阶段 /me 报 503（触发换址分支且不清 token），
+          // 业务请求一律网络异常。
+          if (req.url.path == '/api/auth/me') {
+            return http.Response('{"ok":false,"error":"bad gateway"}', 503);
+          }
+          throw http.ClientException('Connection refused');
+        }
+        if (req.url.path == '/healthz') return jsonOk({});
+        if (req.url.path == '/api/auth/me') return jsonOk(_me);
+        return jsonOk({});
+      });
+      return AuthController(
+        clientFactory: (url) => ApiClient(baseUrl: url, httpClient: shared),
+        endpointResolver: EndpointResolver(
+          discoveryUrl: 'https://discovery/endpoint.json',
+          httpClient: shared,
+        ),
+      );
+    }
+
+    test('restore 时网络挂了 → 自动换址直接进 ready，用户无感知', () async {
+      final auth = failoverAuth(
+        knownInstanceId: 'inst_a',
+        discoveryUrls: ['https://new.example.com'],
+      );
+      await auth.restore();
+
+      expect(auth.stage, AuthStage.ready);
+      expect(auth.baseUrl, 'https://new.example.com');
+      expect(auth.token, 'good'); // token 没动过
+      // 新地址已经持久化，下次冷启动直接连新的
+      final saved = await CredentialStore().load();
+      expect(saved?.baseUrl, 'https://new.example.com');
+    });
+
+    test('instanceId 对不上宁可不动：换址失败保留 token 停 needLogin', () async {
+      final auth = failoverAuth(
+        knownInstanceId: 'inst_mine',
+        discoveryUrls: ['https://new.example.com'],
+        instanceIdFromDiscovery: 'inst_OTHER',
+      );
+      await auth.restore();
+
+      expect(auth.stage, AuthStage.needLogin);
+      expect(auth.baseUrl, 'http://old.example.com'); // 原地址没变
+      expect(auth.token, 'good'); // token 保留，服务器恢复后能直接重试
+      expect(auth.flashNotice, contains('无法连接服务器'));
+    });
+
+    test('runWithFailover：业务请求 5xx → 换址成功后重试一次拿回结果', () async {
+      final auth = failoverAuth(
+        knownInstanceId: 'inst_a',
+        discoveryUrls: ['https://new.example.com'],
+      );
+      // restore：old /me 报 503 → 走换址 → new 可用 → 直接进 ready。
+      // 这一步同时把 _client / token / instanceId 都备齐了。
+      await auth.restore();
+      expect(auth.baseUrl, 'https://new.example.com');
+
+      // 业务请求再挂（new 也 5xx）→ 再走一次换址重试，成功拿回结果
+      final result = await auth.runWithFailover((c) => c.listThreads());
+      expect(result, isNotNull);
+    });
+
+    test('runWithFailover：换址失败时原样抛出，不吞异常', () async {
+      final auth = failoverAuth(
+        knownInstanceId: 'inst_a',
+        discoveryUrls: ['https://new.example.com'],
+      );
+      await auth.restore(); // 先正常进 ready（new 地址）
+      // 把地址改回一个连不通的域名，模拟当前服务器又搬家了且发现通道挂了
+      final auth2 = failoverAuth(
+        knownInstanceId: 'inst_mine',
+        discoveryUrls: ['https://new.example.com'],
+        instanceIdFromDiscovery: 'inst_OTHER',
+      );
+      await auth2.restore(); // 换址失败（指纹不符），停 needLogin 但 client 还在
+      expect(auth2.baseUrl, 'http://old.example.com');
+
+      await expectLater(
+        auth2.runWithFailover((c) => c.listThreads()),
+        throwsA(isA<ApiException>()),
+      );
+      expect(auth2.baseUrl, 'http://old.example.com');
+    });
+
+    test('401 这类业务错误不走换址：token 失效该重登，不是服务器搬家', () async {
+      FlutterSecureStorage.setMockInitialValues({
+        'server_base_url': 'http://old.example.com',
+        'auth_token': 'stale',
+        'auth_username': 'abao',
+        'server_instance_id': 'inst_a',
+      });
+      var resolverHit = false;
+      final shared = MockClient((req) async {
+        if (req.url.host == 'discovery') resolverHit = true;
+        if (req.url.host == 'old.example.com') {
+          return http.Response('{"ok":false,"error":"unauthorized"}', 401);
+        }
+        return http.Response('{"ok":true,"user":{}}', 200);
+      });
+      final auth = AuthController(
+        clientFactory: (url) => ApiClient(baseUrl: url, httpClient: shared),
+        endpointResolver: EndpointResolver(
+          discoveryUrl: 'https://discovery/endpoint.json',
+          httpClient: shared,
+        ),
+      );
+      // 401 会让 restore 停 needLogin 但清 token——不能走 restore，
+      // 直接绕过它构造「已登录但 token 失效」的状态。
+      auth.baseUrl = 'http://old.example.com';
+      auth.token = 'stale';
+      auth.setResolverForTest(EndpointResolver(
+        discoveryUrl: 'https://discovery/endpoint.json',
+        httpClient: shared,
+      ));
+      auth.attachClientForTest(ApiClient(
+        baseUrl: 'http://old.example.com',
+        httpClient: shared,
+      )..token = 'stale');
+
+      await expectLater(
+        auth.runWithFailover((c) => c.listThreads()),
+        throwsA(isA<ApiException>()),
+      );
+      expect(resolverHit, isFalse); // 401 根本不该去碰发现通道
+      expect(auth.baseUrl, 'http://old.example.com');
+    });
   });
 }

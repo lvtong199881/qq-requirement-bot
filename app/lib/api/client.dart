@@ -135,13 +135,15 @@ class ApiClient {
   /// 服务端有没有账号。true 时注册页要提示「你会成为第一个管理员」。
   /// 首屏状态。除了「要不要引导注册」，还带回预设管理员的账号密码——
   /// 有的话可以直接写在登录页上，省得人去翻安装文档。
-  Future<({bool needsFirstAdmin, String? presetAdmin, String? presetPassword})>
+  /// instanceId 是后端实例指纹，App 记下来供换址时校验「还是同一台」。
+  Future<({bool needsFirstAdmin, String? presetAdmin, String? presetPassword, String? instanceId})>
   authStatus() async {
     final m = await _send('GET', '/api/auth/status');
     return (
       needsFirstAdmin: m['needsFirstAdmin'] == true,
       presetAdmin: m['presetAdmin'] as String?,
       presetPassword: m['presetPassword'] as String?,
+      instanceId: m['instanceId'] as String?,
     );
   }
 

@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 
+import 'api/endpoint_resolver.dart';
 import 'state/auth.dart';
 import 'state/threads.dart';
 import 'ui/home_page.dart';
 import 'ui/login_page.dart';
 import 'ui/server_setup_page.dart';
 import 'ui/theme.dart';
+
+/// 隧道换址的发现通道：一个比隧道本身稳的静态 JSON（服务器换域名时
+/// 会自动更新它）。App 里所有自动换址都从这里拿候选地址。
+/// 放编译期常量：地址变了的补救手段不能再依赖会变的东西。
+const _kDiscoveryUrl =
+    'https://gitee.com/api/v5/repos/mohanshang1/qq-requirement-bot/contents/endpoint.json';
 
 void main() {
   runApp(const QqbotApp());
@@ -19,7 +26,9 @@ class QqbotApp extends StatefulWidget {
 }
 
 class _QqbotAppState extends State<QqbotApp> {
-  final _auth = AuthController();
+  final _auth = AuthController(
+    endpointResolver: EndpointResolver(discoveryUrl: _kDiscoveryUrl),
+  );
 
   /// 列表控制器要跟着登录状态走：登录后才建，退出就销毁。
   /// 常驻一个 controller 会让旧 token 的轮询继续跑。
@@ -82,10 +91,12 @@ class _QqbotAppState extends State<QqbotApp> {
         if (c == null) {
           return const _Splash();
         }
-        // key 用 baseUrl：换了服务器就是另一份数据，
-        // 不复用旧页面的状态（尤其滚动位置和已加载的消息）。
+        // key 不含 baseUrl：静默换址（隧道域名变了）不该重建首页——
+        // 重建会把群列表的滚动位置、已加载状态全部丢掉，用户会看到闪屏。
+        // 真正「换了服务器」（用户手动改地址）走的是 setServer → needLogin，
+        // 必然先回登录页，HomePage 会随 stage 切换自然重建，不靠这个 key。
         return HomePage(
-          key: ValueKey('home-${_auth.baseUrl}'),
+          key: ValueKey('home'),
           auth: _auth,
           controller: c,
         );
