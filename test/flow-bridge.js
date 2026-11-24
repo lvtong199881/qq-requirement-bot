@@ -693,6 +693,41 @@ console.log('\n== 收尾兜底：worktree 约定路径找回落盘文档 ==')
   check('workDir 优先命中', JSON.stringify(rec3) === JSON.stringify(['验收文档.md']), JSON.stringify(rec3))
 }
 
+console.log('\n== merge 失败重试：合并锁立刻归还，不让下一轮干等 TTL ==')
+{
+  // 上轮实测：merge 连吃两次 Connection error 后，第三次不是马上跑的——
+  // 中间隔了 4 分 41 秒。根因是 onCheckpointEnd 对 retry 提前 return，
+  // 把尾部的锁释放一起跳过了，第二回合只能等第一回合的锁 TTL（5 分钟）
+  // 过期后被当僵尸抢走。修复后锁随回合结束立刻归还。
+  const { deps, saved, agentCalls, logs } = makeDeps({ approval: 'auto' })
+  let mergeFails = 2
+  const origRunTurn = deps.runTurn
+  deps.runTurn = async (args) => {
+    // bridge 调 runTurn 不带 checkpoint 对象，mock 是从 prompt 正则抓 id 的，
+    // 这里也照做；失败回合没有走 mock，agentCalls 要自己补一笔
+    const id = args.prompt.match(/【本回合只做这一步】.*（([\w-]+)）/)?.[1]
+    if (id === 'merge' && mergeFails > 0) {
+      mergeFails--
+      agentCalls.push({ id, sessionId: null })
+      return { ok: false, sessionId: 'sid-merge', error: 'Connection error.' }
+    }
+    return origRunTurn(args)
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  const t0 = Date.now()
+  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  // req-questions 是 waitUser 回合，auto 模式也要等用户回答后才往下走
+  const afterFirst = saved.get('g1')
+  await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
+  const wall = Date.now() - t0
+  const mergeCalls = agentCalls.filter((c) => c.id === 'merge').length
+  check('merge 跑了 3 次（2 失败 + 1 成功）', mergeCalls === 3, agentCalls.map((c) => c.id).join(','))
+  check('失败回合立即归还合并锁（日志可见）', logs.filter((l) => l.includes('已释放合并锁')).length === 3, logs.filter((l) => l.includes('合并锁')).join(' | '))
+  check('重试没有等锁 TTL（全程 < 30s，修复前要干等 5 分钟）', wall < 30_000, `${wall}ms`)
+  check('流程最终完成', saved.get('g1').flow.status === 'done', saved.get('g1').flow.status)
+}
+
 rmSync(repoRoot, { recursive: true, force: true })
 
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)

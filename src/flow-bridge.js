@@ -807,9 +807,34 @@ export function createFlowBridge(deps) {
         await sendPlain(groupId, renderMessage('v2StageStart', { stage: cp.label }, templates), { replyTo }).catch(() => {})
       },
       onCheckpointEnd: async (cp, adv, receipt, verifyReason) => {
+        // 阶段级资源无条件先还，再谈「要不要播报」：retry/blocked 回合如果不放
+        // 合并锁，下一轮只能干等锁 TTL（5 分钟）过期后被当僵尸抢走——实测
+        // merge 失败重试两次就白等了近 5 分钟，而锁其实早该随回合结束归还。
+        const held = mergeLocks.get(groupId)
+        if (cp.id === 'merge' && held) {
+          held.release()
+          mergeLocks.delete(groupId)
+          log(`[${groupId}] 已释放合并锁`)
+        }
+
+        // 设备是阶段级资源：这个阶段跑完就还回去，别让 review 这种
+        // 不需要设备的阶段白占着一台模拟器
+        if (!cp.forceKeepDevice) {
+          const dev = deviceSlots.get(groupId)
+          if (dev) {
+            // 释放失败不影响流程：租约会在服务重启时自然清空
+            await emulator.release(dev.deviceId).catch(() => {})
+            deviceSlots.delete(groupId)
+            st.flow.vars = { ...st.flow.vars, deviceId: null }
+            store.save(groupId, st)
+            log(`[${groupId}] 已释放设备 ${dev.deviceId}`)
+          }
+        }
+
         // 返工和卡住都不播「完成」——那是假消息，用户会以为过了。
-        // bridge 自己的动作也不播：merge 还没执行就说「合并阶段已完成」是骗人的。
+        // 产物交付同理：都返工了，交付半成品是误导。
         if (adv.action === 'retry' || adv.action === 'blocked') return
+        // bridge 自己的动作也不播：merge 还没执行就说「合并阶段已完成」是骗人的。
         if (!cp.role) return
 
         // 回执和产物校验都落日志：出问题时能直接看出是「agent 没写」「写了但没落盘」
@@ -838,28 +863,6 @@ export function createFlowBridge(deps) {
           await sendPlain(groupId, '回复「通过」后会把 feature 分支合并进主分支（合并会自动跑编译和单元测试）。', { replyTo }).catch(() => {})
         }
         await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir: reqDirOf(adv.state), replyTo })
-
-        // 设备是阶段级资源：这个阶段跑完就还回去，别让 review 这种
-        // 不需要设备的阶段白占着一台模拟器
-        if (!cp.forceKeepDevice) {
-          const dev = deviceSlots.get(groupId)
-          if (dev) {
-            // 释放失败不影响流程：租约会在服务重启时自然清空
-            await emulator.release(dev.deviceId).catch(() => {})
-            deviceSlots.delete(groupId)
-            st.flow.vars = { ...st.flow.vars, deviceId: null }
-            store.save(groupId, st)
-            log(`[${groupId}] 已释放设备 ${dev.deviceId}`)
-          }
-        }
-
-        // 合并回合结束就放锁，别占着让下一个需求干等
-        const held = mergeLocks.get(groupId)
-        if (cp.id === 'merge' && held) {
-          held.release()
-          mergeLocks.delete(groupId)
-          log(`[${groupId}] 已释放合并锁`)
-        }
       },
       onBridgeCheckpoint: async (cp, flow) => {
         await bridgeAction({ groupId, cp, flow, st, replyTo })
