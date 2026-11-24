@@ -632,7 +632,12 @@ export function createFlowBridge(deps) {
         envHints: config.envHints ?? '',
         mergeInfo:
           `feature 分支：${flow.vars?.featureBranch ?? `feature/${flow.reqId}`}\n` +
-          `主分支：${flow.vars?.mainBranch ?? (() => { try { return detectMainBranch(st.projectDir) } catch { return 'main' } })()}`,
+          `主分支：${flow.vars?.mainBranch ?? (() => { try { return detectMainBranch(st.projectDir) } catch { return 'main' } })()}\n` +
+          // 合并验证由 bridge 先算好（mergeFastForward），agent 只执行结论：
+          // 它自己现算容易漏看 main 的动向，算错一次 main 就是没验证过的树
+          (flow.vars?.mergeFastForward === true
+            ? '验证要求：main 自分支切出后没有新提交，合并结果的代码树与测试阶段验证过的分支完全一致——直接合并推送，跳过编译和单元测试。'
+            : '验证要求：main 在分支开发期间有新提交，合并出的是没人验证过的新树——合并后必须跑编译和单元测试，全绿再推送。'),
         // 合并回合的文档归档源：dev 全程的文档躺在开发工作区（没有随代码提交），
         // prompt 不指路的话 agent 只会合并分支，docs 永远进不了主仓库。
         docsSourceDir: reqDirOf(flow),
@@ -703,7 +708,31 @@ export function createFlowBridge(deps) {
 
           // 同理就地改：mergeWorkDir 要活着传给本回合的 varsFor 和 cwd
           st.flow.vars = { ...st.flow.vars, mergeWorkDir: mw.path, mergeLockFile: lockFile }
+          // 合并要不要重新验证，现在就能定：main 自分支切出后没动过（fast-forward）
+          // 时，合并结果的代码树和测试阶段刚验证过的分支逐字节一致，再跑编译单测
+          // 是纯重复；main 有新提交时三方合并出的是没人测过的新树（语义冲突文本
+          // 上看不出来），必须跑。判据算错时宁可多测：取 false。
+          // feature 分支的对象不在裸仓库（worktree 自带 .git），要从开发工作区
+          // fetch 进合并工作区再比；开发工作区丢了就按「需要验证」处理。
+          const devDir = st.flow.workDir ?? st.flow.vars?.workDir ?? ''
+          const verifyBranch = st.flow.vars?.featureBranch ?? `feature/${st.flow.reqId}`
+          let mergeFF = false
+          let ffNote = '开发工作区不可用，保守起见需要验证'
+          if (devDir) {
+            const fetched = gitRun(mw.path, ['fetch', '--no-tags', devDir, verifyBranch])
+            const behind = fetched.ok
+              ? gitRun(mw.path, ['rev-list', '--count', `FETCH_HEAD..${mainBranch}`])
+              : { ok: false, error: fetched.error }
+            if (behind.ok) {
+              mergeFF = behind.out === '0'
+              ffNote = mergeFF ? '没有新提交，跳过编译单测' : `有新提交（${behind.out} 个），需跑编译单测`
+            } else {
+              ffNote = `判定失败（${behind.error}），保守起见需要验证`
+            }
+          }
+          st.flow.vars.mergeFastForward = mergeFF
           store.save(groupId, st)
+          log(`[${groupId}] 合并验证判据：main 自分支切出后${ffNote}`)
           // 锁在回合结束后释放（onCheckpointEnd 里），中途崩溃则由锁的僵尸检测兜底
           mergeLocks.set(groupId, lock)
           log(`[${groupId}] 合并工作区：${mw.path}（已取得合并锁）`)
@@ -858,9 +887,13 @@ export function createFlowBridge(deps) {
           }
         }
         await sendPlain(groupId, renderMessage('v2StageDone', { stage: cp.label }, templates), { replyTo }).catch(() => {})
-        // 验收之后的确认等于授权合并，先说清楚
+        // 验收之后的确认等于授权合并，先说清楚。要不要重跑编译单测由
+        // mergeFastForward 判据定（bridge 已在 merge 回合开始前算好），口径别写死
         if (cp.id === 'acceptance') {
-          await sendPlain(groupId, '回复「通过」后会把 feature 分支合并进主分支（合并会自动跑编译和单元测试）。', { replyTo }).catch(() => {})
+          const mergeNote = store.get(groupId)?.flow?.vars?.mergeFastForward === true
+            ? 'main 期间没动过，直接合并推送'
+            : '会先跑编译和单元测试再推'
+          await sendPlain(groupId, `回复「通过」后会把 feature 分支合并进主分支（${mergeNote}）。`, { replyTo }).catch(() => {})
         }
         await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir: reqDirOf(adv.state), replyTo })
       },

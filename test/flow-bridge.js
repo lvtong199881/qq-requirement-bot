@@ -725,7 +725,30 @@ console.log('\n== merge 失败重试：合并锁立刻归还，不让下一轮�
   check('merge 跑了 3 次（2 失败 + 1 成功）', mergeCalls === 3, agentCalls.map((c) => c.id).join(','))
   check('失败回合立即归还合并锁（日志可见）', logs.filter((l) => l.includes('已释放合并锁')).length === 3, logs.filter((l) => l.includes('合并锁')).join(' | '))
   check('重试没有等锁 TTL（全程 < 30s，修复前要干等 5 分钟）', wall < 30_000, `${wall}ms`)
+  if (fail) console.log('    [调试] logs:\n' + logs.map((l) => '      ' + l).join('\n'))
   check('流程最终完成', saved.get('g1').flow.status === 'done', saved.get('g1').flow.status)
+}
+
+console.log('\n== merge 验证判据：fast-forward 免编译单测，main 动过必跑 ==')
+{
+  const { deps, saved, agentCalls, logs } = makeDeps({ approval: 'auto' })
+  const prompts = []
+  const innerRunTurn = deps.runTurn
+  deps.runTurn = async (o) => {
+    prompts.push(o.prompt)
+    return innerRunTurn(o)
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  const afterFirst = saved.get('g1')
+  await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
+  const flow = saved.get('g1').flow
+  check('判据算进状态', flow.vars.mergeFastForward === true, String(flow.vars.mergeFastForward))
+  const mergeIdx = agentCalls.findIndex((c) => c.id === 'merge')
+  // 夹具里 feature 分支从 main 直接开出、agent 不动 main → fast-forward
+  check('merge prompt 写明跳过编译单测', prompts[mergeIdx]?.includes('跳过编译和单元测试'), prompts[mergeIdx]?.slice(-400))
+  check('判据日志可见', logs.some((l) => l.includes('合并验证判据') && l.includes('没有新提交')), logs.filter((l) => l.includes('判据')).join(' | '))
 }
 
 rmSync(repoRoot, { recursive: true, force: true })
