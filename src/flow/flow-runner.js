@@ -55,8 +55,14 @@ export async function runFlow({ flow, ctx }) {
 
     await ctx.onCheckpointStart?.(cp)
 
+    // 产物目录在 onCheckpointStart 之后解析：dev 的这一步会把 workDir 写进
+    // 状态（暂存区 → 工作区），回执、清旧回执、产物校验要跟着这个新目录走。
+    // 用注入的函数每轮重取，而不是开局算死的一份——开局算的永远是暂存区，
+    // dev 之后的回执和 agent 产物就分家了（实测踩过）。
+    const reqDir = ctx.reqDirOf ? ctx.reqDirOf(state) : ctx.reqDir
+
     // 清掉上一轮回执：不清的话，agent 这一轮没写回执时会把旧的当新的读
-    clearReceipt(ctx.reqDir, cp.id)
+    clearReceipt(reqDir, cp.id)
 
     const skill = readSkill(ctx.skillsDir, cp.role)
     if (!skill.ok) {
@@ -89,10 +95,10 @@ export async function runFlow({ flow, ctx }) {
     // 但不能无条件信产物——中途崩溃时上一轮的旧文件还在，会误判通过，
     // 所以判据是「进程成功 或 回执合法」，两者都不成立才走返工。
     // 读不到不立刻下结论：agent 落盘比进程退出晚是常态（竞态），轮询等它。
-    const receiptResult = await readReceiptWithRetry(ctx.reqDir, cp.id)
+    const receiptResult = await readReceiptWithRetry(reqDir, cp.id)
     const usable = result?.ok === true || receiptResult.ok
     const verify = usable
-      ? verifyOutputs({ checkpoint: cp, reqDir: ctx.reqDir, gitDiff: ctx.gitDiff() })
+      ? verifyOutputs({ checkpoint: cp, reqDir, gitDiff: ctx.gitDiff() })
       : { ok: false, missing: [], reason: result?.error ?? '回合失败' }
 
     const adv = advance(state, receiptResult.receipt ?? null, verify, {

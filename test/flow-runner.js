@@ -272,6 +272,96 @@ console.log('\n== wrapup 不派 agent ==')
   check('流程结束', r.done && r.flow.status === 'done')
 }
 
+console.log('\n== dev 起的 workDir 在回合结束后不丢（就地突变，不脱钩）==')
+{
+  // 真实 bridge 的 onCheckpointStart 就地改 st.flow；runner 的 state 和它是
+  // 同一个引用。之前 bridge 用 {...st.flow} 整体替换，runner 里的 state 还
+  // 是旧对象，回合结束 advance 后 persist 把 workDir 抹掉——wrapup 终检
+  // 找不到工作区，收尾缺产物。
+  const { ctx, calls, start } = makeCase({})
+  const flow = start()
+  const persisted = [] // 记录每次 persist 看到的状态快照
+  ctx.onCheckpointStart = (cp) => {
+    if (cp.id === 'dev') live.workDir = '/wt/dev'
+  }
+  ctx.persist = (f) => persisted.push({ workDir: f.workDir, current: f.current })
+  ctx.reqDirOf = (f) => (f.workDir ? join(root, 'wt-req') : join(root, 'docs/requirements', flow.reqId))
+  // 从 dev 开始跑（req-questions 会停在等用户，不经过这里关心的路径）。
+  // live 必须是传进 runFlow 的同一个对象——onCheckpointStart 就地改它，
+  // 模拟真实 bridge 改 st.flow 的方式。
+  const state = { ...flow, current: 'dev', status: 'running' }
+  let live = state
+  // 产物/回执也按 reqDirOf 写：dev 起了 workDir 后 runner 会去工作区校验，
+  // mock 必须把东西写进同一个目录，模拟真实 agent 的落点
+  ctx.runAgent = async ({ role, checkpoint }) => {
+    calls.push({ role, id: checkpoint.id })
+    const dir = live.workDir ? join(root, 'wt-req') : join(root, 'docs/requirements', flow.reqId)
+    mkdirSync(dir, { recursive: true })
+    for (const out of checkpoint.output ?? []) {
+      if (out.endsWith('/')) {
+        mkdirSync(join(dir, out), { recursive: true })
+        writeFileSync(join(dir, out, 'x.json'), '{}')
+      } else {
+        writeFileSync(join(dir, out), '内容')
+      }
+    }
+    writeFileSync(join(dir, receiptFile(checkpoint.id)), JSON.stringify({ status: 'done', summary: 'ok' }))
+    return { ok: true, sessionId: `sid-${role}` }
+  }
+  const r = await runFlow({ flow: state, ctx })
+  check('流程跑完', r.done && r.flow.status === 'done', `${r.done}/${r.flow.status}`)
+  check('调用过 persist', persisted.length > 0, String(persisted.length))
+  const last = persisted[persisted.length - 1]
+  check('收尾时 workDir 还在（没被旧对象抹掉）', last.workDir === '/wt/dev', last.workDir)
+  // runner 内部的 state 也必须是同一引用：advance 展开保留的字段要包含 workDir
+  check('终态 flow 的 workDir 与就地写入一致', r.flow.workDir === '/wt/dev', r.flow.workDir)
+}
+
+console.log('\n== dev 之后回执/校验跟到工作区（reqDir 每轮重解析）==')
+{
+  // dev 轮 onCheckpointStart 设 workDir 后，ctx.reqDirOf 应把产物目录从
+  // scratch 切到工作区：agent 回执写在工作区，runner 也要去工作区读。
+  // 读错目录时回执=不存在，runner 只能靠 result.ok 兜底或直接当失败返工。
+  const { ctx, calls, start } = makeCase({})
+  const flow = start()
+  const wtReceiptDir = join(root, 'wt-req2')
+  ctx.onCheckpointStart = (cp) => {
+    if (cp.id === 'dev') {
+      live.workDir = '/wt/dev2'
+      mkdirSync(wtReceiptDir, { recursive: true })
+    }
+  }
+  ctx.reqDirOf = (f) => (f.workDir ? wtReceiptDir : join(root, 'docs/requirements', flow.reqId))
+  ctx.runAgent = async ({ role, checkpoint }) => {
+    calls.push({ role, id: checkpoint.id })
+    // 回执写在哪 = reqDirOf 当前指向哪（dev 之后是工作区，之前是 scratch）
+    const dir = live.workDir ? wtReceiptDir : join(root, 'docs/requirements', flow.reqId)
+    // dev 回合失败（进程异常），但在工作区写了合法回执——产物真实存在，
+    // runner 必须从工作区把回执读出来，usable 才为 true
+    if (checkpoint.id === 'dev') {
+      writeFileSync(join(dir, receiptFile('dev')), JSON.stringify({ status: 'done', summary: '开发完成' }))
+      return { ok: false, sessionId: 'sid-dev', error: '进程挂住' }
+    }
+    for (const out of checkpoint.output ?? []) {
+      if (out.endsWith('/')) {
+        mkdirSync(join(dir, out), { recursive: true })
+        writeFileSync(join(dir, out, 'x.json'), '{}')
+      } else {
+        writeFileSync(join(dir, out), '内容')
+      }
+    }
+    writeFileSync(join(dir, receiptFile(checkpoint.id)), JSON.stringify({ status: 'done', summary: 'ok' }))
+    return { ok: true, sessionId: `sid-${role}` }
+  }
+  // 从 dev 开始：dev 进程失败但工作区有合法回执，之后各 checkpoint 正常。
+  // live 同样要指向传进 runFlow 的那个对象。
+  const state = { ...flow, current: 'dev', status: 'running' }
+  let live = state
+  const r = await runFlow({ flow: state, ctx })
+  check('dev 回执从工作区读到（没白返工）', r.done || calls.some((c) => c.id === 'review'), calls.map((c) => c.id).join(' → '))
+  check('dev 没有因为读不到回执而重试', (r.flow.rounds?.dev ?? 0) === 0, String(r.flow.rounds?.dev ?? 0))
+}
+
 rmSync(root, { recursive: true, force: true })
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)
 process.exit(fail ? 1 : 0)

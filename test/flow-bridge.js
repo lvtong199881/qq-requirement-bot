@@ -657,6 +657,42 @@ console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不�
   }
 }
 
+console.log('\n== 收尾兜底：worktree 约定路径找回落盘文档 ==')
+{
+  // 上轮实测：wrapup 时 flow.workDir 丢了、vars.mergeWorkDir 也空着，但
+  // 工作区本体（<worktreeRoot>/<reqId>）还健在，文档就在里面。兜底要能
+  // 按约定路径找回来，不再停在「缺产物，手工拷」。
+  const { backfillFinalArtifacts } = await import('../src/flow-bridge.js')
+  const reqId = 'reqWT1'
+  const scratch = join(repoRoot, 'scratch', reqId)
+  mkdirSync(scratch, { recursive: true })
+  const wtRoot = join(repoRoot, 'wts')
+  const wtReqDir = join(wtRoot, reqId, 'docs/requirements', reqId)
+  mkdirSync(wtReqDir, { recursive: true })
+  // 工作区里有 3 份文档，scratch 里另有一份已回收的（不算缺）
+  for (const f of ['需求卡片.md', 'PRD.md', '技术方案.md']) {
+    writeFileSync(join(wtReqDir, f), '工作区版本')
+  }
+  writeFileSync(join(scratch, '测试报告.md'), '已在')
+  const flow = { reqId, workDir: null, vars: {} } // 模拟 wrapup 时 workDir 已丢
+  const config = { primaryRepo: { worktreeRoot: wtRoot } }
+  const recovered = backfillFinalArtifacts(scratch, flow, config)
+  check('三份文档从约定路径找回', JSON.stringify(recovered.slice().sort()) === JSON.stringify(['PRD.md', '技术方案.md', '需求卡片.md']), JSON.stringify(recovered))
+  check('已回收的不重复拷', !recovered.includes('测试报告.md'), JSON.stringify(recovered))
+  check('拷回来的内容对', readFileSync(join(scratch, 'PRD.md'), 'utf8') === '工作区版本')
+  // 工作区目录也不存在时：安静返回空列表，让收尾检查报缺（不抛）
+  const flow2 = { reqId: 'reqNONE', workDir: null, vars: {} }
+  const none = backfillFinalArtifacts(join(repoRoot, 'scratch', 'reqNONE'), flow2, config)
+  check('约定路径也空时返回空列表', JSON.stringify(none) === '[]', JSON.stringify(none))
+  // workDir 记着时优先用它（agent 干活的地方最全），约定路径只是兜底
+  const wtDev = join(wtRoot, 'reqWT2', 'docs/requirements', 'reqWT2')
+  mkdirSync(wtDev, { recursive: true })
+  writeFileSync(join(wtDev, '验收文档.md'), 'dev 版')
+  const flow3 = { reqId: 'reqWT2', workDir: join(wtRoot, 'reqWT2'), vars: { mergeWorkDir: null } }
+  const rec3 = backfillFinalArtifacts(join(repoRoot, 'scratch', 'reqWT2'), flow3, config)
+  check('workDir 优先命中', JSON.stringify(rec3) === JSON.stringify(['验收文档.md']), JSON.stringify(rec3))
+}
+
 rmSync(repoRoot, { recursive: true, force: true })
 
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)

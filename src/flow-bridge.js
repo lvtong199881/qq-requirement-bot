@@ -577,6 +577,11 @@ export function createFlowBridge(deps) {
     return {
       skillsDir,
       reqDir,
+      // 产物目录会随 dev 起变（暂存区 → 工作区）。flow-runner 每轮开始时用
+      // 这个函数重新取一次，回执和产物校验才跟 agent 实际的目录对齐——
+      // 固定用 runFromState 时算的那份（进流程前工作区还不存在，只能是暂存区）
+      // 实测会把 dev 之后的回执/校验全部落在暂存区，和 agent 的产物分家。
+      reqDirOf: (flow) => reqDirOf(flow),
       // dev 之后代码改动都在工作区，看主项目的 diff 只会是空
       gitDiff: () => readGitDiff(st.flow.workDir || st.projectDir),
       // 群配置是手动批准时，每个阶段的产物都停下来等人点头
@@ -635,7 +640,11 @@ export function createFlowBridge(deps) {
       onCheckpointStart: async (cp) => {
         // 记下阶段开始时刻，心跳要报「这一阶段已经跑了多久」。
         // 放在 bridge 而不是 flow.js：状态机是纯函数，不碰时间。
-        st.flow = { ...st.flow, checkpointStartedAt: Date.now() }
+        // 就地改 st.flow（不换对象引用）：runner 手里的 state 和它是同一个
+        // 对象，一旦换成新对象，回合结束 advance 后 persist 会用旧对象把
+        // 这里的 workDir/vars 全部抹掉——实测 wrapup 时工作区信息凭空消失
+        // 就是这个原因（review/merge 的 agent 还因此被丢进没代码的主目录）。
+        st.flow.checkpointStartedAt = Date.now()
         store.save(groupId, st)
         // 开发阶段建一个独立工作区（worktree）。这一步是团队化的核心：
         // 所有需求共用主工作区时，两个需求的 dev 会互相 checkout 打断对方，
@@ -668,7 +677,7 @@ export function createFlowBridge(deps) {
             )
           }
           deviceSlots.set(groupId, { deviceId: granted.deviceId })
-          st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: granted.deviceId } }
+          st.flow.vars = { ...st.flow.vars, deviceId: granted.deviceId }
           store.save(groupId, st)
           log(`[${groupId}] 已租到设备 ${granted.deviceId}${granted.reused ? '（复用）' : ''}`)
         }
@@ -692,10 +701,8 @@ export function createFlowBridge(deps) {
           const lock = await acquireLock(lockFile, { waitMs, pollMs: 200 })
           if (!lock.ok) throw new Error('等待合并锁超时：另一个需求正在合并')
 
-          st.flow = {
-            ...st.flow,
-            vars: { ...st.flow.vars, mergeWorkDir: mw.path, mergeLockFile: lockFile },
-          }
+          // 同理就地改：mergeWorkDir 要活着传给本回合的 varsFor 和 cwd
+          st.flow.vars = { ...st.flow.vars, mergeWorkDir: mw.path, mergeLockFile: lockFile }
           store.save(groupId, st)
           // 锁在回合结束后释放（onCheckpointEnd 里），中途崩溃则由锁的僵尸检测兜底
           mergeLocks.set(groupId, lock)
@@ -775,21 +782,21 @@ export function createFlowBridge(deps) {
             }
           }
 
-          st.flow = {
-            ...st.flow,
-            workspaces,
-            // workDir 继续指向主仓库：绝大多数需求只动它
+          // 就地挂到 st.flow（= runner 的同一个 state 对象）上：
+          // workspaces/workDir/dataDir/featureBranch 从这里一路陪跑到合并，
+          // 中途不能被 persist 的旧对象覆盖。
+          st.flow.workspaces = workspaces
+          // workDir 继续指向主仓库：绝大多数需求只动它
+          st.flow.workDir = primaryWt.path
+          st.flow.dataDir = join(primaryWt.path, 'docs/requirements', st.flow.reqId)
+          st.flow.vars = {
+            ...st.flow.vars,
             workDir: primaryWt.path,
-            dataDir: join(primaryWt.path, 'docs/requirements', st.flow.reqId),
-            vars: {
-              ...st.flow.vars,
-              workDir: primaryWt.path,
-              workspaces: Object.fromEntries(
-                Object.entries(workspaces).map(([id, w]) => [id, w.path]),
-              ),
-              featureBranch: primaryWt.branch,
-              mainBranch: primaryWt.mainBranch,
-            },
+            workspaces: Object.fromEntries(
+              Object.entries(workspaces).map(([id, w]) => [id, w.path]),
+            ),
+            featureBranch: primaryWt.branch,
+            mainBranch: primaryWt.mainBranch,
           }
           store.save(groupId, st)
         }
@@ -820,7 +827,7 @@ export function createFlowBridge(deps) {
           const fromReceipt = receipt?.deliverables?.debugPackage
           const found = fromReceipt || findLatestHap(st.projectDir, platform)
           if (found) {
-            st.flow = { ...st.flow, vars: { ...st.flow.vars, debugPackage: found } }
+            st.flow.vars = { ...st.flow.vars, debugPackage: found }
             store.save(groupId, st)
             log(`[${groupId}] debug 包：${found}${fromReceipt ? '' : '（回执没写，从构建产物找到的）'}`)
           }
@@ -830,7 +837,7 @@ export function createFlowBridge(deps) {
         if (cp.id === 'acceptance') {
           await sendPlain(groupId, '回复「通过」后会把 feature 分支合并进主分支（合并会自动跑编译和单元测试）。', { replyTo }).catch(() => {})
         }
-        await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir, replyTo })
+        await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir: reqDirOf(adv.state), replyTo })
 
         // 设备是阶段级资源：这个阶段跑完就还回去，别让 review 这种
         // 不需要设备的阶段白占着一台模拟器
@@ -840,7 +847,7 @@ export function createFlowBridge(deps) {
             // 释放失败不影响流程：租约会在服务重启时自然清空
             await emulator.release(dev.deviceId).catch(() => {})
             deviceSlots.delete(groupId)
-            st.flow = { ...st.flow, vars: { ...st.flow.vars, deviceId: null } }
+            st.flow.vars = { ...st.flow.vars, deviceId: null }
             store.save(groupId, st)
             log(`[${groupId}] 已释放设备 ${dev.deviceId}`)
           }
@@ -876,10 +883,7 @@ export function createFlowBridge(deps) {
           // 记下子进程 pid：bridge 重启时靠它判断「这个回合是真的被打断了，
           // 还是子进程还活着、只是我这个父进程换了一个」
           onChild: (child) => {
-            st.flow = {
-              ...st.flow,
-              activeTurn: { pid: child.pid ?? null, checkpointId: checkpoint.id, startedAt: Date.now() },
-            }
+            st.flow.activeTurn = { pid: child.pid ?? null, checkpointId: checkpoint.id, startedAt: Date.now() }
             store.save(groupId, st)
           },
           dshBin: config.dshBin,
@@ -909,6 +913,16 @@ export function createFlowBridge(deps) {
           timeoutMs: stageTimeoutMs(checkpoint.id, config),
           signal: aborter.signal,
           onEvent: () => {},
+          // 回执先到就提前收工：agent 写完回执（status=done/needs_input/blocked，
+          // 都是终态）后进程可能挂住，实测会白等满阶段超时。探针用回执目录
+          // 每轮重解析（workDir 随 dev 起变化，同 flow-runner 的取法）。
+          receiptProbe: () => {
+            const flow = st.flow
+            const dir = reqDirOf(flow)
+            const rr = readReceipt(dir, checkpoint.id)
+            if (!rr.ok) return null
+            return ['done', 'needs_input', 'blocked'].includes(rr.receipt?.status) ? rr.receipt : null
+          },
         })
         // spawn 失败是环境/配置问题，不是 agent 的错。抛出去让 runFromState 报明确错误，
         // 不要走返工——重试三次也不会好，只会把「dsh 找不到」说成「agent 做不出来」。
@@ -921,15 +935,19 @@ export function createFlowBridge(deps) {
         }
         // runTurn 可以来自 runner.js（exitCode/timedOut），也可以是测试注入的简化实现（ok）。
         // 不写死其中一种，否则换个实现就得改这里。
-        const ok = r.ok !== undefined ? r.ok : r.exitCode === 0 && !r.timedOut
+        // settledByReceipt：回合进程是被「回执已合法落盘」的提前收工杀掉的，
+        // exitCode 不可作准——工作确实做完了，按成功算。
+        const ok = r.ok !== undefined ? r.ok : r.settledByReceipt === true || (r.exitCode === 0 && !r.timedOut)
         const secs = Math.round((Date.now() - startedAt) / 1000)
         const why = r.error ?? r.errorSummary ?? r.turnError ?? '未知'
-        if (!ok) {
+        if (r.settledByReceipt === true) {
+          log(`[${groupId}] 回合提前收工（${secs}s）：${checkpoint.id} 回执已落盘，进程挂住被终止`)
+        } else if (!ok) {
           log(`[${groupId}] 回合失败（${secs}s，${timeoutMin} 分钟上限）：${why}`)
         } else {
           log(`[${groupId}] 回合完成（${secs}s）：${checkpoint.id}`)
         }
-        st.flow = { ...st.flow, activeTurn: null }
+        st.flow.activeTurn = null
         store.save(groupId, st)
         return { ok, sessionId: r.sessionId, error: ok ? null : why, secs }
         } finally {
@@ -1131,7 +1149,7 @@ async function doMerge({ groupId, flow, st, log, config }) {
       const reqDir = reqDirOf(flow)
       // 终检前先兜底：文档可能留在 dev/merge 工作区没随提交进仓库（上轮实测），
       // 能自动找回来就不停下来等人。
-      const recovered = backfillFinalArtifacts(reqDir, flow)
+      const recovered = backfillFinalArtifacts(reqDir, flow, config)
       if (recovered.length) {
         log(`[${groupId}] 收尾兜底拷回产物：${recovered.join('、')}（来源：开发/合并工作区）`)
       }
@@ -1506,10 +1524,11 @@ function checkFinalArtifacts(reqDir) {
  * 上轮实测：文档在 dev 工作区里没随合并提交进仓库、回收执路径又写了别的
  * 工作区——三处各有几份，终检总会漏。与其停下来等人补拷，不如按固定
  * 搜索顺序自动找回来：dev 工作区（agent 干活的地方，最全）→ 合并工作区
- * （归档副本）→ scratch 本身（跳过，是目标目录）。
+ * （归档副本）→ 工作区约定路径（<worktreeRoot>/<reqId>，不看 flow 记没记）。
  * 返回补拷回来的文件名列表（空数组 = 没找回任何东西）。
+ * （export 只为测试直测兜底顺序。）
  */
-function backfillFinalArtifacts(reqDir, flow) {
+export function backfillFinalArtifacts(reqDir, flow, config) {
   const missing = checkFinalArtifacts(reqDir)
   if (!missing.length) return []
 
@@ -1517,7 +1536,12 @@ function backfillFinalArtifacts(reqDir, flow) {
   const mergeDir = flow?.vars?.mergeWorkDir
     ? join(flow.vars.mergeWorkDir, 'docs/requirements', flow.reqId)
     : null
-  const sources = [devDir, mergeDir].filter((d) => d && d !== reqDir)
+  // 约定路径兜底：工作区目录 = <worktreeRoot>/<reqId>，不看 flow 里记没记。
+  // 上轮实测 wrapup 时 flow.workDir 已经丢了（回执没写的 merge 回合没拦住
+  // 状态推进），但工作区本体还健在——按约定路径仍能把文档找回来。
+  const wtRoot = config?.primaryRepo?.worktreeRoot
+  const wtDir = wtRoot && flow?.reqId ? join(wtRoot, flow.reqId, 'docs/requirements', flow.reqId) : null
+  const sources = [devDir, mergeDir, wtDir].filter((d) => d && d !== reqDir)
 
   const recovered = []
   for (const f of missing) {
@@ -1525,6 +1549,7 @@ function backfillFinalArtifacts(reqDir, flow) {
       const from = join(src, f)
       if (!existsSync(from)) continue
       try {
+        mkdirSync(reqDir, { recursive: true }) // 收尾目录可能还没建（store 里没有 dataDir 时）
         copyFileSync(from, join(reqDir, f))
         recovered.push(f)
         break

@@ -43,6 +43,9 @@ function killChildTree(child) {
  * @param {number} o.timeoutMs
  * @param {(ev: object) => void} o.onEvent 每个 NDJSON 事件
  * @param {AbortSignal} [o.signal]
+ * @param {() => object|null} [o.receiptProbe] 提前结算探针：进程还在跑时定期调用，
+ *   返回非空（回执已合法落盘）就按成功提前收工并终止进程。实测 agent 写完
+ *   回执后进程可能挂住几十秒到分钟级，硬等进程退出会占满阶段超时。
  * @returns {Promise<{sessionId: string|null, finalText: string, exitCode: number|null, timedOut: boolean}>}
  */
 export function runTurn({
@@ -57,6 +60,8 @@ export function runTurn({
   onEvent,
   signal,
   onChild,
+  receiptProbe,
+  receiptProbeMs,
 }) {
   const args = ['--profile', profile, '--json']
   if (sessionId) args.push('--session-id', sessionId)
@@ -187,12 +192,57 @@ export function runTurn({
     // 只会发一个 error 事件。不接这个事件就是未捕获异常，整个 bridge 进程直接死——
     // 试跑第一轮就这么崩过一次。转成一次失败的回合，交给上层返工/报错逻辑。
     let settled = false
+    let probeTimer = null
     const done = (payload) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (probeTimer) {
+        clearInterval(probeTimer)
+        probeTimer = null
+      }
       signal?.removeEventListener('abort', abortHandler)
       resolve(payload)
+    }
+
+    // 提前结算：agent 写完回执后进程可能挂住（实测会白耗到阶段超时）。
+    // 进程还活着时定期探回执，回执合法落盘就按成功收工、终止进程树。
+    // 默认 15s 一次足够快——首次命中也要等一个周期，相对挂住的分钟级
+    // 损耗可忽略；测试用 receiptProbeMs 调快。
+    if (receiptProbe) {
+      probeTimer = setInterval(() => {
+        if (child.exitCode !== null) return // 进程自己退了，交给 close 事件
+        let found = null
+        try {
+          found = receiptProbe()
+        } catch {
+          /* 探针失败（文件竞态等）不当回事，下轮再探 */
+        }
+        if (!found) return
+        killChildTree(child)
+        setTimeout(() => {
+          if (child.exitCode === null) {
+            if (process.platform === 'win32') killChildTree(child)
+            else child.kill('SIGKILL')
+          }
+        }, 5000).unref?.()
+        probeTimer = null
+        done({
+          sessionId: sid,
+          finalText,
+          exitCode: null,
+          timedOut: false,
+          // 标记「按回执收工」：进程是被杀的，exitCode 不可作准，
+          // 上层要按成功处理，不能拿 exitCode 判失败。
+          settledByReceipt: true,
+          stderr: stderrTail,
+          turnError: null,
+          errorSummary: null,
+          sessionLocked: false,
+          spawnFailed: false,
+        })
+      }, receiptProbeMs ?? 15000)
+      probeTimer.unref?.()
     }
 
     child.on('error', (err) => {
