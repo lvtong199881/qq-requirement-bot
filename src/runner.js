@@ -118,7 +118,13 @@ export function runTurn({
         else child.kill('SIGKILL')
       }
     }, 5000).unref?.()
+    // 超时即结算：不再依赖 close 事件。Windows 上 cmd 外壳死了，
+    // 孙子进程还握着 stdout 管道，close 永远不来，调用方会被卡死。
+    settleTimedOut()
   }, timeoutMs)
+
+  // 超时结算的幂等入口，done 会去重
+  let settleTimedOut = () => {}
 
   child.stdin.on('error', () => {
     /* 子进程提前退出时写 stdin 会 EPIPE，忽略 */
@@ -258,6 +264,20 @@ export function runTurn({
         spawnFailed: true,
       })
     })
+
+    settleTimedOut = () => {
+      done({
+        sessionId: sid,
+        finalText,
+        exitCode: null,
+        timedOut: true,
+        stderr: stderrTail,
+        turnError: turnError ?? '回合超时被强杀',
+        errorSummary: runnerClassify?.(turnError ?? '回合超时被强杀') ?? null,
+        sessionLocked: false,
+        envFailed: false,
+      })
+    }
 
     child.on('close', (code) => {
       // 有些错误不会产生 turn_end 事件，只会打到 stderr 然后进程退出

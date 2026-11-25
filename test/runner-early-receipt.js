@@ -75,6 +75,12 @@ const r2 = await runTurn({
 const t2 = Date.now() - t2start
 check('对照组：无探针时走到超时强杀', r2.timedOut === true && t2 >= 2_500, `${Math.round(t2 / 1000)}s timedOut=${r2.timedOut}`)
 
-rmSync(work, { recursive: true, force: true })
+// 清理容忍失败：超时强杀的假 dsh 可能还没死透、句柄未释放，rmSync 会 EPERM——
+// 目录在 %TEMP% 下，残留无害，不把清理失败算进测试结果
+try {
+  rmSync(work, { recursive: true, force: true })
+} catch {
+  console.log('  （临时目录清理被占用跳过，无害残留）')
+}
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)
 process.exit(fail ? 1 : 0)
