@@ -50,14 +50,36 @@ node <skillAssets>/svg2png.cjs <需求目录>/design/svg <需求目录>/design-i
 }
 ```
 
-- `theme` 决定 colors 用 light 还是 dark；`locale` 没有隐式行为——textRef 自己带语言前缀
-  （约定 `zh.title` / `en.title`，写进 copy 的键里）。
+- `theme` 决定 colors 用 light 还是 dark；`locale` 决定 textRef 里 `{{LOCALE}}` 占位符
+  替换成什么（写 `{{LOCALE}}.title`，copy 的键就是 `zh.title` / `en.title`）。
+  直接写死语言前缀（`"zh.title"`）也行，但变体帧没法换语言。
 - `background`：`{type:"screenshot", src:…}`（相对 layouts.json 的真实截图，老页面用）
   或 `{type:"color", fill:"surface"}`（新页面）；缺省画 surface 底色。
 - `scrim: true` 在底图上盖一层 `colors.scrim`。
 - `content` 内联节点树，或 `contentRef` 引 `components` 里的复用树
   （同结构换主题/语言的帧复用一份，改一处全帧生效）。
 - `radius`/`typography`/`icons.size` 支持 token 名引用（`"radius": "dialog"`）或直接写数值。
+
+### 变体帧：只写主帧，其余声明 variants
+
+同结构的兄弟帧（深色/英文/窄屏/大字号）不要抄树——在主帧上声明 `variants`，
+渲染器展开成独立帧再校验渲染，`frame id` 仍然全局唯一（重了报错）：
+
+```jsonc
+{ "id": "F02_dialog_zh_light", "theme": "light", "locale": "zh",
+  "canvas": { "width": 360, "height": 800 }, "contentRef": "welcomeDialog",
+  "variants": [
+    { "id": "F03_dialog_dark",  "name": "深色",   "theme": "dark" },
+    { "id": "F04_dialog_en",    "name": "英文",   "locale": "en" },
+    { "id": "F05_dialog_320dp", "name": "窄屏",   "canvas": { "width": 320 } },
+    { "id": "F06_max_font",     "name": "大字号", "fontScale": 1.3 }
+  ] }
+```
+
+- 变体字段只做覆盖：`theme`/`locale`/`fontScale` 是标量，`canvas` 逐字段合并
+  （只改宽不动高/倍率）；`background`/`content`/`contentRef` 想换就整字段换。
+- 变体不能再带 `variants`（不递归）。结构性差异（比如「图片缺失」帧）别硬凑
+  变体，老实写完整帧。
 
 ## 节点树
 

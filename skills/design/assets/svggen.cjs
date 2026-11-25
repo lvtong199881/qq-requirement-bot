@@ -127,6 +127,37 @@ function marginOf(node) {
   fail(`margin 只接受数字、[竖,横] 或 [上,右,下,左]：${JSON.stringify(m)}`)
 }
 
+// 变体帧展开：主帧声明 variants 后，渲染器自动派生兄弟帧（换主题/语言/字号/
+// 画布宽），agent 只写一遍 content 树。手抄变体树是上一轮设计的最大时间黑洞：
+// 7 帧里 5 帧是主帧的变体，全靠整棵复制，还抄出过不一致。
+// 变体字段只做「覆盖」：theme/locale/fontScale 是标量，canvas 逐字段合并
+// （只改宽不动高/倍率），background/content/contentRef 想换就整字段换。
+// 变体不能再带 variants（不递归，防套娃）。
+function expandVariants(frames) {
+  const out = []
+  for (const f of frames ?? []) {
+    if (!Array.isArray(f.variants) || f.variants.length === 0) {
+      out.push(f)
+      continue
+    }
+    const base = { ...f }
+    delete base.variants
+    out.push(base)
+    for (const v of f.variants) {
+      const vf = structuredClone(base)
+      delete vf.variants
+      vf.id = v.id
+      if (v.name !== undefined) vf.name = v.name
+      for (const k of ['theme', 'locale', 'fontScale', 'background', 'content', 'contentRef']) {
+        if (v[k] !== undefined) vf[k] = v[k]
+      }
+      if (v.canvas) vf.canvas = { ...vf.canvas, ...v.canvas }
+      out.push(vf)
+    }
+  }
+  return out
+}
+
 // ---------- 校验 ----------
 
 // 帧内容：frame.content 内联，或 contentRef 复用 spec.components 里的组件
@@ -145,6 +176,8 @@ function validate(spec) {
   const errors = []
   // name 去重按帧算：contentRef 复用的组件会在多个帧里出现，跨帧重名是复用不是错误
   let names = new Set()
+  // frame id 全局唯一：id 就是输出文件名，重了互相覆盖还不报错
+  const frameIds = new Set()
   if (!spec || typeof spec !== 'object') return ['spec 不是对象']
   if (!Array.isArray(spec.frames) || spec.frames.length === 0) errors.push('frames 必须是非空数组')
   const tok = spec.designTokens ?? {}
@@ -187,6 +220,8 @@ function validate(spec) {
   }
   for (const f of spec.frames ?? []) {
     if (!f.id) errors.push('每个 frame 都要有 id（输出文件名用）')
+    else if (frameIds.has(f.id)) errors.push(`frame id 重复：${f.id}（输出文件会互相覆盖）`)
+    else frameIds.add(f.id)
     if (!isNum(f.canvas?.width) || !isNum(f.canvas?.height) || f.canvas.width <= 0)
       errors.push(`frame ${f.id ?? '?'}: canvas.width/height 必须是正数`)
     if (!['light', 'dark'].includes(f.theme)) errors.push(`frame ${f.id ?? '?'}: theme 只允许 light/dark`)
@@ -239,8 +274,11 @@ function typographyOf(ctx, t) {
 }
 
 function textRefOf(ctx, ref) {
+  // {{LOCALE}} 是多语言约定：变体帧只覆盖 frame.locale，content 树不用重写，
+  // 文案自动切语言（金标准的组件模板里就是这么写的，渲染器负责落地成具体键）。
   let v = ctx.spec.copy ?? {}
-  for (const raw of String(ref).split('.')) {
+  const resolved = String(ref).replaceAll('{{LOCALE}}', ctx.frame.locale ?? 'zh')
+  for (const raw of resolved.split('.')) {
     // 支持 features[0].title 这类数组下标
     const m = /^(\w+)((?:\[\d+\])*)$/.exec(raw)
     if (!m) fail(`textRef「${ref}」段「${raw}」解析不了`)
@@ -536,6 +574,7 @@ function main() {
   } catch (e) {
     fail(`布局清单不是合法 JSON：${e.message}`)
   }
+  spec.frames = expandVariants(spec.frames)
   const errors = validate(spec)
   if (errors.length) {
     for (const e of errors) console.error(`  ✗ ${e}`)

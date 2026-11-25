@@ -153,7 +153,8 @@
       "layout": {
         "mode": "vertical",
         "padding": 0,
-        "spacing": 0
+        "spacing": 0,
+        "align": "stretch"
       },
       "children": [
         {
@@ -166,19 +167,20 @@
               24,
               8,
               24
-            ]
+            ],
+            "align": "stretch"
           },
           "children": [
             {
               "type": "text",
               "name": "title",
-              "textRef": "{{LOCALE}}.title",
+              "textRef": "zh.title",
               "typography": "title"
             },
             {
               "type": "text",
               "name": "intro",
-              "textRef": "{{LOCALE}}.intro",
+              "textRef": "zh.intro",
               "typography": "intro",
               "margin": [
                 8,
@@ -192,7 +194,8 @@
               "name": "features",
               "layout": {
                 "mode": "vertical",
-                "padding": 0
+                "padding": 0,
+                "align": "stretch"
               },
               "margin": [
                 20,
@@ -219,7 +222,7 @@
                     {
                       "type": "icon",
                       "name": "feature.1.icon",
-                      "icon": "{{ICON1}}",
+                      "icon": "mic",
                       "width": 22,
                       "height": 22,
                       "margin": [
@@ -246,13 +249,13 @@
                         {
                           "type": "text",
                           "name": "feature.1.title",
-                          "textRef": "{{LOCALE}}.features[0].title",
+                          "textRef": "zh.features[0].title",
                           "typography": "featureTitle"
                         },
                         {
                           "type": "text",
                           "name": "feature.1.desc",
-                          "textRef": "{{LOCALE}}.features[0].desc",
+                          "textRef": "zh.features[0].desc",
                           "typography": "featureDesc",
                           "margin": [
                             4,
@@ -283,7 +286,7 @@
                     {
                       "type": "icon",
                       "name": "feature.2.icon",
-                      "icon": "{{ICON2}}",
+                      "icon": "phone",
                       "width": 22,
                       "height": 22,
                       "margin": [
@@ -310,13 +313,13 @@
                         {
                           "type": "text",
                           "name": "feature.2.title",
-                          "textRef": "{{LOCALE}}.features[1].title",
+                          "textRef": "zh.features[1].title",
                           "typography": "featureTitle"
                         },
                         {
                           "type": "text",
                           "name": "feature.2.desc",
-                          "textRef": "{{LOCALE}}.features[1].desc",
+                          "textRef": "zh.features[1].desc",
                           "typography": "featureDesc",
                           "margin": [
                             4,
@@ -347,7 +350,7 @@
                     {
                       "type": "icon",
                       "name": "feature.3.icon",
-                      "icon": "{{ICON3}}",
+                      "icon": "lock",
                       "width": 22,
                       "height": 22,
                       "margin": [
@@ -374,13 +377,13 @@
                         {
                           "type": "text",
                           "name": "feature.3.title",
-                          "textRef": "{{LOCALE}}.features[2].title",
+                          "textRef": "zh.features[2].title",
                           "typography": "featureTitle"
                         },
                         {
                           "type": "text",
                           "name": "feature.3.desc",
-                          "textRef": "{{LOCALE}}.features[2].desc",
+                          "textRef": "zh.features[2].desc",
                           "typography": "featureDesc",
                           "margin": [
                             4,
@@ -407,7 +410,8 @@
               20,
               20,
               20
-            ]
+            ],
+            "align": "stretch"
           },
           "children": [
             {
@@ -426,7 +430,7 @@
                 {
                   "type": "text",
                   "name": "buttonLabel",
-                  "textRef": "{{LOCALE}}.button",
+                  "textRef": "zh.button",
                   "typography": "button",
                   "align": "center"
                 }
@@ -482,625 +486,18 @@
         "AC-15"
       ],
       "notes": "常规态。",
-      "content": {
-        "type": "frame",
-        "name": "dialog",
-        "x": 20,
-        "y": 24,
-        "width": 320,
-        "radius": 16,
-        "fill": "surface",
-        "layout": {
-          "mode": "vertical",
-          "padding": 0,
-          "spacing": 0,
-          "align": "stretch"
-        },
-        "children": [
-          {
-            "type": "frame",
-            "name": "body",
-            "layout": {
-              "mode": "vertical",
-              "padding": [
-                20,
-                24,
-                8,
-                24
-              ],
-              "align": "stretch"
-            },
-            "children": [
-              {
-                "type": "text",
-                "name": "title",
-                "textRef": "zh.title",
-                "typography": "title"
-              },
-              {
-                "type": "text",
-                "name": "intro",
-                "textRef": "zh.intro",
-                "typography": "intro",
-                "margin": [
-                  8,
-                  0,
-                  0,
-                  0
-                ]
-              },
-              {
-                "type": "frame",
-                "name": "features",
-                "layout": {
-                  "mode": "vertical",
-                  "padding": 0,
-                  "align": "stretch"
-                },
-                "margin": [
-                  20,
-                  0,
-                  0,
-                  0
-                ],
-                "children": [
-                  {
-                    "type": "frame",
-                    "name": "feature.1",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.1.icon",
-                        "icon": "mic",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.1.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.1.title",
-                            "textRef": "zh.features[0].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.1.desc",
-                            "textRef": "zh.features[0].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  },
-                  {
-                    "type": "frame",
-                    "name": "feature.2",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      16,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.2.icon",
-                        "icon": "phone",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.2.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.2.title",
-                            "textRef": "zh.features[1].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.2.desc",
-                            "textRef": "zh.features[1].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  },
-                  {
-                    "type": "frame",
-                    "name": "feature.3",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      16,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.3.icon",
-                        "icon": "lock",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.3.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.3.title",
-                            "textRef": "zh.features[2].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.3.desc",
-                            "textRef": "zh.features[2].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "type": "frame",
-            "name": "footer",
-            "layout": {
-              "mode": "vertical",
-              "padding": [
-                12,
-                20,
-                20,
-                20
-              ],
-              "align": "stretch"
-            },
-            "children": [
-              {
-                "type": "frame",
-                "name": "button",
-                "height": 48,
-                "radius": 999,
-                "fill": "primary",
-                "layout": {
-                  "mode": "vertical",
-                  "padding": 0,
-                  "align": "center",
-                  "justify": "center"
-                },
-                "children": [
-                  {
-                    "type": "text",
-                    "name": "buttonLabel",
-                    "textRef": "zh.button",
-                    "typography": "button",
-                    "align": "center"
-                  }
-                ]
-              }
-            ]
+      "contentRef": "welcomeDialog",
+      "variants": [
+        {
+          "id": "F03_dialog_zh_dark",
+          "name": "F03_dialog_zh_dark",
+          "theme": "dark",
+          "background": {
+            "type": "screenshot",
+            "src": "assets/reference/home-dark.png"
           }
-        ]
-      }
-    },
-    {
-      "id": "F03_dialog_zh_dark",
-      "name": "F03_dialog_zh_dark",
-      "theme": "dark",
-      "locale": "zh",
-      "fontScale": 1,
-      "canvas": {
-        "width": 360,
-        "height": 800,
-        "deviceScale": 3
-      },
-      "background": {
-        "type": "screenshot",
-        "src": "assets/reference/home-dark.png"
-      },
-      "scrim": true,
-      "changeScope": "dialog-only",
-      "ac": [
-        "AC-2",
-        "AC-15"
-      ],
-      "notes": "常规态。",
-      "content": {
-        "type": "frame",
-        "name": "dialog",
-        "x": 20,
-        "y": 24,
-        "width": 320,
-        "radius": 16,
-        "fill": "surface",
-        "layout": {
-          "mode": "vertical",
-          "padding": 0,
-          "spacing": 0,
-          "align": "stretch"
-        },
-        "children": [
-          {
-            "type": "frame",
-            "name": "body",
-            "layout": {
-              "mode": "vertical",
-              "padding": [
-                20,
-                24,
-                8,
-                24
-              ],
-              "align": "stretch"
-            },
-            "children": [
-              {
-                "type": "text",
-                "name": "title",
-                "textRef": "zh.title",
-                "typography": "title"
-              },
-              {
-                "type": "text",
-                "name": "intro",
-                "textRef": "zh.intro",
-                "typography": "intro",
-                "margin": [
-                  8,
-                  0,
-                  0,
-                  0
-                ]
-              },
-              {
-                "type": "frame",
-                "name": "features",
-                "layout": {
-                  "mode": "vertical",
-                  "padding": 0,
-                  "align": "stretch"
-                },
-                "margin": [
-                  20,
-                  0,
-                  0,
-                  0
-                ],
-                "children": [
-                  {
-                    "type": "frame",
-                    "name": "feature.1",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      0,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.1.icon",
-                        "icon": "mic",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.1.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.1.title",
-                            "textRef": "zh.features[0].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.1.desc",
-                            "textRef": "zh.features[0].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  },
-                  {
-                    "type": "frame",
-                    "name": "feature.2",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      16,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.2.icon",
-                        "icon": "phone",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.2.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.2.title",
-                            "textRef": "zh.features[1].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.2.desc",
-                            "textRef": "zh.features[1].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  },
-                  {
-                    "type": "frame",
-                    "name": "feature.3",
-                    "layout": {
-                      "mode": "horizontal",
-                      "padding": 0,
-                      "align": "start"
-                    },
-                    "margin": [
-                      16,
-                      0,
-                      0,
-                      0
-                    ],
-                    "children": [
-                      {
-                        "type": "icon",
-                        "name": "feature.3.icon",
-                        "icon": "lock",
-                        "width": 22,
-                        "height": 22,
-                        "margin": [
-                          2,
-                          0,
-                          0,
-                          0
-                        ]
-                      },
-                      {
-                        "type": "frame",
-                        "name": "feature.3.text",
-                        "layout": {
-                          "mode": "vertical",
-                          "padding": 0
-                        },
-                        "margin": [
-                          0,
-                          0,
-                          0,
-                          12
-                        ],
-                        "children": [
-                          {
-                            "type": "text",
-                            "name": "feature.3.title",
-                            "textRef": "zh.features[2].title",
-                            "typography": "featureTitle"
-                          },
-                          {
-                            "type": "text",
-                            "name": "feature.3.desc",
-                            "textRef": "zh.features[2].desc",
-                            "typography": "featureDesc",
-                            "margin": [
-                              4,
-                              0,
-                              0,
-                              0
-                            ]
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "type": "frame",
-            "name": "footer",
-            "layout": {
-              "mode": "vertical",
-              "padding": [
-                12,
-                20,
-                20,
-                20
-              ],
-              "align": "stretch"
-            },
-            "children": [
-              {
-                "type": "frame",
-                "name": "button",
-                "height": 48,
-                "radius": 999,
-                "fill": "primary",
-                "layout": {
-                  "mode": "vertical",
-                  "padding": 0,
-                  "align": "center",
-                  "justify": "center"
-                },
-                "children": [
-                  {
-                    "type": "text",
-                    "name": "buttonLabel",
-                    "textRef": "zh.button",
-                    "typography": "button",
-                    "align": "center"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
+        }
+      ]
     }
   ]
 }
