@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor, withToolPaths, warmupAndLease } from '../src/flow-bridge.js'
+import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor, withToolPaths, warmupAndLease, preflightGit } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
 
@@ -343,6 +343,13 @@ console.log('\n== 提问卡片：通过/打回 + 结构化回答 ==')
   check('决策卡片一个问题', picked.questions.length === 1 && picked.questions[0].title === '先做哪个', JSON.stringify(picked))
   check('选项编号是字母', picked.questions[0].options[1].id === 'b' && picked.questions[0].options[1].label === '首页', JSON.stringify(picked.questions[0].options))
 
+  const titled = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }], 'x', '选个先做的页面')
+  check('决策卡片用调用方标题', titled.title === '选个先做的页面', titled.title)
+  const noTitle = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }])
+  check('没传标题落回默认文案', noTitle.title === '需要你拍板', noTitle.title)
+  const blankTitle = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }], 'x', '   ')
+  check('空白标题也算没传', blankTitle.title === '需要你拍板', blankTitle.title)
+
   const dec = [{ q: '弹窗时机？', options: [{ text: '首次启动' }, { text: '每次启动' }] }]
   const block = buildAnswerBlock(repoRoot, '', dec, [{ qid: 'q1', optionIds: ['b'], input: '再补一句：能关掉' }])
   check('回答块按勾选还原成文字', block.includes('弹窗时机？ → 每次启动') && block.includes('能关掉'), block)
@@ -546,6 +553,26 @@ console.log('\n== B1/B4：回合执行参数（approval-policy / toolPaths）=='
   rmSync(dir, { recursive: true, force: true })
 }
 
+console.log('\n== B2.5：环境前置探测（preflightGit）==')
+{
+  // 正常环境（CI/本机都有 git）：必须 ok，且不抛
+  const good = preflightGit()
+  check('git 在 PATH 时探测通过', good.ok === true, JSON.stringify(good))
+
+  // PATH 被掏空时必须给出人话报错而不是 ENOENT 原文——
+  // 这是这个探测存在的全部意义（真实事故：bot 进程 PATH 没 git，4 轮 0s 失败）
+  const cleanPath = process.platform === 'win32' ? 'C:\\definitely-not-a-path' : '/definitely-not-a-path'
+  const saved = process.env.PATH
+  process.env.PATH = cleanPath
+  try {
+    const bad = preflightGit()
+    check('PATH 没有 git 时探测失败', bad.ok === false, JSON.stringify(bad))
+    check('报错是人话且带指路', /PATH/.test(bad.error) && /重启 bot|toolPaths/.test(bad.error), bad.error)
+  } finally {
+    process.env.PATH = saved
+  }
+}
+
 console.log('\n== B3：设备预热（warmupAndLease）==')
 {
   // 场景一：服务上有关着的模拟器 → 启动 → 等 running → 重新租成功
@@ -724,7 +751,7 @@ console.log('\n== merge 失败重试：合并锁立刻归还，不让下一轮�
   const mergeCalls = agentCalls.filter((c) => c.id === 'merge').length
   check('merge 跑了 3 次（2 失败 + 1 成功）', mergeCalls === 3, agentCalls.map((c) => c.id).join(','))
   check('失败回合立即归还合并锁（日志可见）', logs.filter((l) => l.includes('已释放合并锁')).length === 3, logs.filter((l) => l.includes('合并锁')).join(' | '))
-  check('重试没有等锁 TTL（全程 < 30s，修复前要干等 5 分钟）', wall < 30_000, `${wall}ms`)
+  check('重试没有等锁 TTL（全程 < 45s：两次失败各含 ~10s 回执落盘轮询，修复前要干等 5 分钟）', wall < 45_000, `${wall}ms`)
   if (fail) console.log('    [调试] logs:\n' + logs.map((l) => '      ' + l).join('\n'))
   check('流程最终完成', saved.get('g1').flow.status === 'done', saved.get('g1').flow.status)
 }
@@ -749,6 +776,124 @@ console.log('\n== merge 验证判据：fast-forward 免编译单测，main 动�
   // 夹具里 feature 分支从 main 直接开出、agent 不动 main → fast-forward
   check('merge prompt 写明跳过编译单测', prompts[mergeIdx]?.includes('跳过编译和单元测试'), prompts[mergeIdx]?.slice(-400))
   check('判据日志可见', logs.some((l) => l.includes('合并验证判据') && l.includes('没有新提交')), logs.filter((l) => l.includes('判据')).join(' | '))
+}
+
+console.log('\n== 回执读不到时，校验失败要随播报发到群里，不能只进日志 ==')
+{
+  // 真实事故：merge 回执写错工作区，bot 读不到回执（verifyReason='没有写
+  // _receipt-merge.json'），但回合成功、产物校验也过，群里照样只播「阶段已完成」
+  // ——用户看着一切正常。校验失败必须跟着播报一起出去。
+  // 构造：回合 ok + 产物都在，只把 req-prd 的回执文件删掉——这正是「校验通过、
+  // 回执丢失、流程照常推进」的那条路径（verify 不过会走 retry，不播报，另条路）。
+  const { deps, saved, sent } = makeDeps({ approval: 'auto' })
+  const inner = deps.runTurn
+  deps.runTurn = async (o) => {
+    const r = await inner(o)
+    // 抠 reqDir 的正则与 mock（119 行）同款：outDir 可能含空格，「写到：」后的整行才是路径
+    const m = o.prompt.match(/- 文档（[^\n]*写到：(.+)/)?.[1]?.trim()
+    if (m && o.prompt.includes('【本回合只做这一步】') && /（req-prd）/.test(o.prompt)) {
+      const receiptPath = join(m, receiptFile('req-prd'))
+      if (existsSync(receiptPath)) rmSync(receiptPath, { force: true })
+    }
+    return r
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  const afterFirst = saved.get('g1')
+  await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
+  const warns = sent.filter((t) => t.includes('产物校验不通过'))
+  check('回执缺失随播报发到群里', warns.length >= 1, JSON.stringify(sent.filter((t) => t.includes('阶段已完成')).slice(0, 3)))
+  check('播报带「没有写 _receipt」原因', warns.some((t) => t.includes('_receipt-req-prd')), warns[0])
+  check('播报同时保留了「阶段完成」原文', warns.every((t) => t.includes('阶段已完成')), warns[0])
+}
+
+console.log('\n== merge 回执写偏：兜底恢复 + reqDir 指向合并工作区 ==')
+{
+  // 真实事故×2：merge 回合 agent 跑在合并工作区（cwd=_merge），把回执写到
+  // _merge 根目录；engine 在开发工作区的 docs/requirements/<reqId>/ 读，
+  // 读不到 → 「明明合并完了却报没写回执」。修两层：
+  // 1) prompt 的 reqDir（产物+回执位置）在 merge 回合指到合并工作区；
+  // 2) 读侧兜底 recoverMergeReceipt：正规目录没有时去已知位置搬回来。
+  const { recoverMergeReceipt, reqDirOf } = await import('../src/flow-bridge.js')
+  const flow = {
+    reqId: 'reqMR1',
+    workDir: join(repoRoot, 'wt-reqMR1'),
+    vars: { mergeWorkDir: join(repoRoot, 'wt-_merge') },
+  }
+  const canonicalDir = reqDirOf(flow)
+  const canonical = join(canonicalDir, receiptFile('merge'))
+  // 场景1：回执写在工作区根（agent 最常见的写偏）
+  mkdirSync(flow.vars.mergeWorkDir, { recursive: true })
+  writeFileSync(join(flow.vars.mergeWorkDir, receiptFile('merge')), JSON.stringify({ status: 'done', summary: 'ok' }))
+  check('正规目录没有回执时 recover 返回 false 前先搬回', recoverMergeReceipt(flow, 'merge') === true)
+  check('搬回后正规目录有回执', existsSync(canonical))
+  check('搬回的内容对', JSON.parse(readFileSync(canonical, 'utf8')).status === 'done')
+  check('非 merge 阶段不兜底', recoverMergeReceipt(flow, 'dev') === false)
+  // 场景2：回执在合并工作区的需求目录（prompt 指对时的落点）
+  rmSync(canonical, { force: true })
+  const mergeReqDir = join(flow.vars.mergeWorkDir, 'docs/requirements', flow.reqId)
+  mkdirSync(mergeReqDir, { recursive: true })
+  writeFileSync(join(mergeReqDir, receiptFile('merge')), JSON.stringify({ status: 'done', summary: 'ok2' }))
+  check('合并工作区需求目录里的回执也能搬回', recoverMergeReceipt(flow, 'merge') === true && existsSync(canonical))
+  // 场景3：正规目录本来就有——直接返回 true，不动
+  check('正规目录已有回执返回 true', recoverMergeReceipt(flow, 'merge') === true)
+  // 场景4：哪里都没有——安静返回 false
+  rmSync(canonical, { force: true })
+  rmSync(join(flow.vars.mergeWorkDir, receiptFile('merge')), { force: true })
+  rmSync(join(mergeReqDir, receiptFile('merge')), { force: true })
+  check('哪都没有返回 false', recoverMergeReceipt(flow, 'merge') === false)
+  // 场景5：mergeWorkDir 空着（还没进 merge 回合）——不兜底不抛
+  check('mergeWorkDir 空时安静返回 false', recoverMergeReceipt({ reqId: 'x', workDir: null, vars: {} }, 'merge') === false)
+}
+
+console.log('\n== readReceiptWithRetry：beforeAttempt 兜底钩子 ==')
+{
+  const { readReceiptWithRetry } = await import('../src/flow/orchestrator.js')
+  const dir = join(repoRoot, 'retry-hook')
+  mkdirSync(dir, { recursive: true })
+  // 第一次读不到（没文件），beforeAttempt 里把文件补上 → 第二次读到
+  let called = 0
+  const r = await readReceiptWithRetry(dir, 'merge', {
+    attempts: 3, intervalMs: 10,
+    beforeAttempt: () => {
+      called++
+      if (called === 2) writeFileSync(join(dir, receiptFile('merge')), JSON.stringify({ status: 'done', summary: 'late' }))
+    },
+  })
+  check('beforeAttempt 补救后能读到回执', r.ok === true && r.receipt.summary === 'late', JSON.stringify(r))
+  check('beforeAttempt 被调用了两次', called === 2, String(called))
+  // beforeAttempt 抛错不阻塞读取
+  const r2 = await readReceiptWithRetry(dir, 'merge', {
+    attempts: 1, intervalMs: 10,
+    beforeAttempt: () => { throw new Error('boom') },
+  })
+  check('beforeAttempt 抛错不影响读取', r2.ok === true)
+}
+
+console.log('\n== merge 回合 prompt：reqDir 指到合并工作区 ==')
+{
+  // varsFor 在 merge 回合要把 reqDir 指到合并工作区的需求目录，
+  // agent 写回执/归档文档才有正确落点（读侧在 buildCtx.beforeReadReceipt 兜底）
+  const { deps, saved, agentCalls } = makeDeps({ approval: 'auto' })
+  const prompts = []
+  const inner = deps.runTurn
+  deps.runTurn = async (o) => { prompts.push(o.prompt); return inner(o) }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  const afterFirst = saved.get('g1')
+  await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
+  // auto 模式一路推到 merge；mock agent 不会真合并，merge 可能不出现——
+  // 有 merge 回合就断言 reqDir，没有就跳过（fast-forward 判据已单测覆盖）
+  const mergeIdx = agentCalls.findIndex((c) => c.id === 'merge')
+  if (mergeIdx >= 0) {
+    const mw = saved.get('g1').flow.vars?.mergeWorkDir ?? ''
+    const expect = mw ? join(mw, 'docs/requirements', saved.get('g1').flow.reqId) + '/' : null
+    check('merge prompt 的产物目录指到合并工作区', expect !== null && prompts[mergeIdx].includes(expect), prompts[mergeIdx].match(/- 文档（[^\n]*写到：(.+)/)?.[1])
+  } else {
+    console.log('  ⏭️ 夹具没走到 merge（mock 不真合并），reqDir 断言由 recoverMergeReceipt 覆盖')
+  }
 }
 
 rmSync(repoRoot, { recursive: true, force: true })

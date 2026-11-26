@@ -167,12 +167,9 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     )
   }
 
-  // 本机环境提示（DevEco 路径、构建要加 --no-daemon、已知状态这类）。
-  // 以前写在 bot.config.json 的 envHints 里由 v1 注入，v2 漏了这段，
-  // agent 会去猜工具链路径、重复验证已经完成的构建。
-  if (vars?.envHints) {
-    lines.push('【本机环境（已核实，不要再自己猜）】', vars.envHints, '')
-  }
+  // 项目环境约定不再由 bridge 注入：它随仓库走，写在项目根的 AGENTS.md 里，
+  // 各阶段 agent 本来就会读它（flow.js 的 input 清单）。机器相关的工具路径
+  // 不进 prompt，靠 PATH 解析。
 
   lines.push(
     '【硬约束】',
@@ -185,6 +182,7 @@ export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
     '  "summary": "一句话说清这回合做了什么",',
     '  "artifacts": [{ "path": "相对项目根的路径", "action": "created | modified | deleted" }],',
     '  "selfCheck": "准出清单逐项结论；没跑就写「未验证」及原因",',
+    '  "decisionsTitle": "这组问题的一句话标题（可选；不写就显示默认文案）",',
     '  "decisions": [{ "q": "要用户拍板的问题", "options": [{ "text": "选项", "recommended": true }] }],',
     '  "blockers": [{ "reason": "卡在哪、试过什么、需要什么", "severity": "blocker | suggestion" }],',
     '  "deliverables": { "debugPackage": "包路径#版本（仅开发阶段需要）" }',
@@ -250,8 +248,11 @@ export function clearReceipt(reqDir, checkpointId) {
  * 文件落盘之间有肉眼可见的时间差。实测三个回合（review/test/acceptance）
  * 全被误报「没写回执」，实际都写了。轮询几秒等它落盘，比误判成返工便宜得多。
  */
-export async function readReceiptWithRetry(reqDir, checkpointId, { attempts = 10, intervalMs = 1000 } = {}) {
+export async function readReceiptWithRetry(reqDir, checkpointId, { attempts = 10, intervalMs = 1000, beforeAttempt } = {}) {
   for (let i = 0; ; i++) {
+    // 每次尝试前给调用方一次补救机会（如 merge 回执写偏工作区的恢复）——
+    // 补救后再读，落错位置的回执也能接住。
+    try { beforeAttempt?.() } catch { /* 兜底失败不阻塞读取 */ }
     const result = readReceipt(reqDir, checkpointId)
     if (result.ok) return result
     // 只在「文件还没出现」时重试；文件存在但内容坏了（JSON 解析失败、结构

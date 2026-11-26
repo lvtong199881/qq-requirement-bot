@@ -12,13 +12,13 @@
  */
 import { join, basename, dirname } from 'node:path'
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync, copyFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
 import { parseCommand } from './commands.js'
 import { initialState, resumeFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
 import { runFlow } from './flow/flow-runner.js'
-import { readReceipt } from './flow/orchestrator.js'
+import { readReceipt, receiptFile } from './flow/orchestrator.js'
 import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
@@ -69,6 +69,30 @@ export function withToolPaths(env, toolPaths) {
   if (!exists.length) return env
   const sep = process.platform === 'win32' ? ';' : ':'
   return { ...env, PATH: [...exists, env.PATH ?? ''].join(sep) }
+}
+
+/**
+ * 环境前置探测：回合真正开始前确认 git 在 bot 进程的 PATH 里。
+ *
+ * dev/test/acceptance 的 agent 都要跑 git（dev 靠 git diff 验产出，merge 直接
+ * 操作分支），git 不在 PATH 时每个回合都烧满重试次数才停下来——4 次 0 秒失败
+ * 的问题模式就是这样（spawnSync ENOENT，agent 只能瞎猜）。在这里拦住，一眼
+ * 告诉用户去哪加 PATH，一轮都不用烧。返回 null 表示环境正常。
+ */
+export function preflightGit() {
+  const r = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true, timeout: 10_000 })
+  if (r.error?.code === 'ENOENT') {
+    return {
+      ok: false,
+      error:
+        '环境检查没过：bot 进程的 PATH 里找不到 git。' +
+        '把 Git 的 cmd 目录（如 C:\\Program Files\\Git\\cmd）加进系统 PATH 后重启 bot，' +
+        '或改用配置里的 toolPaths 追加。',
+    }
+  }
+  if (r.error) return { ok: false, error: `环境检查没过：git --version 执行失败：${r.error.message}` }
+  if (r.status !== 0) return { ok: false, error: `环境检查没过：git --version 退出码 ${r.status}` }
+  return { ok: true }
 }
 
 /**
@@ -125,14 +149,17 @@ export function formatDecisions(decisions) {
  *
  * @param {Array} decisions agent 回执里的待决策项（没有就退化成「通过/打回」）
  * @param {string} confirmTitle 通过/打回卡片的标题
+ * @param {string} [decisionsTitle] agent 这次调用自己起的总标题；没给就沿用固定文案
  */
-export function askPayloadFor(decisions = [], confirmTitle = '') {
+export function askPayloadFor(decisions = [], confirmTitle = '', decisionsTitle = '') {
   const list = (Array.isArray(decisions) ? decisions : [])
     .filter((d) => d && String(d.q ?? '').trim())
 
   if (list.length) {
     return {
-      title: '需要你拍板',
+      // 标题跟着每次调用走：不同阶段问的事不一样，「需要你拍板」这种
+      // 万金油文案让人分不清这是哪一轮的问题，agent 报了就用 agent 的。
+      title: String(decisionsTitle ?? '').trim() || '需要你拍板',
       submitLabel: '提交',
       questions: list.map((d, i) => ({
         id: `q${i + 1}`,
@@ -331,7 +358,8 @@ export function createFlowBridge(deps) {
       }
       await sendPlain(
         groupId,
-        `上次回合异常中断，停在「${cp?.label ?? flow.current}」。回复「继续」重跑这一步。`,
+        // 同上：纯文本进不了引擎，提示必须带上 @（router 只认 @bot）
+        `上次回合异常中断，停在「${cp?.label ?? flow.current}」。@我 发「继续」重跑这一步。`,
         { replyTo },
       )
       return
@@ -582,6 +610,10 @@ export function createFlowBridge(deps) {
       // 固定用 runFromState 时算的那份（进流程前工作区还不存在，只能是暂存区）
       // 实测会把 dev 之后的回执/校验全部落在暂存区，和 agent 的产物分家。
       reqDirOf: (flow) => reqDirOf(flow),
+      // merge 回执兜底：agent 在合并工作区里跑，回执可能写偏（写在工作区根
+      // 或合并工作区的需求目录）。正规目录读不到时先搬回再读——不然明明
+      // 合并完了却报「没写回执」（实测踩过两次）。
+      beforeReadReceipt: (flow, checkpointId) => recoverMergeReceipt(flow, checkpointId),
       // dev 之后代码改动都在工作区，看主项目的 diff 只会是空
       gitDiff: () => readGitDiff(st.flow.workDir || st.projectDir),
       // 群配置是手动批准时，每个阶段的产物都停下来等人点头
@@ -595,7 +627,15 @@ export function createFlowBridge(deps) {
         if (flow.status !== 'done') writeBoard(reqDirOf(flow), flow)
       },
       varsFor: (cp, flow) => ({
-        reqDir: reqDirOf(flow) + '/',
+        // merge 回合的 agent 跑在合并工作区（cwd=_merge），reqDir 必须指到
+        // 合并工作区里的需求目录：回执、文档归档都写在这里，engine 读回执
+        // 的目录和 agent 写的目录才是同一个。指到开发工作区的话（实测踩过
+        // 两次）agent 会把回执写到 _merge 根目录或别处，bot 读不到，
+        // 「明明合并完了却报没写回执」。
+        reqDir:
+          cp.id === 'merge' && flow.vars?.mergeWorkDir
+            ? join(flow.vars.mergeWorkDir, 'docs/requirements', flow.reqId) + '/'
+            : reqDirOf(flow) + '/',
         userRequest: flow.requestText ?? '',
         userAnswer: flow.vars?.userAnswer ?? '',
         // 用户回答单独成段，并且尽量和问题编号对齐——直接塞进「输入文件清单」里，
@@ -629,7 +669,6 @@ export function createFlowBridge(deps) {
         // 但 agent 不知道 skill 装在哪——指路变量替它把绝对路径带上
         skillAssets: join(skillsDir, cp.role, 'assets'),
         testAccount: '',
-        envHints: config.envHints ?? '',
         mergeInfo:
           `feature 分支：${flow.vars?.featureBranch ?? `feature/${flow.reqId}`}\n` +
           `主分支：${flow.vars?.mainBranch ?? (() => { try { return detectMainBranch(st.projectDir) } catch { return 'main' } })()}\n` +
@@ -651,6 +690,14 @@ export function createFlowBridge(deps) {
         // 就是这个原因（review/merge 的 agent 还因此被丢进没代码的主目录）。
         st.flow.checkpointStartedAt = Date.now()
         store.save(groupId, st)
+        // 回合要跑 git 的阶段先探一下环境。放到这里而不是启动时：git 缺失
+        // 通常发生在服务跑了一阵之后（改 PATH/换机器），启动时探过不代表
+        // 现在还有。失败直接抛——bridge 会把人话错误发给群并停在 blocked，
+        // 一轮 agent 都不用烧。
+        if (cp.verify === 'gitDiff' || cp.id === 'merge' || cp.needsDevice) {
+          const env = preflightGit()
+          if (!env.ok) throw new Error(env.error)
+        }
         // 开发阶段建一个独立工作区（worktree）。这一步是团队化的核心：
         // 所有需求共用主工作区时，两个需求的 dev 会互相 checkout 打断对方，
         // 而且没有任何报错——代码就写到了错误的分支上。worktree 让每个需求独占一个目录。
@@ -708,6 +755,11 @@ export function createFlowBridge(deps) {
 
           // 同理就地改：mergeWorkDir 要活着传给本回合的 varsFor 和 cwd
           st.flow.vars = { ...st.flow.vars, mergeWorkDir: mw.path, mergeLockFile: lockFile }
+          // 合并工作区是复用的（reset --hard 不清 untracked 文件）：上一需求的
+          // _receipt-merge.json 会留下来，本回合 agent 没写回执时会读到旧文件
+          // 误判通过——回合开始前先清掉本阶段的旧回执。
+          const oldReceipt = join(mw.path, receiptFile(cp.id))
+          try { rmSync(oldReceipt, { force: true }) } catch { /* 不存在就算了 */ }
           // 合并要不要重新验证，现在就能定：main 自分支切出后没动过（fast-forward）
           // 时，合并结果的代码树和测试阶段刚验证过的分支逐字节一致，再跑编译单测
           // 是纯重复；main 有新提交时三方合并出的是没人测过的新树（语义冲突文本
@@ -871,7 +923,12 @@ export function createFlowBridge(deps) {
         const st0 = receipt?.status ?? '未写回执'
         const summary = String(receipt?.summary ?? '').replace(/\s+/g, ' ').slice(0, 100)
         log(`[${groupId}] 回执：status=${st0}${summary ? ` summary=${summary}` : ''}`)
-        // 产物缺失时 flow-runner 会把原因塞进第 4 个参数；有值就说明校验没过
+        // 产物缺失时 flow-runner 会把原因塞进第 4 个参数；有值就说明校验没过。
+        // 只进日志不够：merge 的校验失败就是在这种「照常推进」里被静默吞掉的
+        // （回执写错工作区、校验不过，群里照样播「合并完成」）。用户必须看到。
+        const verifyNote = verifyReason
+          ? `⚠️ 产物校验不通过：${String(verifyReason).replace(/\s+/g, ' ').slice(0, 160)}`
+          : null
         if (verifyReason) log(`[${groupId}] 产物校验不通过：${String(verifyReason).slice(0, 200)}`)
         if (receipt?.decisions?.length) log(`[${groupId}] 本回合提出 ${receipt.decisions.length} 条待决策`)
         // 开发阶段登记了 debug 包，后面的测试/验收要靠它，存进 vars。
@@ -886,7 +943,15 @@ export function createFlowBridge(deps) {
             log(`[${groupId}] debug 包：${found}${fromReceipt ? '' : '（回执没写，从构建产物找到的）'}`)
           }
         }
-        await sendPlain(groupId, renderMessage('v2StageDone', { stage: cp.label }, templates), { replyTo }).catch(() => {})
+        // 完成播报带上校验结果：校验没过不是失败（流程继续走），但绝不能
+        // 只报「完成」让用户以为产物没问题。
+        await sendPlain(
+          groupId,
+          verifyNote
+            ? `${renderMessage('v2StageDone', { stage: cp.label }, templates)}\n${verifyNote}`
+            : renderMessage('v2StageDone', { stage: cp.label }, templates),
+          { replyTo },
+        ).catch(() => {})
         // 验收之后的确认等于授权合并，先说清楚。要不要重跑编译单测由
         // mergeFastForward 判据定（bridge 已在 merge 回合开始前算好），口径别写死
         if (cp.id === 'acceptance') {
@@ -929,6 +994,12 @@ export function createFlowBridge(deps) {
           // 再花近一个半小时）。headless 的 --approval-policy never 就是给这种
           // 无人值守场景准备的：不弹审批，全部放行。
           approvalPolicy: ['dev', 'test', 'acceptance'].includes(checkpoint.id) ? 'never' : 'ask',
+          // dev/test/acceptance 的 agent 要派生 flutter/java/git 子进程做构建验证，
+          // 默认沙箱预设连 cmd /c echo 都拒（CreateFile failed 5）。这几类回合
+          // 放开沙箱：回合本身无人值守，approval-policy 已是 never。
+          permissionMode: ['dev', 'test', 'acceptance'].includes(checkpoint.id)
+            ? 'danger-full-access'
+            : undefined,
           // cwd 决定子进程的沙箱边界：dev 之后必须切到工作区，
           // 否则产物写在 worktree 里也超出工作区，照样被拒。
           // merge 用专用合并工作区（varsFor 已区分，这里要跟上）——
@@ -954,6 +1025,8 @@ export function createFlowBridge(deps) {
           // 每轮重解析（workDir 随 dev 起变化，同 flow-runner 的取法）。
           receiptProbe: () => {
             const flow = st.flow
+            // merge 回合 agent 在合并工作区，回执可能写偏——先兜底搬回正规目录再读
+            recoverMergeReceipt(flow, checkpoint.id)
             const dir = reqDirOf(flow)
             const rr = readReceipt(dir, checkpoint.id)
             if (!rr.ok) return null
@@ -1020,7 +1093,17 @@ export function createFlowBridge(deps) {
     }
     if (!cp.deliverable) return
     const file = join(reqDir, cp.deliverable)
-    if (!existsSync(file)) return
+    if (!existsSync(file)) {
+      // 声明了交付物却没找到文件：不能静默。用户看着「阶段完成」却收不到
+      // 任何文件，第一反应是 bot 吞了附件——直接把实情说出去。
+      log(`[${groupId}] 交付物缺失：${cp.deliverable}（在 ${reqDir}）`)
+      await sendPlain(
+        groupId,
+        `本阶段声明要交付「${cp.deliverable}」，但工作目录里没有这个文件，无法投递。`,
+        { replyTo },
+      ).catch(() => {})
+      return
+    }
     try {
       if (cp.deliverable.endsWith('/')) {
         // 目录产物（设计稿）没法直接发，打包成 zip 再传
@@ -1228,7 +1311,11 @@ async function doMerge({ groupId, flow, st, log, config }) {
       // 提问卡片直接进消息流（历史上这里发的是「1. 问题 / A. 选项」纯文本）：
       // 用户得在输入框里手打字母，打错一位 agent 就理解成别的选项；
       // 卡片上点选没有歧义，手机上也不用记「第几个问题对应哪个字母」。
-      const ask = askPayloadFor(flow.waiting?.decisions ?? [], `「${cp?.label ?? '这一步'}」做完了，确认一下`)
+      const ask = askPayloadFor(
+        flow.waiting?.decisions ?? [],
+        `「${cp?.label ?? '这一步'}」做完了，确认一下`,
+        flow.waiting?.decisionsTitle,
+      )
       tx.event(groupId, 'ask', ask)
       return
     }
@@ -1547,6 +1634,39 @@ export function uniqueReqId(projectDir, base) {
   let n = 2
   while (taken(`${base}-${n}`)) n++
   return `${base}-${n}`
+}
+
+/**
+ * merge 回执兜底：agent 跑在合并工作区，回执可能写在工作区根或合并工作区的
+ * 需求目录（旧版 prompt 没把 reqDir 指过去，实测踩过两次）。正规目录读不到时
+ * 去这几个已知位置找，找到就搬回正规目录——搬完后调用方重新读就是权威路径。
+ * 返回 true 表示已搬回（或本来就在）。
+ */
+export function recoverMergeReceipt(flow, checkpointId) {
+  if (checkpointId !== 'merge') return false
+  const canonicalDir = reqDirOf(flow)
+  const canonical = join(canonicalDir, receiptFile(checkpointId))
+  if (existsSync(canonical)) return true
+
+  const mergeWork = flow?.vars?.mergeWorkDir
+  if (!mergeWork) return false
+  // 搜索顺序：合并工作区需求目录 → 工作区根（agent 最容易写错的地方）
+  const candidates = [
+    join(mergeWork, 'docs/requirements', flow.reqId),
+    mergeWork,
+  ]
+  for (const dir of candidates) {
+    const from = join(dir, receiptFile(checkpointId))
+    if (!existsSync(from) || from === canonical) continue
+    try {
+      mkdirSync(canonicalDir, { recursive: true })
+      copyFileSync(from, canonical)
+      return true
+    } catch {
+      /* 拷不动就算了，让上层报「没写回执」 */
+    }
+  }
+  return false
 }
 
 /** 收尾终检：checkpoint 声明的产物是否都在盘上 */
