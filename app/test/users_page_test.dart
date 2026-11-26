@@ -1,13 +1,17 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:qqbot_app/api/client.dart';
-import 'package:qqbot_app/state/auth.dart';
+import 'package:login/login.dart';
+import 'package:network/network.dart';
 import 'package:qqbot_app/ui/users_page.dart';
+
+// 本文件自带 readyAuth，只借 toast 桩
+import 'support.dart' show recordToasts, toastShown;
 
 /// 账号管理页。
 ///
@@ -15,6 +19,11 @@ import 'package:qqbot_app/ui/users_page.dart';
 /// 1) 每个账号都能看到重置密码入口——看不到就等于该成员永远登不回来；
 /// 2) 操作打的是后端，成功后列表跟着变，不是前端自己改一份假的。
 void main() {
+  // 原生 toast 不进 widget 树，提示文案改为盯方法通道
+  late List<MethodCall> toasts;
+
+  setUp(() => toasts = recordToasts());
+
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   testWidgets('列出所有账号，每个都有重置密码入口', (tester) async {
@@ -143,7 +152,8 @@ void main() {
     await tester.tap(_dialogButton('降为成员'));
     await tester.pumpAndSettle();
 
-    expect(find.text('最后一个管理员不能降级'), findsOneWidget);
+    // 后端拒绝的原话走原生 toast 弹出来
+    expect(toastShown(toasts, '最后一个管理员不能降级'), isTrue);
   });
 }
 

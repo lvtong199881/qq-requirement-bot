@@ -12,12 +12,16 @@ dependencies:
     sdk: flutter
 
   cupertino_icons: ^1.0.8
-  # 只有三个直接依赖，都是「不引就得自己写一套」的：
-  # - http：标准库没有 HTTP 客户端
-  # - flutter_secure_storage：token 等价于密码，不能明文躺在 prefs 里
+  # 三个本地模块包：网络/换址在 network，会话与登录在 login，公共 UI 在 base
+  base:
+    path: packages/base
+  network:
+    path: packages/network
+  login:
+    path: packages/login
+  # 只剩两个直接依赖，都是「不引就得自己写一套」的：
   # - intl：相对时间/日期的中文本地化
-  http: ^1.6.0
-  flutter_secure_storage: ^11.2.0
+  # - mobile_scanner/image_picker：扫码进 login 模块的注入页用
   intl: ^0.20.3
   mobile_scanner: ^7.5.0
   qr_flutter: ^4.1.0
@@ -30,6 +34,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # 测试里用 MockClient 打桩网络
+  http: ^1.6.0
+  # 测试里 setMockInitialValues 打桩安全存储（本体在 login 包）
+  flutter_secure_storage: ^11.2.0
 
 flutter:
   uses-material-design: true

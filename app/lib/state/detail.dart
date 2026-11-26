@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../api/client.dart';
-import '../api/models.dart';
-import 'auth.dart';
+import 'package:network/network.dart';
+
+import 'package:login/login.dart';
 
 /// 需求详情的状态：阶段进度 + 消息流 + 发送/通过/打回。
 ///

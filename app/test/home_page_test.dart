@@ -5,14 +5,14 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:qqbot_app/api/client.dart';
-import 'package:qqbot_app/state/auth.dart';
+import 'package:login/login.dart';
+import 'package:network/network.dart';
 import 'package:qqbot_app/state/threads.dart';
 import 'package:qqbot_app/ui/home_page.dart';
 import 'package:qqbot_app/ui/me_page.dart';
-import 'package:qqbot_app/ui/server_setup_page.dart';
 import 'package:qqbot_app/ui/thread_detail_page.dart';
 import 'package:qqbot_app/ui/thread_list_page.dart';
+import 'package:qqbot_app/ui/widgets/ask_card.dart';
 
 /// 底部导航改造后的三个入口。
 ///
@@ -33,7 +33,10 @@ void main() {
 
   testWidgets('连接服务器页：输入框多行，不再有说明和提示文案', (tester) async {
     final auth = AuthController();
-    await tester.pumpWidget(MaterialApp(home: ServerSetupPage(auth: auth)));
+    // 扫码页带相机插件依赖，测试里塞个占位页：钉的是「入口在不在」
+    await tester.pumpWidget(MaterialApp(
+      home: ServerSetupPage(auth: auth, scanPage: (_) => const Scaffold(body: Text('扫码'))),
+    ));
     await tester.pump();
 
     final field = tester.widget<TextField>(find.byType(TextField));
@@ -161,10 +164,65 @@ void main() {
     expect(find.text('建个群'), findsOneWidget);
     expect(find.text('群名'), findsOneWidget);
     // 对话框里只收群名，要不要跑需求进群之后 @ 一句才知道
-    expect(find.text('先当群聊用，要做事时 @AI员工 说一句。'), findsOneWidget);
+    expect(find.text('不填就用群号当群名。要做事时 @AI员工 说一句。'), findsOneWidget);
     final field = tester.widget<TextField>(find.byType(TextField));
     expect(field.maxLines, 1);
     expect(find.text('发出去'), findsNothing);
+  });
+
+  testWidgets('建群不填名字直接创建，落到服务端默认群名', (tester) async {
+    Thread? created;
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads') {
+        if (req.method == 'POST') {
+          // 服务端把空名字兜底成群 id——这里模拟同样的形状
+          created = const Thread(threadId: 'tabc123', groupName: 'tabc123');
+          return _ok({'ok': true, 'threadId': 'tabc123', 'thread': {
+            'threadId': 'tabc123',
+            'groupName': 'tabc123',
+            'pending': true,
+          }});
+        }
+        return _ok({'threads': []});
+      }
+      // 建成功会跳详情页，详情接口也给出同一个默认群名
+      if (req.url.path == '/api/threads/tabc123') {
+        return _ok({'thread': {
+          'threadId': 'tabc123',
+          'groupName': 'tabc123',
+          'mode': 'chat',
+          'pending': true,
+          'stages': [],
+        }});
+      }
+      if (req.url.path == '/api/threads/tabc123/messages') {
+        return _ok({'messages': [], 'lastSeq': 0});
+      }
+      return _ok({});
+    });
+    final controller = ThreadListController(auth: auth);
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadListPage(auth: auth, controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('更多操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(MenuItemButton),
+      matching: find.text('建群'),
+    ));
+    await tester.pumpAndSettle();
+
+    // 输入框留空，直接按「建群」：以前会拦「起个名字吧」，现在必须放行
+    await tester.tap(find.text('建群').last);
+    await tester.pumpAndSettle();
+
+    expect(created?.threadId, 'tabc123');
+    // 建成功对话框关掉，群里看到的是服务端给的默认群名
+    expect(find.text('建个群'), findsNothing);
+    expect(find.text('tabc123'), findsOneWidget);
   });
 
   testWidgets('标题栏 + 菜单收拢建群、加入群、刷新三个操作', (tester) async {
@@ -715,24 +773,15 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    // 卡片上也写着同一句题干，所以只在这条气泡里找（气泡包在 SelectionArea 里）
-    final inBubble = find.byType(SelectionArea);
-    final questionLine = find.descendant(
-      of: inBubble,
-      matching: find.text('是否埋曝光？'),
-    );
-    final option = find.descendant(of: inBubble, matching: find.text('A. 先只埋点击'));
-
-    expect(questionLine, findsOneWidget);
-    expect(option, findsOneWidget);
-    final q = tester.widget<Text>(questionLine);
-    final o = tester.widget<Text>(option);
-    expect(o.style!.fontSize, lessThan(q.style!.fontSize!));
-    expect(o.style!.color, isNot(q.style!.color));
-    expect(
-      tester.getTopLeft(option).dx,
-      greaterThan(tester.getTopLeft(questionLine).dx),
-    );
+    // 回答消息不再走普通气泡：改用和提问卡片同一外壳的 AnsweredCardView
+    // 回显——题干一行、勾过的选项亮着、其余置灰，确认卡也一样。
+    expect(find.byType(AnsweredCardView), findsOneWidget);
+    expect(find.text('已回答'), findsOneWidget);
+    expect(find.text('是否埋曝光？'), findsNWidgets(2)); // 卡片上 + 回答卡上
+    // 提问卡片和回答卡上各写一遍选项；没选的也铺开（置灰），一眼看出没选哪个
+    expect(find.text('先只埋点击'), findsNWidgets(2));
+    expect(find.text('先不做'), findsNWidgets(2));
+    expect(find.text('A. 先只埋点击'), findsNothing); // 不再用字母前缀排版
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

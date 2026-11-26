@@ -4,10 +4,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:qqbot_app/api/client.dart';
-import 'package:qqbot_app/api/credentials.dart';
-import 'package:qqbot_app/api/endpoint_resolver.dart';
-import 'package:qqbot_app/state/auth.dart';
+import 'package:login/login.dart';
+import 'package:network/network.dart';
 
 /// 登录状态机的行为。
 ///

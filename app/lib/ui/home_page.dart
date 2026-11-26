@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../state/auth.dart';
+import 'package:login/login.dart';
 import '../state/threads.dart';
 import 'me_page.dart';
 import 'thread_list_page.dart';

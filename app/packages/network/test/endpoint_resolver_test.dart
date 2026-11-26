@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:qqbot_app/api/endpoint_resolver.dart';
+import 'package:network/network.dart';
+import 'package:test/test.dart';
 
 /// 发现通道 + 候选验证的协议行为。
 ///

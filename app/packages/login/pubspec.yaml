@@ -1,0 +1,21 @@
+name: login
+description: "登录与会话：状态机、凭据存储、登录页与服务器设置页。"
+publish_to: 'none'
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^11.2.0
+  network:
+    path: ../network
+  base:
+    path: ../base
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # 测试用 MockClient 造 http 假后端
+  http: ^1.6.0

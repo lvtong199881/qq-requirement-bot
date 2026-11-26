@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../api/client.dart';
-import '../state/auth.dart';
-import 'scan_page.dart';
-import 'theme.dart';
-import 'widgets/feedback.dart';
+import 'package:network/network.dart';
+
+import 'package:base/base.dart';
+
+import 'auth_controller.dart';
 
 /// 配置服务器地址。
 ///
@@ -18,6 +18,7 @@ class ServerSetupPage extends StatefulWidget {
     required this.auth,
     this.initialUrl,
     this.inSettings = false,
+    this.scanPage,
   });
 
   final AuthController auth;
@@ -26,6 +27,10 @@ class ServerSetupPage extends StatefulWidget {
   /// 从「设置 → 服务器地址」进来。改完要退回根路由（登录页），
   /// 而不是把设置页留在栈顶。
   final bool inSettings;
+
+  /// 扫码页由宿主注入：扫码依赖相机插件（mobile_scanner/image_picker），
+  /// 那是 app 层的依赖，不该拖进 login 包。null = 不显示扫码按钮。
+  final WidgetBuilder? scanPage;
 
   @override
   State<ServerSetupPage> createState() => _ServerSetupPageState();
@@ -70,8 +75,10 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
   }
 
   Future<void> _scan() async {
+    final builder = widget.scanPage;
+    if (builder == null) return;
     final value = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(builder: (_) => const ScanPage()),
+      MaterialPageRoute<String>(builder: builder),
     );
     if (!mounted || value == null) return;
     final url = value.trim();
@@ -137,11 +144,12 @@ class _ServerSetupPageState extends State<ServerSetupPage> {
                   ),
                 ),
                 const SizedBox(width: AppSpace.sm),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _scan,
-                  icon: const Icon(Icons.qr_code_scanner, size: 20),
-                  label: const Text('扫码'),
-                ),
+                if (widget.scanPage != null)
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _scan,
+                    icon: const Icon(Icons.qr_code_scanner, size: 20),
+                    label: const Text('扫码'),
+                  ),
               ],
             ),
           ],

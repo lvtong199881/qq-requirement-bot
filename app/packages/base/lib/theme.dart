@@ -243,7 +243,11 @@ ThemeData buildTheme(Brightness brightness) {
       focusedErrorBorder: border(scheme.error, 2),
       labelStyle: textTheme.bodyMedium!.copyWith(color: scheme.onSurfaceVariant),
       floatingLabelStyle: textTheme.bodySmall!.copyWith(color: scheme.primary),
-      hintStyle: textTheme.bodyMedium!.copyWith(color: scheme.onSurfaceVariant),
+      // hint 调得比正文淡一截：默认色和已输入文字几乎一样深，
+      // 一眼分不清「框里是占位提示还是用户已经打了字」。
+      hintStyle: textTheme.bodyMedium!.copyWith(
+        color: scheme.onSurfaceVariant.withValues(alpha: 0.55),
+      ),
       helperStyle: textTheme.labelSmall!.copyWith(color: scheme.onSurfaceVariant),
       helperMaxLines: 2,
       errorStyle: textTheme.labelSmall!.copyWith(color: scheme.error),
@@ -284,7 +288,7 @@ ThemeData buildTheme(Brightness brightness) {
       titleTextStyle: textTheme.titleMedium!.copyWith(color: scheme.onSurface),
       contentTextStyle: AppText.body.copyWith(color: scheme.onSurfaceVariant),
     ),
-    // 不用 SnackBar：提示统一走 widgets/toast.dart 的 showToast。
+    // 不用 SnackBar：提示统一走原生 toast（NativeToast.show）。
     // 这里保留造型主题只是为了万一某个系统对话框内部用到时不难看。
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,

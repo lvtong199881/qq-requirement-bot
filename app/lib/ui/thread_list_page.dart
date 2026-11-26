@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../api/client.dart';
-import '../api/models.dart';
-import '../state/auth.dart';
+import 'package:network/network.dart';
+
+import 'package:login/login.dart';
 import '../state/threads.dart';
 import 'scan_page.dart';
-import 'theme.dart';
+import 'package:base/base.dart';
 import 'thread_detail_page.dart';
 import 'widgets/avatar.dart';
 import '../platform/toast.dart';
@@ -491,10 +491,8 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
 
   Future<void> _submit() async {
     final name = _name.text.trim();
-    if (name.isEmpty) {
-      setState(() => _error = '起个名字吧');
-      return;
-    }
+    // 空名字直接放行：群号本来就是群名，服务端会把空名兜底成群 id，
+    // 逼用户现想一个反而挡住「先建个群再说」的路。
     setState(() {
       _busy = true;
       _error = null;
@@ -529,7 +527,7 @@ class _NewGroupDialogState extends State<_NewGroupDialog> {
         decoration: InputDecoration(
           labelText: '群名',
           hintText: '比如：首页改版、登录体验',
-          helperText: '先当群聊用，要做事时 @${widget.botName} 说一句。',
+          helperText: '不填就用群号当群名。要做事时 @${widget.botName} 说一句。',
           errorText: _error,
         ),
       ),

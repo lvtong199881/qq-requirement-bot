@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../api/models.dart';
-import '../state/auth.dart';
+
+import 'package:login/login.dart';
+import 'package:network/network.dart';
 import '../state/group_settings.dart';
 import 'group_qr_page.dart';
-import 'theme.dart';
+import 'package:base/base.dart';
 import 'widgets/avatar.dart';
 import '../platform/toast.dart';
 

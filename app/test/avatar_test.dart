@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqbot_app/ui/theme.dart';
+import 'package:base/base.dart';
 import 'package:qqbot_app/ui/widgets/avatar.dart';
 
 /// 群头像/成员头像都只有首字，所以「首字取对」「同一个名字永远同一个色」

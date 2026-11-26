@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
-import '../api/client.dart';
-import '../api/models.dart';
-import 'auth.dart';
+import 'package:network/network.dart';
+
+import 'package:login/login.dart';
 
 /// 群设置页的数据：群本身（名字/群号）、成员列表、我能做什么。
 ///

@@ -11,8 +11,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:qqbot_app/api/client.dart';
-import 'package:qqbot_app/api/models.dart';
+import 'package:network/network.dart';
 
 Future<void> main(List<String> args) async {
   if (args.length < 3) {

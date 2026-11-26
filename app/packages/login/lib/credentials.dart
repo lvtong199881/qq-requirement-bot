@@ -1,5 +1,7 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'package:network/network.dart';
+
 /// 本地要记的三样东西：服务器地址、token、上次登录的用户名。
 ///
 /// 用 secure storage 而不是 SharedPreferences：token 等价于密码，
@@ -16,7 +18,7 @@ class Creds {
   bool get hasToken => token != null && token!.isNotEmpty;
 }
 
-class CredentialStore {
+class CredentialStore implements EndpointStore {
   CredentialStore({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
 
@@ -43,11 +45,22 @@ class CredentialStore {
     }
   }
 
+  @override
+  Future<String?> readBaseUrl() async {
+    try {
+      return await _storage.read(key: _kBaseUrl);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
   Future<void> saveBaseUrl(String baseUrl) =>
       _storage.write(key: _kBaseUrl, value: baseUrl);
 
   /// 后端实例指纹：换址时校验「新地址后面还是同一台后端」。
   /// 首次连接时从 /api/auth/status 学到，永久保留。
+  @override
   Future<String?> readInstanceId() async {
     try {
       return await _storage.read(key: _kInstanceId);
@@ -56,6 +69,7 @@ class CredentialStore {
     }
   }
 
+  @override
   Future<void> saveInstanceId(String id) =>
       _storage.write(key: _kInstanceId, value: id);
 

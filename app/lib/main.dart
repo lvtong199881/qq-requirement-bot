@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
-import 'api/endpoint_resolver.dart';
-import 'state/auth.dart';
+import 'package:base/base.dart';
+import 'package:login/login.dart';
+import 'package:network/network.dart';
+
 import 'state/threads.dart';
 import 'ui/home_page.dart';
-import 'ui/login_page.dart';
-import 'ui/server_setup_page.dart';
-import 'ui/theme.dart';
+import 'ui/scan_page.dart';
 
 /// 隧道换址的发现通道：一个比隧道本身稳的静态 JSON（服务器换域名时
 /// 会自动更新它）。App 里所有自动换址都从这里拿候选地址。
@@ -83,9 +83,9 @@ class _QqbotAppState extends State<QqbotApp> {
     }
     switch (_auth.stage) {
       case AuthStage.needServer:
-        return ServerSetupPage(auth: _auth);
+        return ServerSetupPage(auth: _auth, scanPage: (_) => const ScanPage());
       case AuthStage.needLogin:
-        return LoginPage(auth: _auth);
+        return LoginPage(auth: _auth, scanPage: (_) => const ScanPage());
       case AuthStage.ready:
         final c = _threads;
         if (c == null) {

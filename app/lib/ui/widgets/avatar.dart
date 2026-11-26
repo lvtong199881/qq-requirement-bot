@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
+import 'package:base/base.dart';
 
 /// 首字头像：群、成员暂时都还没有上传头像，先用名字首字顶上。
 ///

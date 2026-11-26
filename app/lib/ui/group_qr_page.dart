@@ -4,7 +4,7 @@ import 'package:gal/gal.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'theme.dart';
+import 'package:base/base.dart';
 import 'widgets/avatar.dart';
 import 'widgets/qr_image.dart';
 import '../platform/toast.dart';

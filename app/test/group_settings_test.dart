@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qqbot_app/ui/group_settings_page.dart';
 
@@ -8,6 +9,11 @@ import 'support.dart';
 
 /// 群设置页三块：群信息（改名）、群成员（群主指定管理员）、群聊信息（群号/二维码）。
 void main() {
+  // 原生 toast 不进 widget 树，成功提示改为盯方法通道
+  late List<MethodCall> toasts;
+
+  setUp(() => toasts = recordToasts());
+
   Map<String, dynamic> thread({String name = '产品讨论'}) => {
     'threadId': 't1',
     'groupName': name,
@@ -91,7 +97,7 @@ void main() {
 
     expect(patched, '登录体验');
     expect(find.text('登录体验'), findsWidgets);
-    expect(find.text('群名已改'), findsOneWidget);
+    expect(toastShown(toasts, '群名已改'), isTrue);
   });
 
   testWidgets('群主把成员设成管理员', (tester) async {
@@ -132,6 +138,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(jsonDecode(roleBody!), {'role': 'admin'});
-    expect(find.text('已设为群管理员'), findsOneWidget);
+    expect(toastShown(toasts, '已设为群管理员'), isTrue);
   });
 }

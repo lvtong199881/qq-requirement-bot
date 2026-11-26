@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qqbot_app/state/threads.dart';
 import 'package:qqbot_app/ui/thread_detail_page.dart';
@@ -9,6 +10,11 @@ import 'support.dart';
 /// 入群这条路：列表页输群号（或扫码）→ 看群名人数 → 加入；
 /// 以及被分享进群详情但还没加入时，详情页给的那个「加入」按钮。
 void main() {
+  // 原生 toast 不进 widget 树，成功提示改为盯方法通道
+  late List<MethodCall> toasts;
+
+  setUp(() => toasts = recordToasts());
+
   testWidgets('列表页输群号能查到群并加入', (tester) async {
     bool joined = false;
     final auth = await readyAuth((req) async {
@@ -70,7 +76,7 @@ void main() {
     await tester.tap(find.text('加入'));
     await tester.pumpAndSettle();
 
-    expect(find.text('已加入「产品讨论」'), findsOneWidget);
+    expect(toastShown(toasts, '已加入「产品讨论」'), isTrue);
     // 加完刷新列表，群出现在列表里
     expect(find.text('产品讨论'), findsWidgets);
   });
@@ -113,7 +119,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('已加入这个群'), findsOneWidget);
+    expect(toastShown(toasts, '已加入这个群'), isTrue);
     // 加入之后群名出现，说明拉到了详情
     expect(find.text('产品讨论'), findsWidgets);
 

@@ -1,10 +1,31 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:qqbot_app/api/client.dart';
-import 'package:qqbot_app/state/auth.dart';
+import 'package:login/login.dart';
+import 'package:network/network.dart';
+
+/// 原生 toast 不进 widget 树，widget 测试里只能盯方法通道：
+/// 把 'qqbot/toast' 的调用记下来，断言「发了什么」而不是「树上有什么」。
+///
+/// 用法：`final toasts = recordToasts(); … expect(toastShown(toasts, '群名已改'), isTrue);`
+List<MethodCall> recordToasts() {
+  final calls = <MethodCall>[];
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(const MethodChannel('qqbot/toast'), (call) async {
+    calls.add(call);
+    return null;
+  });
+  return calls;
+}
+
+/// 是否发过一条 show（或 showLoading），文案完全相等
+bool toastShown(List<MethodCall> calls, String text) => calls.any(
+  (c) => c.method == 'show' && (c.arguments as Map)['text'] == text,
+);
 
 /// 新测试共用的登录态桩：把 secure storage 和服务端响应都换成假的。
 ///

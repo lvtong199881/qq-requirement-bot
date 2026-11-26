@@ -4,13 +4,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../api/client.dart';
-import '../api/models.dart';
-import '../state/auth.dart';
+import 'package:network/network.dart';
+
+import 'package:login/login.dart';
 import '../state/detail.dart';
 import 'format.dart';
 import 'group_settings_page.dart';
-import 'theme.dart';
+import 'package:base/base.dart';
 import 'widgets/ask_card.dart';
 import 'widgets/mentions.dart';
 import '../platform/toast.dart';
@@ -666,7 +666,7 @@ class _Bubble extends StatelessWidget {
       default:
         final card = answeredCard;
         if (card != null && !card.isConfirm && message.answers.isNotEmpty) {
-          return _AnswerLines(card: card, answers: message.answers);
+          return AnsweredCardView(card: card, answers: message.answers);
         }
         // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
         // 想摘一段发出去是常态，不能丢。
@@ -686,76 +686,6 @@ class _Bubble extends StatelessWidget {
         );
     }
   }
-}
-
-/// 卡片答案的排版：问题一行，勾选的选项各占一行并缩进。
-///
-/// 以前是一条消息里连排「问题 A. 选项 B. 选项」，问题一多就像一坨正文，
-/// 看不出哪句是问、哪句是答。选项用更小更淡的字，层级一眼分得开。
-class _AnswerLines extends StatelessWidget {
-  const _AnswerLines({required this.card, required this.answers});
-
-  final AskCard card;
-  final List<MessageAnswer> answers;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final rows = <Widget>[];
-    for (final a in answers) {
-      AskQuestion? q;
-      for (final candidate in card.questions) {
-        if (candidate.id == a.qid) {
-          q = candidate;
-          break;
-        }
-      }
-      final title = q?.title ?? a.qid;
-      final labels = <String>[];
-      if (q != null) {
-        for (final id in a.optionIds) {
-          final i = q.options.indexWhere((o) => o.id == id);
-          if (i >= 0) {
-            labels.add('${String.fromCharCode(65 + i)}. ${q.options[i].label}');
-          }
-        }
-        final typed = a.input.trim();
-        if (typed.isNotEmpty) {
-          // 自写内容排在最后一个选项的位置，和卡片上简化出来的字母一致
-          labels.add('${String.fromCharCode(65 + q.options.length)}. $typed');
-        }
-      }
-      if (labels.isEmpty) continue;
-      if (rows.isNotEmpty) rows.add(const SizedBox(height: AppSpace.sm));
-      rows.add(
-        Text(
-          title,
-          style: AppText.body.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w600),
-        ),
-      );
-      for (final label in labels) {
-        rows.add(
-          Padding(
-            padding: const EdgeInsets.only(top: AppSpace.xxs, left: AppSpace.md),
-            child: Text(
-              label,
-              style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ),
-        );
-      }
-    }
-    if (rows.isEmpty) {
-      return Text(messageFallbackText(answers), style: AppText.body);
-    }
-    return SelectionArea(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: rows),
-    );
-  }
-
-  /// 卡片已经不在了（比如拉取范围截断）时的兜底：只列选项字母
-  static String messageFallbackText(List<MessageAnswer> answers) =>
-      answers.map((a) => a.optionIds.join('、')).where((s) => s.isNotEmpty).join(' ');
 }
 
 class _ImageContent extends StatefulWidget {

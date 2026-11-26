@@ -1,0 +1,2 @@
+# flutter test 在包目录里跑会落 build/ 产物，别进版本库
+build/

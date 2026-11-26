@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 
-import '../api/client.dart';
-import '../state/auth.dart';
+import 'package:base/base.dart';
+import 'package:network/network.dart';
+
+import 'auth_controller.dart';
 import 'server_setup_page.dart';
-import 'theme.dart';
-import 'widgets/feedback.dart';
 
 /// 登录 / 注册。
 ///
 /// 一个页面两个模式而不是两个路由：注册就是多两个字段，做完立刻登录，
 /// 跳来跳去反而让人搞不清自己现在在哪一步。
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.auth});
+  const LoginPage({super.key, required this.auth, this.scanPage});
 
   final AuthController auth;
+
+  /// 透传给 ServerSetupPage：扫码页由 app 层注入（相机依赖不出 login 包）。
+  final WidgetBuilder? scanPage;
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -108,6 +111,7 @@ class _LoginPageState extends State<LoginPage> {
                               builder: (_) => ServerSetupPage(
                                 auth: widget.auth,
                                 initialUrl: widget.auth.baseUrl,
+                                scanPage: widget.scanPage,
                               ),
                             ),
                           ),

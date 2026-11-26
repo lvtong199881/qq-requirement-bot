@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../state/auth.dart';
-import 'server_setup_page.dart';
-import 'theme.dart';
+import 'package:base/base.dart';
+import 'package:login/login.dart';
+
+import 'scan_page.dart';
 
 /// 设置（二级页）。
 ///
@@ -37,6 +38,7 @@ class SettingsPage extends StatelessWidget {
                   auth: auth,
                   initialUrl: auth.baseUrl,
                   inSettings: true,
+                  scanPage: (_) => const ScanPage(),
                 ),
               ),
             ),

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../api/models.dart';
-import '../theme.dart';
+
+import 'package:base/base.dart';
+import 'package:network/network.dart';
 
 /// 消息流里的一张提问卡片（类似 ask_user_question）。
 ///
@@ -27,6 +28,130 @@ class AskDraft {
 class AskCardState {
   int step = 0;
   final Map<String, AskDraft> drafts = <String, AskDraft>{};
+}
+
+/// 题干里已经自带编号（agent 常写成「Q14 是否需要…」「14. 是否…」）时不再加一次，
+/// 用户按卡片上看到的题号核对，序号必须和卡片一致。
+/// 提问卡片和已回答卡片都要用，放文件级共享。
+final _numberedTitle = RegExp(r'^\s*(?:[Qq第]\s*)?\d+');
+
+/// 「我的回答」卡片：用户在提问卡片上提交后，自动发进群里的那条消息
+/// 用这套 UI 展示——和提问卡片同一外壳，但一眼能区分：
+/// 图标是对勾（提问是机器人），右侧挂「已回答」徽标，题目全部铺开、只读。
+class AnsweredCardView extends StatelessWidget {
+  const AnsweredCardView({super.key, required this.card, required this.answers});
+
+  final AskCard card;
+  final List<MessageAnswer> answers;
+
+  MessageAnswer? _answerOf(String qid) {
+    for (final a in answers) {
+      if (a.qid == qid) return a;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final numbered = card.questions.length > 1;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpace.sm),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(AppRadius.medium),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.task_alt, size: 16, color: scheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  card.title,
+                  style: AppText.caption.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // 状态徽标：光靠对勾图标不够——「已回答」三个字把
+              // 「这是结果回显」说死，不会和还没作答的卡片搞混。
+              Text(
+                '已回答',
+                style: AppText.caption.copyWith(
+                  color: AppColors.done(context),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (var i = 0; i < card.questions.length; i++) ...[
+            if (i > 0) const SizedBox(height: AppSpace.xs),
+            _AnsweredQuestion(
+              index: numbered && !_numberedTitle.hasMatch(card.questions[i].title) ? i + 1 : null,
+              question: card.questions[i],
+              answer: _answerOf(card.questions[i].id),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 已回答卡片里的一道题：勾过的选项亮着、其余置灰，不可再点。
+class _AnsweredQuestion extends StatelessWidget {
+  const _AnsweredQuestion({required this.question, required this.answer, required this.index});
+
+  final AskQuestion question;
+  final MessageAnswer? answer;
+  final int? index;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final picked = answer?.optionIds ?? const <String>[];
+    final typed = answer?.input.trim() ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          index == null ? question.title : '$index. ${question.title}',
+          style: AppText.bodyS.copyWith(fontSize: 15, height: 1.3, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        for (var i = 0; i < question.options.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpace.xxs),
+            child: _OptionRow(
+              label: question.options[i].label,
+              selected: picked.contains(question.options[i].id),
+              multi: question.isMulti,
+              enabled: false,
+              onTap: () {},
+            ),
+          ),
+        if (typed.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpace.xxs),
+            child: Text(
+              '补充：$typed',
+              style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class AskCardView extends StatefulWidget {

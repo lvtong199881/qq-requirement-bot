@@ -1,15 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../api/client.dart';
+import 'api_exception.dart';
 
 /// 换址过程的调试日志（仅 debug 构建输出）。换址是「用户无感」的静默
 /// 行为，出问题时没有界面反馈，没有日志就完全黑盒。
+/// 本包是纯 Dart，不引 flutter：用 assert 让 release/AOT 直接裁掉日志。
 void _log(String msg) {
-  if (kDebugMode) debugPrint('[resolver] $msg');
+  assert(() {
+    // ignore: avoid_print
+    print('[resolver] $msg');
+    return true;
+  }());
 }
 
 /// 隧道换址的「发现 + 验证」。
@@ -58,7 +62,7 @@ class EndpointResolver {
   /// 旧地址反而还活着的情况确实存在——多隧道并行的那一小段时间）。
   ///
   /// 兼容两种载体：裸 JSON（GitHub raw / 本地 file://）和 Gitee contents
-  /// API 的响应（{content: "<base64>", encoding: "base64", ...}）。
+  /// API 的响应（`{content: "<base64>", encoding: "base64", ...}`）。
   /// 用 API 而不是 gitee raw 页面，是因为 raw 的真实文件在
   /// raw.giteeusercontent.com 域名下，国内手机网络经常整个被重置；
   /// gitee.com 主站 + API 路径实测可达。

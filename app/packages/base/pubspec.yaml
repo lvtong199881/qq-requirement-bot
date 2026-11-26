@@ -1,0 +1,13 @@
+name: base
+description: "界面公共件：设计 token、主题与通用反馈组件。"
+publish_to: 'none'
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

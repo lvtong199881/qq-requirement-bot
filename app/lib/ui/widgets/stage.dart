@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../theme.dart';
-import '../../api/models.dart';
+import 'package:base/base.dart';
+import 'package:network/network.dart';
+
 
 /// 阶段徽章：一个小圆点 + 状态词。
 ///

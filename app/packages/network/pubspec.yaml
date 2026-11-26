@@ -1,0 +1,13 @@
+name: network
+description: "网络层：请求封装、模型、服务器发现与换址、心跳。"
+publish_to: 'none'
+
+environment:
+  sdk: ^3.13.7
+
+dependencies:
+  http: ^1.6.0
+
+dev_dependencies:
+  # 纯 Dart 包，用 test 而不是 flutter_test
+  test: ^1.25.0

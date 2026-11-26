@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqbot_app/api/models.dart';
-import 'package:qqbot_app/ui/theme.dart';
+import 'package:base/base.dart';
+import 'package:network/network.dart';
 import 'package:qqbot_app/ui/widgets/ask_card.dart';
 
 /// 提问卡片：勾选 → 提交 → 自动插一句什么话。
