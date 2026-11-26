@@ -4,7 +4,7 @@ import '../api/client.dart';
 import '../api/models.dart';
 import '../state/auth.dart';
 import 'theme.dart';
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 账号管理：只有系统管理员能进（普通成员从「我的」里看不到入口）。
 ///
@@ -65,7 +65,7 @@ class _UsersPageState extends State<UsersPage> {
   }
 
   void _toast(String text) {
-    showToast(context, text);
+    NativeToast.show(text);
   }
 
   Future<void> _resetPassword(User u) async {

@@ -10,7 +10,7 @@ import 'scan_page.dart';
 import 'theme.dart';
 import 'thread_detail_page.dart';
 import 'widgets/avatar.dart';
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 群列表。
 ///
@@ -52,7 +52,7 @@ class _ThreadListPageState extends State<ThreadListPage> {
       if (!mounted) return;
       final notice = widget.auth.flashNotice;
       if (notice != null && notice.isNotEmpty) {
-        showToast(context, notice);
+        NativeToast.show(notice);
         widget.auth.consumeNotice();
       }
     });
@@ -630,7 +630,7 @@ class _JoinDialogState extends State<_JoinDialog> {
       final r = await widget.auth.client.joinGroup(p.threadId);
       if (!mounted) return;
       Navigator.of(context).pop(true);
-      showToast(context, r.joined ? '已加入「${p.groupName}」' : '你已经在这个群里了');
+      NativeToast.show(r.joined ? '已加入「${p.groupName}」' : '你已经在这个群里了');
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {

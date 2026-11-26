@@ -21,6 +21,6 @@ void main() {
       }
     }
 
-    expect(offenders, isEmpty, reason: '提示统一走 showToast：\n${offenders.join('\n')}');
+    expect(offenders, isEmpty, reason: '提示统一走原生 toast（NativeToast）：\n${offenders.join('\n')}');
   });
 }

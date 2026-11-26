@@ -1,44 +1,61 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:qqbot_app/ui/widgets/toast.dart';
+import 'package:qqbot_app/platform/toast.dart';
 
-/// toast 的契约很短但很硬：文字要浮在页面上、过几秒自己消失、不挡主操作。
+/// 原生 toast 是薄封装：弹窗本身在原生端渲染，Dart 侧只要钉住
+/// 「方法名和参数按约定发出去」「宿主缺实现时不炸」这两件事。
 void main() {
-  testWidgets('弹出来、能看见、过一会儿自己消失', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: Center(child: Text('底页')))),
-    );
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    final ctx = tester.element(find.text('底页'));
-    showToast(ctx, '群号已复制');
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+  final calls = <MethodCall>[];
 
-    expect(find.text('群号已复制'), findsOneWidget);
-
-    // 淡出 + 移除
-    await tester.pump(const Duration(seconds: 3));
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(find.text('群号已复制'), findsNothing);
+  setUp(() {
+    calls.clear();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('qqbot/toast'), (call) async {
+      calls.add(call);
+      return null;
+    });
   });
 
-  testWidgets('出错时用错误色，不是主题的反色', (tester) async {
-    await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: Center(child: Text('底页')))),
-    );
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('qqbot/toast'), null);
+  });
 
-    final ctx = tester.element(find.text('底页'));
-    showToast(ctx, '没保存成功', error: true);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+  test('纯文本 toast 不带 type', () async {
+    await NativeToast.show('已复制群号');
+    expect(calls, hasLength(1));
+    expect(calls.single.method, 'show');
+    expect(calls.single.arguments, {'text': '已复制群号', 'type': null});
+  });
 
-    final box = tester.widget<DecoratedBox>(
-      find.ancestor(of: find.text('没保存成功'), matching: find.byType(DecoratedBox)).first,
-    );
-    final decoration = box.decoration as BoxDecoration;
-    expect(decoration.color, Theme.of(ctx).colorScheme.errorContainer);
+  test('错误 toast 带上 error 类型，原生端据此选图标', () async {
+    await NativeToast.show('没保存成功', type: ToastType.error);
+    expect(calls.single.arguments, {'text': '没保存成功', 'type': 'error'});
+  });
 
-    await tester.pump(const Duration(seconds: 4));
+  test('info / warning 类型原样透传', () async {
+    await NativeToast.show('提示', type: ToastType.info);
+    await NativeToast.show('警告', type: ToastType.warning);
+    expect(calls[0].arguments['type'], 'info');
+    expect(calls[1].arguments['type'], 'warning');
+  });
+
+  test('loading 是独立方法，hide 负责收掉', () async {
+    await NativeToast.showLoading('提交中');
+    await NativeToast.hideLoading();
+    expect(calls[0].method, 'showLoading');
+    expect(calls[0].arguments, {'text': '提交中'});
+    expect(calls[1].method, 'hideLoading');
+  });
+
+  test('宿主没注册通道时静默不崩（测试环境/未接入平台）', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('qqbot/toast'), null);
+    // 不带 handler 时 invokeMethod 抛 MissingPluginException，show 要吞掉它
+    await NativeToast.show('不该抛异常');
+    await NativeToast.showLoading('也不该抛');
+    await NativeToast.hideLoading();
   });
 }

@@ -7,7 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'theme.dart';
 import 'widgets/avatar.dart';
 import 'widgets/qr_image.dart';
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 群二维码：二维码里只放群号，扫出来就是群号，再走「加入群」那条路。
 ///
@@ -25,16 +25,16 @@ class GroupQrPage extends StatelessWidget {
 
   Future<void> _copy(BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: threadId));
-    if (context.mounted) showToast(context, '群号已复制');
+    if (context.mounted) NativeToast.show('群号已复制');
   }
 
   Future<void> _save(BuildContext context) async {
     try {
       final bytes = await _qrPng();
       await Gal.putImageBytes(bytes, album: 'qqbot');
-      if (context.mounted) showToast(context, '已保存到相册');
+      if (context.mounted) NativeToast.show('已保存到相册');
     } catch (err) {
-      if (context.mounted) showToast(context, '没保存成功：$err', error: true);
+      if (context.mounted) NativeToast.show('没保存成功：$err', type: ToastType.error);
     }
   }
 
@@ -54,7 +54,7 @@ class GroupQrPage extends StatelessWidget {
         ),
       );
     } catch (err) {
-      if (context.mounted) showToast(context, '分享失败：$err', error: true);
+      if (context.mounted) NativeToast.show('分享失败：$err', type: ToastType.error);
     }
   }
 

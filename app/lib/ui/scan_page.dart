@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 扫码：优先用相机，扫不动时可以改成从相册挑一张图。
 ///
@@ -79,13 +79,13 @@ class _ScanPageState extends State<ScanPage> {
       final found = _firstValue(capture);
       if (!mounted) return;
       if (found == null) {
-        showToast(context, '这张图里没找到二维码', error: true);
+        NativeToast.show('这张图里没找到二维码', type: ToastType.error);
         return;
       }
       _handled = true;
       Navigator.of(context).pop(found);
     } catch (err) {
-      if (mounted) showToast(context, '这张图没认出来：$err', error: true);
+      if (mounted) NativeToast.show('这张图没认出来：$err', type: ToastType.error);
     } finally {
       if (mounted) setState(() => _picking = false);
     }

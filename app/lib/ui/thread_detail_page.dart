@@ -13,7 +13,7 @@ import 'group_settings_page.dart';
 import 'theme.dart';
 import 'widgets/ask_card.dart';
 import 'widgets/mentions.dart';
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
 ///
@@ -87,7 +87,7 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     final err = _c.actionError;
     if (err != null && mounted) {
       // 输入区就在屏幕底部，SnackBar 会盖住它；toast 浮在输入区上方
-      showToast(context, err, error: true);
+      NativeToast.show(err, type: ToastType.error);
       _c.clearActionError();
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -153,11 +153,11 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     try {
       final r = await widget.auth.client.joinGroup(widget.threadId);
       if (!mounted) return;
-      showToast(context, r.joined ? '已加入这个群' : '你已经在群里了');
+      NativeToast.show(r.joined ? '已加入这个群' : '你已经在群里了');
       await _c.refreshNow();
     } on ApiException catch (e) {
       if (!mounted) return;
-      showToast(context, e.isNetwork ? '连不上服务器' : e.message, error: true);
+      NativeToast.show(e.isNetwork ? '连不上服务器' : e.message, type: ToastType.error);
     }
   }
 
@@ -845,10 +845,10 @@ class _FileContent extends StatelessWidget {
 
       await Clipboard.setData(ClipboardData(text: file.path));
       if (context.mounted) {
-        showToast(context, '已保存到 ${file.path}（路径已复制）');
+        NativeToast.show('已保存到 ${file.path}（路径已复制）');
       }
     } catch (e) {
-      if (context.mounted) showToast(context, '下载失败：$e', error: true);
+      if (context.mounted) NativeToast.show('下载失败：$e', type: ToastType.error);
     }
   }
 

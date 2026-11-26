@@ -6,7 +6,7 @@ import '../state/group_settings.dart';
 import 'group_qr_page.dart';
 import 'theme.dart';
 import 'widgets/avatar.dart';
-import 'widgets/toast.dart';
+import '../platform/toast.dart';
 
 /// 群设置：群信息 / 群成员 / 群聊信息。
 ///
@@ -49,7 +49,7 @@ class _GroupSettingsPageState extends State<GroupSettingsPage> {
 
   Future<void> _rename() async {
     if (!_c.canRename) {
-      showToast(context, '只有系统管理员和群管理员能改群名');
+      NativeToast.show('只有系统管理员和群管理员能改群名');
       return;
     }
     final name = await showDialog<String>(
@@ -59,7 +59,7 @@ class _GroupSettingsPageState extends State<GroupSettingsPage> {
     if (name == null || !mounted) return;
     final err = await _c.rename(name);
     if (!mounted) return;
-    showToast(context, err ?? '群名已改');
+    NativeToast.show(err ?? '群名已改');
   }
 
   Future<void> _confirmRole(GroupMember m) async {
@@ -84,7 +84,7 @@ class _GroupSettingsPageState extends State<GroupSettingsPage> {
     if (ok != true || !mounted) return;
     final err = await _c.setRole(m.userId, toAdmin ? 'admin' : 'member');
     if (!mounted) return;
-    showToast(context, err ?? (toAdmin ? '已设为群管理员' : '已取消群管理员'));
+    NativeToast.show(err ?? (toAdmin ? '已设为群管理员' : '已取消群管理员'));
   }
 
   @override
