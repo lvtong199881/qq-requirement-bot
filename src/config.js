@@ -218,8 +218,9 @@ export function loadConfig(configPath) {
     },
     turnTimeoutMs: raw.turnTimeoutMs ?? 30 * 60 * 1000,
     verbose: raw.verbose === true,
-    // 本机环境提示：注入到每回合 prompt，避免 agent 靠猜（比如工具链不在 PATH）
-    envHints: typeof raw.envHints === 'string' ? raw.envHints.trim() : '',
+    // envHints 已废弃：项目环境约定请写进项目根的 AGENTS.md（随仓库走）。
+    // 老配置里还留着它也不报错，但不再注入 prompt（见 obsoleteKeys）。
+    envHints: '',
     // 子进程 PATH 补充目录：git/flutter/adb 装在非标准目录时配置这里，
     // spawn 回合子进程时追加到 PATH 头部（env 是整体替换，不补就 ENOENT）
     toolPaths: Array.isArray(raw.toolPaths) ? raw.toolPaths.filter((p) => typeof p === 'string' && p.trim()) : [],
@@ -344,6 +345,7 @@ export function loadConfig(configPath) {
     // 不报错（老配置直接启动会更好，否则升级即挂），但要让用户知道
     // 「你配的 superAdmin 现在一点作用都没有」，否则他会以为权限没生效是 bug。
     obsoleteKeys: [
+      raw.envHints ? 'envHints（已改为写进项目 AGENTS.md）' : null,
       raw.onebot ? 'onebot' : null,
       raw.bot?.qq ? 'bot.qq' : null,
       raw.groups ? 'groups' : null,

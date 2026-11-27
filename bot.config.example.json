@@ -28,7 +28,6 @@
   },
   "turnTimeoutMs": 2700000,
   "verbose": false,
-  "envHints": "",
   "panel": {
     "enabled": true,
     "port": 7878,

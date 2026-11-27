@@ -7,7 +7,7 @@
  * 极难排查的问题。所以设备必须像工作区一样被显式分配。
  *
  * 平台差异只在这三件事上：怎么列设备、怎么判断在线、怎么描述类型。
- * 构建和装包命令不在这里——那些随项目走，写在 bot.config.json 的 envHints 里。
+ * 构建和装包命令不在这里——那些随项目走，写在项目根的 AGENTS.md 里。
  */
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'

@@ -70,7 +70,10 @@ const which = await new Promise((resolve) => {
   import('node:child_process').then(({ exec }) => {
     // 用 exec（走 shell）而不是 execFile + shell：路径含空格时
     // （...\DeepSeek Harness\...）必须靠引号包住整条命令。
-    exec(`"${config.dshBin}" --version`, { timeout: 15000, windowsHide: true }, (err, stdout) => {
+    // 但裸命令名（如 dsh，靠 PATH 解析）不能加引号：cmd 会把 "dsh" 当成文件路径，
+    // 报 9009 找不到，误判成 dsh 没装。只有含路径分隔符的才加引号。
+    const bin = /[\\/]/.test(config.dshBin) ? `"${config.dshBin}"` : config.dshBin
+    exec(`${bin} --version`, { timeout: 15000, windowsHide: true }, (err, stdout) => {
       resolve(err ? null : (stdout || '').trim())
     })
   })

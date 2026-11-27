@@ -25,3 +25,8 @@ app/android/build/
 napcat-qrcode.png
 
 .tmp-svggen-test/
+
+# ACL 修复与临时排障产物
+.acl-recovery/
+.tmp-final/
+
