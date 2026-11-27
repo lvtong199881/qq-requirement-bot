@@ -57,6 +57,9 @@ const machine = {
   },
 }
 
+/** 假的项目仓库：App 的「新需求」弹窗从这里选目标 app */
+const REPOS = [{ id: 'app', name: 'DoDroidAI', platform: 'android' }]
+
 /** 假的引擎：记录被投递了什么，不真的跑回合 */
 const delivered = []
 const dispatch = async (ev) => {
@@ -68,19 +71,40 @@ const dispatch = async (ev) => {
     // 提问卡片的勾选结果：断言要能看出「提交了哪张卡、勾了什么」
     answers: ev.answers ?? null,
     askSeq: ev.askSeq ?? null,
+    repoId: ev.repoId ?? null,
+    name: ev.name ?? null,
   })
-  // 真引擎在 startNewRequirement 里绑 reqId 并开始推进阶段。
+  // 真引擎在 createRequirement 里绑 reqId 并开始推进阶段。
   // 不补这一步，群会一直停在「待提需求」，断言就看不出区别。
   const st = machines.get(ev.threadId)
-  if (st && ev.type === 'start') {
+  if (st && ev.type === 'requirement') {
     st.reqId = `req-${ev.threadId}`
     st.flow = {
-      name: ev.text.slice(0, 30),
+      name: ev.name || ev.text.slice(0, 30),
       reqId: st.reqId,
-      stage: '需求澄清',
-      stageStatus: '进行中',
+      // running 是「这一单还没交付」：canNewRequirement 靠它决定要不要
+      // 让用户再开一单，所以这里必须给真实值，不能省。
+      status: 'running',
+      current: 'req-questions',
+      rounds: {},
+      waiting: null,
+      repoId: ev.repoId,
       stages: [],
     }
+    // 真引擎会把它落成一张发起卡片（App 端按 kind 渲染），形态和
+    // src/flow-bridge.js 的 tx.event('requirement') 一致：只讲需求，不带发起人。
+    const repo = REPOS.find((r) => r.id === ev.repoId) ?? REPOS[0]
+    messages.append(ev.threadId, {
+      role: 'bot',
+      kind: 'requirement',
+      payload: {
+        reqId: st.reqId,
+        name: st.flow.name,
+        text: ev.text,
+        repo: { id: repo.id, name: repo.name, platform: repo.platform },
+      },
+    })
+    return { ok: true, reqId: st.reqId, name: st.flow.name }
   }
 }
 
@@ -151,6 +175,7 @@ const can = async (action, threadId, userId) => {
 
 const threads = createThreadService({
   machine,
+  repos: () => REPOS,
   store: machine.store,
   messages,
   members,
@@ -176,6 +201,8 @@ const server = createApiServer({
   membersOf: threads.membersOf,
   setMemberRole: threads.setMemberRole,
   markRead: threads.markRead,
+  startRequirement: threads.startRequirement,
+  listRepos: () => REPOS,
   botName: botUser.nickname,
   log: () => {},
 })
@@ -556,37 +583,75 @@ console.log('\n== 群主指定群管理员 ==')
   check('群里还没有需求', detail.data?.thread?.pending === true)
 }
 
-console.log('\n== @AI员工 才算提需求 ==')
+console.log('\n== 起需求只走「新需求」弹窗的接口 ==')
 {
-  // 普通成员 @ 一下也要被拒，否则 startRequirement 就被绕过去了。
-  // 注意这里是别人建的群：他是成员不是群主，所以还是没权限。
+  // 群里 @ 一下不再建需求：回一句指路提示，群里不留需求痕迹。
   const before = messages.list(threadId, { limit: 100 }).messages.length
-  const denied = await api('POST', `/api/threads/${threadId}/messages`, {
-    token: memberToken,
-    body: { text: '@AI员工 给首页加个欢迎弹窗', mentions: ['bot'] },
-  })
-  check('非群主的普通成员提需求被拒 403', denied.status === 403, String(denied.status))
-  check('提示需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
-  check('被拒的话没有落库', messages.list(threadId, { limit: 100 }).messages.length === before)
-
-  const r = await api('POST', `/api/threads/${threadId}/messages`, {
+  const at = await api('POST', `/api/threads/${threadId}/messages`, {
     token: adminToken,
     body: { text: '@AI员工 给首页加个欢迎弹窗', mentions: ['bot'] },
   })
-  check('管理员能提需求', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data))
+  check('@ 了仍然是普通发言', at.status === 200 && at.data?.action === 'message', at.data?.action)
+  check('没起需求（mode 还是 chat）', messages.list(threadId, { limit: 100 }).messages.length === before + 1)
+  const stillChat = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
+  check('群还是聊天模式', stillChat.data?.thread?.mode === 'chat', stillChat.data?.thread?.mode)
+  check('群里仍然没有需求', stillChat.data?.thread?.pending === true)
+
+  // 起需求的唯一入口：POST /api/requirements，仓库由 body 显式指定
+  const repos = await api('GET', '/api/repos', { token: memberToken })
+  check('能列出项目仓库', repos.status === 200 && Array.isArray(repos.data?.repos), JSON.stringify(repos.data)?.slice(0, 200))
+  const repoId = repos.data?.repos?.[0]?.id
+  check('仓库带 id 和平台', Boolean(repoId) && Boolean(repos.data.repos[0].platform), JSON.stringify(repos.data?.repos?.[0]))
+
+  const denied = await api('POST', '/api/requirements', {
+    token: memberToken,
+    body: { threadId, text: '给首页加个欢迎弹窗', repoId },
+  })
+  check('普通成员提需求被拒 403', denied.status === 403, String(denied.status))
+  check('提示需要管理员', /管理员/.test(denied.data?.error ?? ''), denied.data?.error)
+
+  const empty = await api('POST', '/api/requirements', {
+    token: adminToken,
+    body: { threadId, text: '   ', repoId },
+  })
+  check('空需求被拒 400', empty.status === 400, String(empty.status))
+
+  const bad = await api('POST', '/api/requirements', {
+    token: adminToken,
+    body: { threadId, text: '加个弹窗', repoId: '不存在的仓库' },
+  })
+  check('仓库不存在被拒 400', bad.status === 400, String(bad.status))
+  check('提示里带上了仓库 id', /不存在的仓库/.test(bad.data?.error ?? ''), bad.data?.error)
+
+  const ok = await api('POST', '/api/requirements', {
+    token: adminToken,
+    body: { threadId, text: '给首页加个欢迎弹窗', name: '欢迎弹窗', repoId },
+  })
+  check('管理员能提需求', ok.status === 200 && ok.data?.ok === true, JSON.stringify(ok.data).slice(0, 200))
+  check('回了 reqId', typeof ok.data?.reqId === 'string' && ok.data.reqId.length > 0, ok.data?.reqId)
+  check('回了需求名', ok.data?.name === '欢迎弹窗', ok.data?.name)
   check(
-    '交给引擎的是 start，且 @ 已经去掉',
-    delivered.some((d) => d.type === 'start' && d.text === '给首页加个欢迎弹窗'),
-    JSON.stringify(delivered),
+    '交给引擎的是 requirement，且带上了仓库',
+    delivered.some((d) => d.type === 'requirement' && d.text === '给首页加个欢迎弹窗' && d.repoId === repoId),
+    JSON.stringify(delivered.slice(-2)),
   )
+  const cardRow = messages.list(threadId, { limit: 100 }).messages.find((m) => m.kind === 'requirement')
+  check('发起卡片落库', Boolean(cardRow), JSON.stringify(cardRow))
+  check('卡片带 reqId', cardRow?.payload?.reqId === ok.data.reqId, JSON.stringify(cardRow?.payload))
+  check('卡片带需求名', cardRow?.payload?.name === '欢迎弹窗', JSON.stringify(cardRow?.payload))
+  check('卡片带目标仓库', cardRow?.payload?.repo?.id === repoId && cardRow?.payload?.repo?.platform === 'android', JSON.stringify(cardRow?.payload))
   check(
-    '@ 的痕迹留在消息里（气泡要能高亮）',
-    messages.list(threadId, { limit: 100 }).messages.some((m) => (m.payload?.mentions ?? []).length > 0),
+    '卡片带需求原文',
+    String(cardRow?.payload?.text ?? '').includes('给首页加个欢迎弹窗'),
+    JSON.stringify(cardRow?.payload),
   )
+  // 卡片正文只讲需求；userId/nickname 是消息作者（bot 自己），不是发起人
+  check('卡片不带发起人和时间', cardRow && !('initiator' in cardRow.payload) && !('at' in cardRow.payload), JSON.stringify(cardRow?.payload))
 
   const detail = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
   check('群变成需求模式', detail.data?.thread?.mode === 'requirement', detail.data?.thread?.mode)
   check('不再是待提需求', detail.data?.thread?.pending === false)
+  check('跑着的时候不给「新需求」入口', detail.data?.thread?.canNewRequirement === false, String(detail.data?.thread?.canNewRequirement))
 }
 
 console.log('\n== 建群的人在群里就是群主，能提需求 ==')
@@ -600,14 +665,16 @@ console.log('\n== 建群的人在群里就是群主，能提需求 ==')
   const ownThread = mine.data?.threadId
   check('群主建群成功', mine.status === 200 && typeof ownThread === 'string', ownThread)
 
-  const r = await api('POST', `/api/threads/${ownThread}/messages`, {
+  const repos2 = await api('GET', '/api/repos', { token: memberToken })
+  const repoId2 = repos2.data?.repos?.[0]?.id
+  const r = await api('POST', '/api/requirements', {
     token: memberToken,
-    body: { text: '@AI员工 给 DoDroidAI 加个欢迎弹窗', mentions: ['bot'] },
+    body: { threadId: ownThread, text: '给 DoDroidAI 加个欢迎弹窗', repoId: repoId2 },
   })
   check('群主能提需求', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data).slice(0, 200))
   check(
-    '群主的这句话进了引擎',
-    delivered.some((d) => d.type === 'start' && d.text === '给 DoDroidAI 加个欢迎弹窗'),
+    '群主的这条进了引擎',
+    delivered.some((d) => d.type === 'requirement' && d.text === '给 DoDroidAI 加个欢迎弹窗'),
     JSON.stringify(delivered.slice(-3)),
   )
 
@@ -624,9 +691,9 @@ console.log('\n== 消息顺序：用户的话必须在 bot 播报之前 ==')
 
   const r = await api('GET', `/api/threads/${threadId}/messages`, { token: memberToken })
   const list = r.data?.messages ?? []
-  check('两条自己说的 + 一条 bot', list.length === 3, String(list.length))
+  // 前面聊过几句，这里只看尾巴：需求原文紧跟着 bot 的播报
   check('最后一条是 bot', list.at(-1)?.role === 'bot', list.at(-1)?.role)
-  check('bot 之前是刚提的需求', list.at(-2)?.payload?.text === '@AI员工 给首页加个欢迎弹窗')
+  check('bot 之前是刚提的需求', list.at(-2)?.payload?.text === '给首页加个欢迎弹窗')
   check('seq 递增', list.every((m, i) => i === 0 || m.seq === list[i - 1].seq + 1))
 }
 
@@ -704,7 +771,7 @@ console.log('\n== 需求群里：@ 了才转引擎，没 @ 还是聊天 ==')
   check('拒绝原因是权限', rel.data?.error === '只有群主、群管理员或系统管理员能释放会话', rel.data?.error)
 }
 
-console.log('\n== 通过/打回：普通成员看得见按钮，点了被拒 ==')
+console.log('\n== 确认卡：普通成员点提交被拒 ==')
 {
   const d = await api('POST', `/api/threads/${threadId}/messages`, {
     token: memberToken,
@@ -712,41 +779,54 @@ console.log('\n== 通过/打回：普通成员看得见按钮，点了被拒 =='
   })
   check('普通成员能发普通消息', d.status === 200)
 
-  const denied = await api('POST', `/api/threads/${threadId}/approve`, { token: memberToken })
-  check('普通成员通过被拒 403', denied.status === 403, String(denied.status))
+  const confirmBody = {
+    text: '本轮是否通过？ 通过',
+    answers: [{ qid: 'confirm', optionIds: ['approve'] }],
+    askSeq: 9,
+  }
+  const denied = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: memberToken,
+    body: confirmBody,
+  })
+  check('普通成员提交确认卡被拒 403', denied.status === 403, String(denied.status))
   check(
     '提示只有管理员能操作',
-    /只有管理员能操作/.test(denied.data?.error ?? ''),
+    /通过和打回只有群主、群管理员或系统管理员能操作/.test(denied.data?.error ?? ''),
     denied.data?.error,
   )
   check('带上了自己的角色，前端可以解释原因', denied.data?.roleLabel === '普通成员', denied.data?.roleLabel)
 }
 
-console.log('\n== 通过 ==')
+console.log('\n== 确认卡：管理员点通过/打回 ==')
 {
-  const r = await api('POST', `/api/threads/${threadId}/approve`, { token: adminToken })
-  check('管理员能通过', r.status === 200 && r.data?.ok === true)
-  check('「通过」两个字投给了编排层', delivered.some((d) => d.text === '通过'))
-  check('也落库成了用户消息', messages.list(threadId, { limit: 100 }).messages.some((m) => m.payload?.text === '通过'))
-}
-
-console.log('\n== 打回：必须写理由 ==')
-{
-  const noReason = await api('POST', `/api/threads/${threadId}/reject`, {
+  const r = await api('POST', `/api/threads/${threadId}/messages`, {
     token: adminToken,
-    body: {},
+    body: { text: '本轮是否通过？ 通过', answers: [{ qid: 'confirm', optionIds: ['approve'] }], askSeq: 9 },
   })
-  check('没理由被拒 400', noReason.status === 400, String(noReason.status))
-
-  const ok = await api('POST', `/api/threads/${threadId}/reject`, {
-    token: adminToken,
-    body: { reason: '按钮颜色不对，应该用品牌蓝' },
-  })
-  check('有理由能打回', ok.status === 200)
+  check('管理员能提交确认卡', r.status === 200 && r.data?.ok === true, JSON.stringify(r.data).slice(0, 160))
+  const approved = delivered.filter((x) => Array.isArray(x.answers) && x.answers.length).pop()
   check(
-    '打回理由带进了消息',
-    delivered.some((d) => d.text === '打回：按钮颜色不对，应该用品牌蓝'),
-    JSON.stringify(delivered.slice(-2)),
+    '「通过」作为回答投给编排层',
+    approved?.answers?.[0]?.optionIds?.[0] === 'approve',
+    JSON.stringify(approved),
+  )
+  check('也落库成了用户消息', messages.list(threadId, { limit: 100 }).messages.some((m) => m.payload?.text === '本轮是否通过？ 通过'))
+
+  // 打回：卡片上选「打回」+ 补充理由，理由就是用户那句话，服务端不再单独校验
+  const reject = await api('POST', `/api/threads/${threadId}/messages`, {
+    token: adminToken,
+    body: {
+      text: '本轮是否通过？ 打回：按钮颜色不对，应该用品牌蓝',
+      answers: [{ qid: 'confirm', optionIds: ['reject'], input: '按钮颜色不对，应该用品牌蓝' }],
+      askSeq: 9,
+    },
+  })
+  check('有理由能打回', reject.status === 200, String(reject.status))
+  const rejected = delivered.filter((x) => Array.isArray(x.answers) && x.answers.length).pop()
+  check(
+    '打回理由随回答带给编排层',
+    rejected?.answers?.[0]?.input === '按钮颜色不对，应该用品牌蓝',
+    JSON.stringify(rejected),
   )
 }
 
@@ -947,8 +1027,14 @@ console.log('\n== 账号管理：只有管理员 ==')
   check('能提权', promote.status === 200 && promote.data?.ok === true)
 
   // 提权后旧 token 立刻按新角色生效：authenticate 每次都查表
-  const after = await api('POST', `/api/threads/${threadId}/approve`, { token: memberToken })
-  check('提权后旧 token 立刻能通过', after.status === 200, String(after.status))
+  const repos3 = await api('GET', '/api/repos', { token: memberToken })
+  const repoId3 = repos3.data?.repos?.[0]?.id
+  const after = await api('POST', '/api/requirements', {
+    token: memberToken,
+    body: { threadId, text: '再提一个新需求', repoId: repoId3 },
+  })
+  // 群里的需求还在跑 → 400，但不再是「权限不够」的 403，说明角色已经换了
+  check('提权后旧 token 不再被权限拒', after.status !== 403, `${after.status} ${after.data?.error}`)
 }
 
 console.log('\n== 停用账号：立刻失效 ==')

@@ -264,6 +264,9 @@ function summaryOf(row) {
       return '[文件]'
     case 'stage':
       return String(p.stage ?? '').trim() || '[阶段变化]'
+    case 'requirement':
+      // 需求名比「[需求]」有用：列表第二行一眼知道这条群在做什么
+      return String(p.name ?? '').trim() || '[需求]'
     default: {
       const text = String(p.text ?? '').replace(/\s+/g, ' ').trim()
       return text
@@ -350,6 +353,19 @@ function sanitizePayload(kind, payload) {
             label: String(o?.label ?? '').slice(0, 200),
           })),
         }))
+      }
+      break
+    case 'requirement':
+      // 需求发起卡片：只放用户在弹窗里填的三样东西，发起人和时间由消息行
+      // 自己的 at / userId 表达，卡片里不再重复一遍（用户要求不显示）
+      if (typeof p.reqId === 'string') out.reqId = p.reqId.slice(0, 32)
+      if (typeof p.name === 'string') out.name = p.name.slice(0, 200)
+      if (p.repo && typeof p.repo === 'object') {
+        out.repo = {
+          id: String(p.repo.id ?? '').slice(0, 64),
+          name: String(p.repo.name ?? '').slice(0, 120),
+          platform: String(p.repo.platform ?? '').slice(0, 32),
+        }
       }
       break
     default:

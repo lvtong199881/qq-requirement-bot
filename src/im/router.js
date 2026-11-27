@@ -60,19 +60,20 @@ function botNames(botName) {
  * 决定这条消息的归宿。
  *
  *   chat    纯聊天，IM 自己留着，不惊动引擎
- *   start   开一条需求：群从 chat 变成 requirement
- *   message 需求群里 @ 了 bot 的话，转给引擎（回答、补充、拍板都走这条）
+ *   message @ 了 bot 的话，转给引擎（回答、补充、拍板、「继续」都走这条）
  *
- * 判据只有一条：**有没有 @ bot**。需求群里也不豁免——群里同时在聊别的事
- * （谁去拿快递、这个按钮位置要不要换），全转给引擎就等于 agent 把无关的话
- * 当需求上下文吃进去；而且一句「嗯」也可能触发一轮真金白银的回合。
- * 所以要不要让 agent 听见，永远由说话的人用 @ 明确表示。
+ * 判据只有一条：**有没有 @ bot**。群里同时在聊别的事（谁去拿快递、这个
+ * 按钮位置要不要换），全转给引擎就等于 agent 把无关的话当需求上下文吃进去；
+ * 而且一句「嗯」也可能触发一轮真金白银的回合。所以要不要让 agent 听见，
+ * 永远由说话的人用 @ 明确表示。
+ *
+ * 起需求不在这条路上：那是 App 的「新需求」弹窗（POST /api/requirements），
+ * 仓库由弹窗显式选，不靠需求文本猜。
  */
-export function routeMessage({ mode = 'chat', mentions = [] } = {}) {
+export function routeMessage({ mentions = [] } = {}) {
   const atBot = (Array.isArray(mentions) ? mentions : []).includes(BOT_ID)
-  if (!atBot) return { action: 'chat', atBot: false, needsStart: false }
-  if (mode === 'requirement') return { action: 'message', atBot: true, needsStart: false }
-  return { action: 'start', atBot: true, needsStart: true }
+  if (!atBot) return { action: 'chat', atBot: false }
+  return { action: 'message', atBot: true }
 }
 
 /**

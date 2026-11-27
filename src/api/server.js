@@ -53,6 +53,8 @@ export function createApiServer({
   setMemberRole,
   markRead,
   members,
+  startRequirement = async () => ({ ok: false, error: '这个部署没有接需求引擎' }),
+  listRepos = () => [],
   engine = null,
   botName = 'AI员工',
   log,
@@ -500,39 +502,47 @@ export function createApiServer({
           return json(res, 200, { ok: true, ...result })
         }
 
-        // 通过 / 打回：普通成员能看到按钮，但点了会被拒并给出原因
-        const actionMatch = sub?.match(/^\/(approve|reject)$/)
-        if (method === 'POST' && actionMatch) {
-          const action = actionMatch[1]
-          // 群主/群管理员在自己群里也能拍板，所以带 threadId 判
-          const perm = canIn(threadId, 'confirm', user)
-          if (!perm.ok) {
-            return json(res, 403, {
-              ok: false,
-              error: '通过和打回只有管理员能操作',
-              code: 'forbidden',
-              role: user.role,
-              roleLabel: roleLabelOf(user.role),
-            })
-          }
-          const body = await readBody(req)
-          // 打回的意见是必填的：只说「不行」agent 没法改
-          const reason = String(body.reason ?? '').trim()
-          if (action === 'reject' && !reason) {
-            return json(res, 400, { ok: false, error: '打回要写一句意见，不然不知道该怎么改' })
-          }
-
-          // 通过/打回最终就是一句自然语言，交给编排层理解。
-          // 不另造协议：agent 本来就按对话工作，多一层结构化指令反而要维护两套语义。
-          // 落库在 deliver 里统一做，这里不再自己 append（否则会存两条一模一样的）。
-          // force：按钮不是打字，不要求用户再去 @ 一次；权限上面刚判过 confirm。
-          const text = action === 'approve' ? '通过' : `打回：${reason}`
-          const result = await deliver({ threadId, text, user, force: true })
-          if (result?.notFound) return json(res, 404, { ok: false, error: result.error })
-          return json(res, 200, { ok: true, ...result })
-        }
+        // 通过/打回没有独立接口了：确认卡提交（POST .../messages 带 answers）
+        // 就是它——点选不是打字，不用再走「转成一句自然语言」那条老路。
 
         return json(res, 404, { ok: false, error: '未知接口' })
+      }
+
+      // ── 能跑需求的仓库：新需求弹窗里「目标 APP」下拉用 ──
+      // 参数进 query 不进路径（AGENTS.md 的接口约定）；这里还没有过滤条件
+      if (method === 'GET' && path === '/api/repos') {
+        const user = requireUser(req, res)
+        if (!user) return
+        return json(res, 200, { ok: true, repos: listRepos() })
+      }
+
+      // ── 发起需求：参数全在 body 里 ──
+      // 和「群里说一句话就当需求」分开：仓库由弹窗显式选，不靠文本猜
+      if (method === 'POST' && path === '/api/requirements') {
+        const user = requireUser(req, res)
+        if (!user) return
+        const body = await readBody(req)
+        const threadId = String(body.threadId ?? '').trim()
+        if (!threadId) return json(res, 400, { ok: false, error: '缺 threadId' })
+        const result = await startRequirement({
+          threadId,
+          text: body.text,
+          name: body.name,
+          repoId: body.repoId,
+          user,
+        })
+        if (result?.forbidden) {
+          return json(res, 403, {
+            ok: false,
+            error: result.error,
+            code: 'forbidden',
+            role: user.role,
+            roleLabel: result.roleLabel ?? roleLabelOf(user.role),
+          })
+        }
+        if (result?.notFound) return json(res, 404, { ok: false, error: result.error })
+        if (result?.ok === false) return json(res, 400, { ok: false, error: result.error })
+        return json(res, 200, { ok: true, reqId: result.reqId, name: result.name })
       }
 
       // ── 账号管理，仅管理员 ──

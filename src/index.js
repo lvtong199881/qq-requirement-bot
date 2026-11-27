@@ -506,14 +506,29 @@ const threads = createThreadService({
   members,
   botUser,
   buildSnapshot,
+  repos: () => config.repos ?? [],
   can,
   log,
   botName: botUser.nickname,
-  dispatch: async ({ threadId, text, user, replyTo, answers }) => {
+  dispatch: async ({ type, threadId, text, name, repoId, user, replyTo, answers }) => {
     const st = machine.peek(threadId)
     if (!st) return { ok: false, error: '这个群当前不接受需求' }
 
     const initiator = { userId: user.userId, nickname: user.nickname, at: Date.now() }
+
+    // 起需求是同步的：弹窗提交后要立刻拿到 reqId 才能把「已受理」的卡片渲染出来。
+    if (type === 'requirement') {
+      return flowBridge.createRequirement({
+        groupId: threadId,
+        text,
+        name,
+        repoId,
+        replyTo,
+        st,
+        initiator,
+      })
+    }
+
     machine.store.save(threadId, { ...st, initiator, lastActiveAt: initiator.at })
 
     // 不等回合跑完：一条需求可能几十分钟，HTTP 请求等不起。
@@ -672,6 +687,14 @@ function startAppApi() {
     threadInfo: threads.threadInfo,
     listThreads: threads.listThreads,
     deliver: threads.deliver,
+    startRequirement: threads.startRequirement,
+    // 新需求弹窗选「目标 APP」时用；只给必要字段，别把仓库路径漏给公网客户端
+    listRepos: () =>
+      (config.repos ?? []).map((r) => ({
+        id: r.id,
+        name: r.name,
+        platform: r.platform ?? 'harmony',
+      })),
     createGroup: threads.createGroup,
     joinGroup: threads.joinGroup,
     renameGroup: threads.renameGroup,

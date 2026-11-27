@@ -14,6 +14,17 @@ import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId,
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
 
+/**
+ * 起需求：v2 没有「群里说一句话就当需求」这条路径了（那是 App 的「新需求」
+ * 弹窗调的 createRequirement），测试跟着换成这个封装。返回的 started 一定要
+ * await——否则断言会跑在回合结束之前。
+ */
+async function startReq(bridge, { text, replyTo = 1, st, initiator = null, repoId = 'app' } = {}) {
+  const r = await bridge.createRequirement({ groupId: 'g1', text, replyTo, st, initiator, repoId })
+  if (r?.started) await r.started
+  return r
+}
+
 let pass = 0, fail = 0
 const check = (n, c, e = '') => {
   console.log(`  ${c ? '✅' : '❌'} ${n}${!c && e ? ' — ' + e : ''}`)
@@ -242,7 +253,7 @@ console.log('\n== 首条消息：受理需求并跑到等用户回答 ==')
   const { deps, saved, sent, agentCalls, events } = makeDeps()
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: '产品' } })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: '产品' } })
 
   const flow = saved.get('g1').flow
   check('生成了随机需求标识', /^[a-z0-9]{8}$/.test(flow.reqId), flow.reqId)
@@ -267,7 +278,7 @@ console.log('\n== 用户回答：需求定稿并复用会话 ==')
   const { deps, saved, sent, agentCalls, logs } = makeDeps({ approval: 'auto' })
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
   const afterFirst = saved.get('g1')
 
   try {
@@ -320,7 +331,7 @@ console.log('\n== agent 要用户拍板：把它做成提问卡片 ==')
     },
   })
   const bridge = createFlowBridge(deps)
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 加弹窗', replyTo: 5, st: newState(), initiator: null })
+  await startReq(bridge, { text: 'welcome modal 加弹窗', replyTo: 5, st: newState() })
 
   const flow = saved.get('g1').flow
   check('状态 waiting_user', flow.status === 'waiting_user')
@@ -366,7 +377,7 @@ console.log('\n== 返工不播「完成」 ==')
   // 用独立的需求标识，否则上一个用例写过的产物会让「缺失」的校验通过
   const { deps, sent } = makeDeps({ replyPlan: { 'req-questions': { skip: true } } })
   const bridge = createFlowBridge(deps)
-  await bridge.handleMessage({ groupId: 'g1', text: 'retrycase 加弹窗', replyTo: 6, st: newState(), initiator: null })
+  await startReq(bridge, { text: 'retrycase 加弹窗', replyTo: 6, st: newState() })
   check('没有阶段完成消息', !sent.some((t) => t.includes('需求澄清阶段已完成')), sent.join(' / '))
 }
 
@@ -377,7 +388,7 @@ console.log('\n== 卡住后用户说一句，重新试 ==')
   })
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 加弹窗', replyTo: 7, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 加弹窗', replyTo: 7, st })
   check('卡住状态', saved.get('g1').flow.status === 'blocked')
   check('群里说明了卡点', sent.some((t) => t.includes('设计参照')))
 
@@ -417,69 +428,32 @@ console.log('\n== dsh 找不到：报配置错误，不返工 ==')
   deps.runTurn = async () => ({ spawnFailed: true, errorSummary: '启动 dsh 失败（ENOENT）' })
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'spawnfail 测试', replyTo: 12, st, initiator: null })
+  await startReq(bridge, { text: 'spawnfail 测试', replyTo: 12, st })
 
   check('报了 dshBin 配置问题', sent.some((t) => t.includes('dshBin')), sent.join(' / '))
   check('没有当成阶段完成播报', !sent.some((t) => t.includes('阶段已完成')))
   check('没有走三次返工', !sent.some((t) => t.includes('连续 3 轮')))
 }
 
-console.log('\n== 空消息：提示怎么说需求 ==')
+console.log('\n== 群消息不再起需求：只回提示 ==')
 {
-  const { deps, sent } = makeDeps()
-  const bridge = createFlowBridge(deps)
-  await bridge.handleMessage({ groupId: 'g1', text: '   ', replyTo: 10, st: newState(), initiator: null })
-  check('提示直接说需求', sent.some((t) => t.includes('直接说需求')), sent.join(' / '))
-}
-
-// ────────────────────────────── 权限：发起需求 ──────────────────────────────
-console.log('\n== 权限：只有系统管理员能发起需求 ==')
-{
+  // v2 起需求只走 App 的「新需求」弹窗（POST /api/requirements → createRequirement），
+  // 群里说什么都不再建 flow——回一句指路就够了。
   const { deps, saved, sent } = makeDeps()
   const bridge = createFlowBridge(deps)
-  const st = newState()
+  await bridge.handleMessage({ groupId: 'g1', text: '   ', replyTo: 10, st: newState(), initiator: null })
+  check('空消息也指路到「新需求」按钮', sent.some((t) => t.includes('新需求')), sent.join(' / '))
 
-  // 普通成员：能看能说，但不能开新需求
+  const st = newState()
   await bridge.handleMessage({
     groupId: 'g1',
     text: '首页加个欢迎弹窗',
-    replyTo: 1,
+    replyTo: 11,
     st,
     initiator: { userId: 'u-member', nickname: '开发小明' },
-    can: async () => ({ ok: false, role: 'member', roleLabel: '普通成员', need: ['admin'] }),
   })
-  check('普通成员被拒', !saved.get('g1'), '不应该建 flow')
-  check(
-    '提示需要群主或管理员权限',
-    sent.some((t) => t.includes('需要群主、群管理员或系统管理员权限')),
-    sent.join(' / '),
-  )
-  // 拒绝时要说人话，不能把内部的 role 枚举丢给用户看
-  check(
-    '提示里带的是中文角色名',
-    sent.some((t) => t.includes('普通成员')),
-    sent.join(' / '),
-  )
-
-  // 系统管理员
-  await bridge.handleMessage({
-    groupId: 'g1',
-    text: '首页加个欢迎弹窗',
-    replyTo: 2,
-    st,
-    initiator: { userId: 'u-admin', nickname: '产品阿宝' },
-    can: async () => ({ ok: true, role: 'admin', roleLabel: '系统管理员' }),
-  })
-  check('系统管理员可以发起', !!saved.get('g1')?.flow, '应该建 flow')
-}
-
-console.log('\n== 权限：没有 can 时不影响内部调用 ==')
-{
-  const { deps, saved } = makeDeps()
-  const bridge = createFlowBridge(deps)
-  const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: '加个弹窗', replyTo: 1, st, initiator: null, can: null })
-  check('无 can 时按旧行为放行', !!saved.get('g1')?.flow)
+  check('说需求不再建 flow', !saved.get('g1'), '不应该建 flow')
+  check('回了指路提示', sent.some((t) => t.includes('新需求')), sent.join(' / '))
 }
 
 console.log('\n== 审计：记录发起人与确认人 ==')
@@ -487,14 +461,7 @@ console.log('\n== 审计：记录发起人与确认人 ==')
   const { deps, saved } = makeDeps({ approval: 'manual' })
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({
-    groupId: 'g1',
-    text: '加个弹窗',
-    replyTo: 1,
-    st,
-    initiator: { userId: 'u-owner', nickname: '群主' },
-    can: async () => ({ ok: true, role: 'owner' }),
-  })
+  await startReq(bridge, { text: '加个弹窗', replyTo: 1, st, initiator: { userId: 'u-owner', nickname: '群主' } })
   check('发起人落盘到群状态', saved.get('g1').initiator?.userId === 'u-owner', JSON.stringify(saved.get('g1').initiator))
 
   await bridge.handleMessage({
@@ -523,11 +490,7 @@ console.log('\n== B1/B4：回合执行参数（approval-policy / toolPaths）=='
   }
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({
-    groupId: 'g1', text: '加个弹窗', replyTo: 1, st,
-    initiator: { userId: 'u1', nickname: 'n' },
-    can: async () => ({ ok: true, role: 'admin' }),
-  })
+  await startReq(bridge, { text: '加个弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: 'n' } })
   // 一路「通过」让流程走完 req-questions → ... → dev
   for (let i = 0; i < 6; i++) {
     await bridge.handleMessage({
@@ -682,11 +645,7 @@ console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不�
   }
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({
-    groupId: 'g1', text: '加个弹窗', replyTo: 1, st,
-    initiator: { userId: 'u1', nickname: 'n' },
-    can: async () => ({ ok: true, role: 'admin' }),
-  })
+  await startReq(bridge, { text: '加个弹窗', replyTo: 1, st, initiator: { userId: 'u1', nickname: 'n' } })
   // 走到 dev：req-questions 等用户回答，此后 req-prd/design/tech-plan 每阶段都要「通过」
   for (let i = 0; i < 5; i++) {
     await bridge.handleMessage({
@@ -778,7 +737,7 @@ console.log('\n== merge 失败重试：合并锁立刻归还，不让下一轮�
   const bridge = createFlowBridge(deps)
   const st = newState()
   const t0 = Date.now()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
   // req-questions 是 waitUser 回合，auto 模式也要等用户回答后才往下走
   const afterFirst = saved.get('g1')
   await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
@@ -802,7 +761,7 @@ console.log('\n== merge 验证判据：fast-forward 免编译单测，main 动�
   }
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
   const afterFirst = saved.get('g1')
   await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
   const flow = saved.get('g1').flow
@@ -834,7 +793,7 @@ console.log('\n== 回执读不到时，校验失败要随播报发到群里，�
   }
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
   const afterFirst = saved.get('g1')
   await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
   const warns = sent.filter((t) => t.includes('产物校验不通过'))
@@ -916,7 +875,7 @@ console.log('\n== merge 回合 prompt：reqDir 指到合并工作区 ==')
   deps.runTurn = async (o) => { prompts.push(o.prompt); return inner(o) }
   const bridge = createFlowBridge(deps)
   const st = newState()
-  await bridge.handleMessage({ groupId: 'g1', text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st, initiator: null })
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
   const afterFirst = saved.get('g1')
   await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
   // auto 模式一路推到 merge；mock agent 不会真合并，merge 可能不出现——

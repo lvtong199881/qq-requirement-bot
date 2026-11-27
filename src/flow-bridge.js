@@ -263,8 +263,14 @@ export function createFlowBridge(deps) {
   // 设备归模拟器服务管：编排层只申请/释放，不碰具体设备也不读平台配置。
   // 允许注入，测试就不必真的起一个服务。
   const emulator = deps.emulator ?? createEmulatorClient(config)
-  // 平台跟着主仓库走：主仓库是鸿蒙就按鸿蒙的构建和装包命令来
-  const platform = platformOf(config.primaryRepo)
+  // 平台是「这条需求的仓库」的属性，不是全局属性：一个团队里鸿蒙、安卓仓库
+  // 并存时，按第一个仓库算会把安卓需求当成鸿蒙去构建、去租设备（实测踩过）。
+  const repoFor = (flow) => {
+    const repos = config.repos ?? []
+    const id = flow?.repoId ?? config.primaryRepo?.id ?? null
+    return repos.find((r) => r.id === id) ?? config.primaryRepo ?? null
+  }
+  const platformFor = (flow) => platformOf(repoFor(flow))
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
@@ -315,32 +321,10 @@ export function createFlowBridge(deps) {
       return
     }
 
-    // 上一条消息因为「没说清是哪个项目」被拦下了：这条是选择
-    if (st.pendingRepoChoice) {
-      const pending = st.pendingRepoChoice
-      const repos = (config.repos ?? []).filter((r) => pending.candidates.includes(r.id))
-      const raw = String(text ?? '').trim()
-      const byIndex = /^\d+$/.test(raw) ? repos[Number(raw) - 1] : null
-      const byName = repos.find((r) => r.name && r.name.toLowerCase() === raw.toLowerCase())
-      const chosen = byIndex ?? byName
-
-      if (!chosen) {
-        await sendPlain(
-          groupId,
-          `没认出「${raw}」。回复序号或项目名：\n` +
-            repos.map((r, i) => `${i + 1}. ${r.name}`).join('\n'),
-          { replyTo },
-        )
-        return
-      }
-      delete st.pendingRepoChoice
-      store.save(groupId, st)
-      return startNewRequirement({ groupId, text: pending.text, replyTo, st, initiator })
-    }
-
     const flow = st.flow ?? null
 
-    // 没绑需求：这条就是需求描述
+    // 没绑需求：v2 不再从群消息起需求。目标仓库要显式选（App 的「新需求」弹窗），
+    // 靠需求文本猜仓库一旦猜错，整条需求会跑在错的仓库上，等发现时已经烧掉几十分钟。
     if (!flow) {
       // 旧版（v1）绑过需求的群，v2 不接管——否则会把已有需求当成新需求重开，
       // 用新生成的 reqId 另起一个目录，旧进度的归属就乱了。
@@ -356,25 +340,8 @@ export function createFlowBridge(deps) {
         )
         return
       }
-      if (!text.trim()) {
-        await sendPlain(groupId, '直接说需求就行，比如：首页加个欢迎弹窗。', { replyTo })
-        return
-      }
-      // 发起需求的两条路：系统管理员，或这个群的群主/群管理员。
-      // 群内角色由调用方（index.js / engine.js）连着 threadId 一起查好，
-      // 这里只认 can 的结论——引擎这条路上 can 已经带上了群。
-      if (can) {
-        const perm = await can('startRequirement', initiator?.userId)
-        if (!perm.ok) {
-          await sendPlain(
-            groupId,
-            `发起需求需要群主、群管理员或系统管理员权限（当前角色：${perm.roleLabel ?? perm.role ?? '未知'}）。已有需求可以直接回复「通过」「打回」参与。`,
-            { replyTo },
-          )
-          return
-        }
-      }
-      return startNewRequirement({ groupId, text, replyTo, st, initiator })
+      await sendPlain(groupId, renderMessage('v2NeedRequirement', {}, templates), { replyTo })
+      return
     }
 
     // 已跑完：一个群一个需求，做完仍占着这个群（和 v1 的口径一致）
@@ -412,60 +379,29 @@ export function createFlowBridge(deps) {
   }
 
   /**
-   * 这条需求该落在哪个仓库？
+   * 新建需求。仓库由调用方显式传入（App 的「新需求」弹窗里选的），这里不猜：
+   * 猜错了整条需求会跑在错的仓库上，等发现时已经烧掉几十分钟。
    *
-   * 不设「默认项目」——改哪个 app 由需求内容决定。按项目名匹配需求文本，
-   * 匹配不到、又配了多个项目时问用户，绝不猜：猜错了整条需求会跑在错的仓库上，
-   * 等发现时已经烧掉几十分钟。
-   *
-   * @returns {{ok:true, repo:object} | {ok:false, reason:string, candidates:object[]}}
+   * 返回 {ok, reqId, name} 让调用方立刻回执；回合本身异步跑，建完就不占着请求。
    */
-  function pickRepoFor(text) {
+  async function createRequirement({ groupId, text, name, repoId, replyTo, st, initiator }) {
+    // 一个群同时只跑一单：覆盖掉在跑的 flow，上一单的产物就成了没人认领的孤儿。
+    // 已交付（done）的群允许再开新的一单——同一个群接着提第二个需求是正常用法。
+    if (st.flow && st.flow.status !== 'done') {
+      const busy = st.flow.status === 'waiting_user' ? '等你确认' : '还在执行'
+      return { ok: false, error: `这个群的需求 ${st.flow.reqId} ${busy}，跑完再发新的` }
+    }
+
     const repos = config.repos ?? []
-    if (!repos.length) return { ok: false, reason: '还没有配置项目仓库，请先在管理面板的「项目」页添加一个', candidates: [] }
-    if (repos.length === 1) return { ok: true, repo: repos[0] }
+    if (!repos.length) return { ok: false, error: '还没有配置项目仓库，请先在管理面板的「项目」页添加一个' }
+    // 只有一个仓库时允许不传 repoId（省得前端非要选一次），多仓库必须指定
+    const repo = repos.find((r) => r.id === repoId) ?? (repos.length === 1 ? repos[0] : null)
+    if (!repo) return { ok: false, error: `没有这个项目仓库：${repoId || '（未指定）'}` }
+    if (!String(text ?? '').trim()) return { ok: false, error: '需求内容是空的' }
 
-    const lower = String(text ?? '').toLowerCase()
-    // 项目名出现在需求里就算命中；多个命中取名字最长的（更具体）
-    const hits = repos
-      .filter((r) => r.name && lower.includes(String(r.name).toLowerCase()))
-      .sort((a, b) => b.name.length - a.name.length)
-    if (hits.length) return { ok: true, repo: hits[0], matchedBy: 'name' }
-
-    return { ok: false, reason: '需求里没提是哪个项目', candidates: repos }
-  }
-
-  async function startNewRequirement({ groupId, text, replyTo, st, initiator }) {
     // 随机 8 位标识，和名称无关——两个人提相似需求也不会撞目录
     const reqId = makeReqId()
-
-    const picked = pickRepoFor(text)
-    if (!picked.ok) {
-      if (!picked.candidates.length) {
-        // 一个仓库都没配：直接提示去面板加，不进入「选项目」状态
-        await sendPlain(groupId, picked.reason, { replyTo })
-        return
-      }
-      // 多个项目又没提到具体哪个：给用户选，别自己猜
-      const list = picked.candidates
-        .map((r, i) => `${i + 1}. ${r.name}（${platformOf(r).label}）`)
-        .join('\n')
-      await sendPlain(
-        groupId,
-        `${picked.reason}。这条需求属于哪个项目？回复序号或项目名：\n${list}`,
-        { replyTo },
-      )
-      // 记下来：下一条消息用来选项目，不当成新需求
-      st.pendingRepoChoice = {
-        reqId,
-        text,
-        candidates: picked.candidates.map((r) => r.id),
-        at: Date.now(),
-      }
-      store.save(groupId, st)
-      return
-    }
-    st.projectDir = picked.repo.path
+    st.projectDir = repo.path
     // 暂存区建在项目内：子进程沙箱只能写会话工作区。
     // 用本地 exclude 忽略它，接入方不需要改 .gitignore。
     ensureScratchIgnored(st.projectDir)
@@ -473,23 +409,27 @@ export function createFlowBridge(deps) {
     try {
       mkdirSync(dataDir, { recursive: true })
     } catch (err) {
-      await sendPlain(groupId, `创建需求目录失败：${err.message}`, { replyTo })
-      return
+      return { ok: false, error: `创建需求目录失败：${err.message}` }
     }
 
+    const reqName = String(name ?? '').trim() || makeReqName(text)
     const flow = {
       ...initialState({
         reqId,
-        name: makeReqName(text),
+        name: reqName,
         projectDir: st.projectDir,
         // 产物落在项目内的 docs/requirements/<reqId>/：dsh 子进程的沙箱限制在工作区，
         // 写到外面会被拒绝（见 reqDirOf 的注释）。
         dataDir,
-        repoDir: config.repoDir,
+        repoDir: repo.repoDir,
       }),
       requestText: text,
       vars: {},
       roleSessions: {},
+      // 仓库记在需求上：后面每一处「按平台构建/租设备/建工作区」都读它，
+      // 不再回落到「配置里第一个仓库」。
+      repoId: repo.id,
+      repoName: repo.name,
     }
 
     st.flow = flow
@@ -497,12 +437,21 @@ export function createFlowBridge(deps) {
     if (initiator) st.initiator = initiator
     store.save(groupId, st)
 
-    await sendPlain(
-      groupId,
-      renderMessage('v2Kickoff', { name: flow.name ?? flow.reqId }, templates),
-      { replyTo },
-    )
-    await runFromState({ groupId, st, replyTo })
+    // 发起记录落成卡片：群里留着「这条需求是什么、跑在哪个 app」，App 端也有结构可渲染
+    tx.event(groupId, 'requirement', {
+      reqId,
+      name: reqName,
+      text,
+      repo: { id: repo.id, name: repo.name, platform: platformOf(repo).id },
+    })
+    await sendPlain(groupId, renderMessage('v2Kickoff', { name: reqName }, templates), { replyTo })
+    // 不等回合跑完：HTTP 请求要立刻拿到 reqId，进度靠群消息和状态文件看。
+    // started 一并返回是给测试用的——它要能 await 到这一轮回合结束，
+    // 生产调用方直接忽略（JSON 序列化前线程层只取 reqId/name）。
+    const started = runFromState({ groupId, st, replyTo }).catch((err) => {
+      log(`[${groupId}] 需求 ${reqId} 回合异常：${err?.message ?? err}`)
+    })
+    return { ok: true, reqId, name: reqName, started }
   }
 
   async function answerWaiting({ groupId, text, replyTo, st, initiator, answers = null }) {
@@ -673,9 +622,9 @@ export function createFlowBridge(deps) {
         // merge 阶段在专用工作区里操作；其他阶段用需求自己的工作区
         workDir: (flow.current === 'merge' ? flow.vars?.mergeWorkDir : flow.workDir) ?? flow.workDir ?? '',
         deviceId: flow.vars?.deviceId ?? '',
-        platform: platform.id,
+        platform: platformFor(flow).id,
         // 平台命令块：构建/测试/装包怎么跑，由适配器决定
-        platformBlock: buildPlatformBlock(platform, {
+        platformBlock: buildPlatformBlock(platformFor(flow), {
           deviceId: flow.vars?.deviceId ?? '<设备ID>',
           artifactId: flow.vars?.artifactId ?? guessArtifactId(st.projectDir),
         }),
@@ -732,7 +681,7 @@ export function createFlowBridge(deps) {
           let granted = await emulator.lease({
             reqId: st.flow.reqId,
             stage: cp.id,
-            platform: platform.id,
+            platform: platformFor(st.flow).id,
           })
           // 没有运行中的设备时先预热再租：服务上有配好的但关着的模拟器，
           // 直接把错误甩给用户要人去点启动，一轮就耗十几分钟。启动一台
@@ -741,7 +690,7 @@ export function createFlowBridge(deps) {
             granted = await warmupAndLease(emulator, {
               reqId: st.flow.reqId,
               stage: cp.id,
-              platform: platform.id,
+              platform: platformFor(st.flow).id,
               log: (m) => log(`[${groupId}] ${m}`),
             })
           }
@@ -830,7 +779,8 @@ export function createFlowBridge(deps) {
 
           // 涉及哪些仓库：默认只有主仓库；技术方案回执里声明了才扩展
           // （组件化项目：改组件库要同时给那个仓库开工作区）
-          const repoIds = st.flow.repos?.length ? st.flow.repos : [config.primaryRepo.id]
+          // 默认只开这条需求自己的仓库；技术方案回执里声明了 repos 才扩展
+          const repoIds = st.flow.repos?.length ? st.flow.repos : [st.flow.repoId ?? config.primaryRepo.id]
           const workspaces = { ...(st.flow.workspaces ?? {}) }
           let primaryWt = null
 
@@ -862,7 +812,9 @@ export function createFlowBridge(deps) {
               repoDir: repoCfg.repoDir,
               mainBranch: repo.mainBranch,
             }
-            if (repoCfg.primary) primaryWt = wt
+            // 主工作区是「这条需求的仓库」的那个，不是配置里排第一的那个：
+            // 多仓库时用户可能选第二个仓库，按 primary 标记判会直接抛错。
+            if (repoId === (st.flow.repoId ?? config.primaryRepo?.id)) primaryWt = wt
             log(`[${groupId}] 工作区 ${repoId}：${wt.path}`)
           }
 
@@ -959,7 +911,7 @@ export function createFlowBridge(deps) {
 
         if (cp.id === 'dev') {
           const fromReceipt = receipt?.deliverables?.debugPackage
-          const found = fromReceipt || findLatestHap(st.projectDir, platform)
+          const found = fromReceipt || findLatestHap(st.projectDir, platformFor(st.flow))
           if (found) {
             st.flow.vars = { ...st.flow.vars, debugPackage: found }
             store.save(groupId, st)
@@ -981,7 +933,7 @@ export function createFlowBridge(deps) {
           const mergeNote = store.get(groupId)?.flow?.vars?.mergeFastForward === true
             ? 'main 期间没动过，直接合并推送'
             : '会先跑编译和单元测试再推'
-          await sendPlain(groupId, `回复「通过」后会把 feature 分支合并进主分支（${mergeNote}）。`, { replyTo }).catch(() => {})
+          await sendPlain(groupId, `选「通过」后会把 feature 分支合并进主分支（${mergeNote}）。`, { replyTo }).catch(() => {})
         }
         await deliverArtifact({ groupId, repoRoot, projectDir: st.projectDir, cp, reqDir: reqDirOf(adv.state), replyTo })
       },
@@ -1431,7 +1383,7 @@ async function doMerge({ groupId, flow, st, log, config }) {
     }
   }
 
-  return { handleMessage, poolStats }
+  return { handleMessage, createRequirement, poolStats }
 }
 
 /**

@@ -54,7 +54,7 @@ export function isAppThread(threadId) {
  * @param {(...a:any[])=>void} o.log
  * @param {string} [o.botName]
  */
-export function createThreadService({ machine, store, messages, buildSnapshot, dispatch, can, members, botUser, log, botName }) {
+export function createThreadService({ machine, store, messages, buildSnapshot, dispatch, can, members, botUser, log, botName, repos = () => [] }) {
   const groups = store ?? machine?.store ?? null
   if (!groups) throw new Error('createThreadService 需要 store 或 machine')
   // 成员表是「能不能看见这个群」的唯一判据。缺了它就只剩「所有人可见」，
@@ -122,6 +122,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
   const fromSaved = (threadId, saved) => {
     const en = saved?.engine && typeof saved.engine === 'object' ? saved.engine : {}
     const pending = !en.reqId && !saved?.reqId
+    // 「新需求」按钮：群是空的（还没需求）或上一单已交付时才有入口。
+    // 跑着/等确认/卡住都不给——点进去只会被服务端拒一次，白问一遍。
+    const canNewRequirement = pending || saved?.flow?.status === 'done'
     const stageStatus = pending
       ? '待提需求'
       : (en.stageStatus ?? (saved?.reqId ? '旧版需求' : '进行中'))
@@ -131,6 +134,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       groupName: saved?.name ?? null,
       mode: saved?.mode ?? 'chat',
       pending,
+      canNewRequirement,
       reqId: en.reqId ?? saved?.reqId ?? null,
       stage: en.stage ?? null,
       stageStatus,
@@ -164,6 +168,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       ? { userId: g.initiator.userId, nickname: g.initiator.nickname }
       : null,
     lastActiveAt: g.lastActiveAt ?? null,
+    // 快照路径拿不到 flow 状态，但 stageStatus 是编排层翻译过的：只有
+    // 「已完成」代表这一单交付了，可以再开新的一单。
+    canNewRequirement: !g.reqId || g.stageStatus === '已完成',
     running: Boolean(g.activeTurn),
     needsMe: g.stageStatus === '等你确认',
     stages: g.stages ?? [],
@@ -366,14 +373,15 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
   /**
    * 往群里投一条消息。
    *
-   * 四种归宿（见 src/im/router.js）：
+   * 两种归宿（见 src/im/router.js）：
    *   chat    —— 普通聊天，落库就完事，不惊动引擎
-   *   start   —— @ 了需求 bot 且群还是聊天模式：开需求，权限同建群
-   *   message —— 需求群里 @ 了 bot 的话，转给引擎
+   *   message —— @ 了 bot 的话，转给引擎（回答、补充、「继续」都走这条）
    *
-   * 唯一的例外是 through=force：通过/打回是界面上的按钮，不是打字，
-   * 不该要求用户再去 @ 一次；权限已经由路由层（confirm）判过了。
-   * 提交提问卡片（answers）也走 force：点选不是打字，同样不该再 @ 一次。
+   * 起需求不在这条路径上：那是 App 的「新需求」弹窗调的 startRequirement，
+   * 目标仓库由弹窗显式选。群里说一句话就当需求的年代过去了——猜错仓库的
+   * 代价是整条需求跑在错的项目上。
+   *
+   * 提交提问卡片（answers）走 force：点选不是打字，不该要求用户再 @ 一次。
    */
   async function deliver({
     threadId,
@@ -402,21 +410,8 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     const missed = mentionsOf({ mentions, text, botName })
     const route =
       force || picked
-        ? { action: 'message', atBot: false, needsStart: false }
+        ? { action: 'message', atBot: false }
         : routeMessage({ mode: saved.mode ?? 'chat', mentions: missed })
-
-    if (route.action === 'start') {
-      // 权限判断放在落库和发事件之前：被拒的话群里不留痕，引擎也不会跑
-      const perm = await can('startRequirement', threadId, user.id)
-      if (!perm?.ok) {
-        return {
-          ok: false,
-          forbidden: true,
-          error: '提需求需要群主、群管理员或系统管理员权限',
-          roleLabel: perm?.roleLabel ?? null,
-        }
-      }
-    }
 
     // 点提问卡片提交 = 通过/打回/答决策，和原来的按钮是同一件事，
     // 权限口径也得一样：只有能确认的人才放行。
@@ -475,8 +470,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       ...saved,
       // 群一旦变成需求群就不再变回去：需求跑完还是可以继续聊、
       // 继续补需求，来回切换只会让「这句话发给谁」变得不可预测。
-      // 但聊天群里的通过/打回不该顺手把它变成需求群，所以只在 start 时置位。
-      mode: route.action === 'start' ? 'requirement' : (saved.mode ?? 'chat'),
+      mode: saved.mode ?? 'chat',
       initiator,
       lastActiveAt: initiator.at,
     })
@@ -523,5 +517,94 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     return { ok: true, lastReadSeq: members.lastReadOf(threadId, user.id) }
   }
 
-  return { listThreads, threadInfo, createGroup, deliver, joinGroup, renameGroup, membersOf, setMemberRole, markRead }
+  /**
+   * 新需求：App 的「新需求」弹窗调这个，仓库由弹窗显式选。
+   *
+   * 和 deliver 分开是有意的——起需求是「开一条需求」，不是往群里聊一句话；
+   * 混在一条路径上就又要靠文本猜意图，猜错的代价是整条需求跑错仓库。
+   */
+  async function startRequirement({ threadId, text, name = '', repoId = '', user }) {
+    const saved = get(threadId)
+    if (!exists(saved)) return { ok: false, notFound: true, error: '没有这个群' }
+    ensureMembers(threadId, saved)
+    if (members && !members.isMember(threadId, user.id)) {
+      return { ok: false, forbidden: true, error: '你还没加入这个群' }
+    }
+    // 权限判断放在落库和派发之前：被拒的话群里不留痕，引擎也不会跑
+    const perm = await can('startRequirement', threadId, user.id)
+    if (!perm?.ok) {
+      return {
+        ok: false,
+        forbidden: true,
+        error: '提需求需要群主、群管理员或系统管理员权限',
+        roleLabel: perm?.roleLabel ?? null,
+      }
+    }
+
+    // 起新需求前先看群里有没有在跑的：否则用户消息落了库、引擎又拒建，
+    // 群里会多出一条没人接管的需求原文。权限检查已经过，这里查状态。
+    const st = typeof machine?.peek === 'function' ? machine.peek(threadId) : null
+    if (st?.flow && st.flow.status !== 'done') {
+      return { ok: false, error: `这个群的需求 ${st.flow.reqId} 还没跑完，等交付后再发新的` }
+    }
+
+    const body = String(text ?? '').trim()
+    if (!body) return { ok: false, error: '需求内容是空的' }
+    if (body.length > 5000) return { ok: false, error: '需求太长了，5000 字以内' }
+
+    // 仓库先在这里校一次：引擎那边也会拒，但那时用户消息已经落库了，
+    // 群里会多一条「发出去却没下文」的需求原文。宁可早点返回 400。
+    const wanted = String(repoId ?? '').trim()
+    const repoList = typeof repos === 'function' ? repos() : []
+    if (repoList.length && wanted && !repoList.some((r) => r.id === wanted)) {
+      return { ok: false, error: `没有这个项目仓库：${wanted}` }
+    }
+
+    const initiator = {
+      userId: user.id,
+      nickname: user.nickname || user.username,
+      at: Date.now(),
+    }
+
+    // 用户填的需求原文先落库：它是这次需求的「用户说了什么」，
+    // 后面 agent 提问、拍板都挂在它下面
+    messages.append(threadId, {
+      role: 'user',
+      kind: 'text',
+      payload: {
+        text: body,
+        userId: initiator.userId,
+        nickname: initiator.nickname,
+      },
+      at: initiator.at,
+    })
+
+    groups.save(threadId, {
+      ...saved,
+      // 从这里开始这个群是需求群：@bot 的话转给引擎
+      mode: 'requirement',
+      initiator,
+      lastActiveAt: initiator.at,
+    })
+
+    log(`[api] ${user.username} 在 ${threadId} 发起需求：${body.slice(0, 60)}`)
+    try {
+      const result = await dispatch({
+        type: 'requirement',
+        threadId,
+        text: body,
+        name: String(name ?? '').trim(),
+        repoId: String(repoId ?? '').trim(),
+        user: { userId: initiator.userId, nickname: initiator.nickname },
+        replyTo: null,
+      })
+      if (result?.ok === false) return result
+      return { ok: true, reqId: result?.reqId ?? null, name: result?.name ?? null }
+    } catch (err) {
+      log(`[api] 群 ${threadId} 发起需求失败：${err.message}`)
+      return { ok: false, error: err.message }
+    }
+  }
+
+  return { listThreads, threadInfo, createGroup, deliver, startRequirement, joinGroup, renameGroup, membersOf, setMemberRole, markRead }
 }

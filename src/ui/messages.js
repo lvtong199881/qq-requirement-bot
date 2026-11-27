@@ -74,7 +74,14 @@ export const MESSAGE_TEMPLATES = {
     group: 'v2 流程',
     label: '等确认进下一步',
     vars: ['stage', 'next'],
-    template: '「{{stage}}」已完成，回复「通过」进入下一步（{{next}}），回「打回」重做这一步。',
+    template: '「{{stage}}」已完成，在下面的卡片里选「通过」进入下一步（{{next}}），选「打回」重做这一步。',
+  },
+  v2NeedRequirement: {
+    group: 'v2 流程',
+    label: '还没有需求',
+    desc: '群里发了消息但还没发起需求——起需求在 App 的「新需求」弹窗里',
+    vars: [],
+    template: '这个群还没有需求。点消息页底部的「新需求」按钮发起。',
   },
   v2Blocked: {
     group: 'v2 流程',

@@ -35,15 +35,16 @@ console.log('\n== 路由：不 @ 就是聊天 ==')
 {
   const r = routeMessage({ mode: 'chat', mentions: [] })
   check('chat 群没 @ → chat', r.action === 'chat', r.action)
-  check('没有要开需求', r.needsStart === false)
   check('atBot 为 false', r.atBot === false)
 }
 
-console.log('\n== 路由：@ 了需求 bot 才开需求 ==')
+console.log('\n== 路由：@ 了也只是普通发言 ==')
 {
+  // v2 起需求只走 App 的「新需求」弹窗（POST /api/requirements），
+  // 群里 @ 一下不再开流程——路由层就没有 start 这个动作了。
   const r = routeMessage({ mode: 'chat', mentions: [BOT_ID] })
-  check('chat 群 @ → start', r.action === 'start', r.action)
-  check('要求提需求权限', r.needsStart === true)
+  check('chat 群 @ → message', r.action === 'message', r.action)
+  check('没有 start 动作', r.action !== 'start' && r.needsStart === undefined, String(r.needsStart))
 }
 
 console.log('\n== 路由：需求群里没 @ 的还是聊天 ==')
@@ -52,7 +53,7 @@ console.log('\n== 路由：需求群里没 @ 的还是聊天 ==')
   check('需求群没 @ 也不惊动引擎', a.action === 'chat', a.action)
   check('需求群没 @ 时不带 atBot', a.atBot === false)
   const b = routeMessage({ mode: 'requirement', mentions: [BOT_ID] })
-  check('需求群 @ 了才转引擎，且不重开一条', b.action === 'message' && b.needsStart === false, b.action)
+  check('需求群 @ 了才转引擎', b.action === 'message', b.action)
 }
 
 console.log('\n== @ 的识别：显式 mentions 和手打都要认 ==')
@@ -85,7 +86,7 @@ console.log('\n== 事件队列：落盘 + 游标 ==')
   const events = new EngineEvents(dir)
   check('一开始没事件', events.cursor === 0 && events.since(0).length === 0)
 
-  events.append('start', { threadId: 'tabc1234567', text: '@需求bot 加个弹窗' })
+  events.append('requirement', { threadId: 'tabc1234567', text: '加个弹窗' })
   events.append('message', { threadId: 'tabc1234567', text: '给新用户看' })
   check('游标推到最新', events.cursor === 2, String(events.cursor))
   check('since(0) 拿到两条', events.since(0).length === 2)
@@ -108,7 +109,7 @@ console.log('\n== 事件队列：长轮询 ==')
   const t0 = Date.now()
   const waiting = events.waitFor(0, 3000)
   // 模拟「用户就在这时说了话」
-  setTimeout(() => events.append('start', { threadId: 'txyz8888888', text: '@需求bot 加个弹窗' }), 60)
+  setTimeout(() => events.append('requirement', { threadId: 'txyz8888888', text: '加个弹窗' }), 60)
   const got = await waiting
   check('挂着的轮询会被新事件唤醒', got.length === 1 && got[0].threadId === 'txyz8888888', JSON.stringify(got))
   check('没有被超时拖满 3 秒', Date.now() - t0 < 2000, `${Date.now() - t0}ms`)
@@ -206,9 +207,9 @@ groups.save(groupId, { status: 'idle', mode: 'chat', name: '周末闲聊', initi
 
 {
   // 用户在群里 @ 了需求 bot：publisher 侧把事件塞进队列
-  events.append('start', { threadId: groupId, text: '加个欢迎弹窗', user: { userId: admin.id, nickname: '管理员' } })
+  events.append('requirement', { threadId: groupId, text: '加个欢迎弹窗', user: { userId: admin.id, nickname: '管理员' } })
   const r = await hit('GET', '/api/engine/inbox?after=0&wait=50', { token: engineToken })
-  check('引擎拿得到这条事件', r.data?.events?.[0]?.type === 'start', JSON.stringify(r.data))
+  check('引擎拿得到这条事件', r.data?.events?.[0]?.type === 'requirement', JSON.stringify(r.data))
   check('事件带着群 id 和文本', r.data?.events?.[0]?.threadId === groupId && r.data?.events?.[0]?.text === '加个欢迎弹窗')
 
   const next = await hit('GET', `/api/engine/inbox?after=${r.data.cursor}&wait=50`, { token: engineToken })

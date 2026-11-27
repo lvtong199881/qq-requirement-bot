@@ -50,6 +50,16 @@ fix(voice): 空消息走统一回执，不再用硬编码话术
 - 不引第三方运行时依赖（只用 Node 内置）
 - 对外文案集中在 `src/messages.js`，不要散落在逻辑里
 
+## HTTP 接口
+
+**参数不进路径。** 路径只放资源标识（`/api/threads/{threadId}` 这种已有写法保持不动），
+业务参数一律按方法走：
+
+- GET：参数全部放 query string（`/api/threads?since=12`）
+- POST：参数全部放 body（`/api/requirements`，body 里带 `threadId`）
+
+新增接口照这条写，别再造 `/api/threads/{id}/requirements?repoId=…` 这类混搭路径。
+
 ## UI 设计
 
 移动端界面（原型、设计稿、任意技术栈的实现）按

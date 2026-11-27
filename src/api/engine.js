@@ -20,8 +20,8 @@ import { json, readBody } from './http-util.js'
 /** 多久没轮询就算引擎离线。引擎每 25 秒一次长轮询，留出两倍余量 */
 const OFFLINE_AFTER_MS = 70_000
 
-/** 引擎回写消息时允许的 kind，和 transport.js 的四类对齐，另加提问卡片 */
-const KINDS = new Set(['text', 'image', 'file', 'stage', 'decision', 'ask'])
+/** 引擎回写消息时允许的 kind，和 transport.js 的几类对齐，另加提问卡片与需求卡片 */
+const KINDS = new Set(['text', 'image', 'file', 'stage', 'decision', 'ask', 'requirement'])
 
 /**
  * @param {object} o
