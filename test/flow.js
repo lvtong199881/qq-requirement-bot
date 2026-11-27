@@ -52,11 +52,19 @@ console.log('\n== 需求澄清：agent 要用户回答后，解冻要推进到�
 {
   const st = start()
   // 关键场景：needs_input 和 waitUser 同时成立
-  const r = advance(st, { status: 'needs_input', decisions: [{ q: '弹窗时机？' }] }, { ok: true })
+  const r = advance(st, { status: 'needs_input', decisions: [{ q: '弹窗时机？' }], decisionsTitle: '选个上线时机' }, { ok: true })
   check('action = wait_user', r.action === 'wait_user', r.action)
   check('记下了下一站 req-prd', r.state.waiting.advanceTo === 'req-prd', JSON.stringify(r.state.waiting))
+  check('decisionsTitle 带进 waiting', r.state.waiting.decisionsTitle === '选个上线时机', JSON.stringify(r.state.waiting))
   const resumed = resumeFromUser(r.state)
   check('回答后推进到 req-prd（不是原地重跑）', resumed.current === 'req-prd', resumed.current)
+}
+
+console.log('\n== 回执没报 decisionsTitle 时 waiting 不带这个字段 ==')
+{
+  const st = start()
+  const r = advance(st, { status: 'needs_input', decisions: [{ q: '弹窗时机？' }] }, { ok: true })
+  check('没有 decisionsTitle 字段', r.state.waiting.decisionsTitle === undefined, JSON.stringify(r.state.waiting))
 }
 
 console.log('\n== 用户回答后继续 ==')

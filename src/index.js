@@ -13,6 +13,7 @@ import { loadConfig, reloadConfigInto, resolveModelEnv } from './config.js'
 import { runTurn } from './runner.js'
 import { createFlowBridge } from './flow-bridge.js'
 import { getCheckpoint, CHECKPOINTS } from './flow/flow.js'
+import { validateGraph, renderAdjacency } from './flow/graph.js'
 import { readReceipt, readReceiptWithRetry } from './flow/orchestrator.js'
 import { sleep } from './ui/format.js'
 import { Runtime } from './runtime.js'
@@ -277,7 +278,7 @@ async function recoverOneFlow(groupId, st, cp) {
       log(`[${groupId}] 「${cp.label}」的子进程已退出但回执始终没出现，交用户决策`)
       if (st.recoverNotifiedFor !== cp.id) {
         store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
-        sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+        sendPlain(groupId, `上次「${cp.label}」的回合被打断了，@我 发「继续」重跑这一步。`, {}).catch(() => {})
       }
     }
     return
@@ -293,7 +294,7 @@ async function recoverOneFlow(groupId, st, cp) {
   } else if (st.recoverNotifiedFor !== cp.id) {
     log(`[${groupId}] 「${cp.label}」的回合被打断，等用户发继续`)
     store.save(groupId, { ...st, recoverNotifiedFor: cp.id })
-    sendPlain(groupId, `上次「${cp.label}」的回合被打断了，回复「继续」重跑这一步。`, {}).catch(() => {})
+    sendPlain(groupId, `上次「${cp.label}」的回合被打断了，@我 发「继续」重跑这一步。`, {}).catch(() => {})
   } else {
     log(`[${groupId}] 「${cp.label}」仍等待用户发继续（已提示过，不重复发）`)
   }
@@ -736,6 +737,12 @@ function startAppApi() {
     }
   })
 }
+
+// 流程图自检：图配错（边指向不存在的节点、守卫没注册、不可达节点）
+// 宁可现在起不来，也别跑到一半某个阶段没有出边、流程悄悄断掉。
+// 顺手把邻接表打进日志，出了「流程没按预期走」的案子直接对着查。
+validateGraph()
+runtime.info(`流程图就绪：\n${renderAdjacency()}`)
 
 startApi()
 startAppApi()
