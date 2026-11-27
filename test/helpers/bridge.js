@@ -159,15 +159,15 @@ export async function boot({
       return r.body
     },
     /**
-     * 建群 + @ 需求 bot 说出第一句话。
+     * 建群 + 用「新需求」接口把需求提给某个仓库。
      *
-     * App 的流程是两步：先建群，再在群里 @ 需求 bot 提需求（不 @ 只是聊天）。
-     * 调用方只关心「拿到一个跑着需求的 threadId」，所以这里合成一步，名字沿用旧名。
+     * App 里这是两步：先建群，再点底部「发起新需求」填表提交；群里 @ 一下已经
+     * 不算提需求了。调用方只关心「拿到一个跑着需求的 threadId」，所以合成一步。
      */
-    async createThread(text, { name, mentions = ['bot'] } = {}) {
+    async createThread(text, { name, repoId = 'app' } = {}) {
       const group = await call('POST', '/api/threads', { name })
       if (!group.body?.ok) throw new Error(`建群失败：${JSON.stringify(group.body)}`)
-      const said = await call('POST', `/api/threads/${group.body.threadId}/messages`, { text, mentions })
+      const said = await call('POST', '/api/requirements', { threadId: group.body.threadId, text, repoId })
       if (!said.body?.ok) throw new Error(`提需求失败：${JSON.stringify(said.body)}`)
       return group.body
     },
