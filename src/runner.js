@@ -46,8 +46,24 @@ function killChildTree(child) {
  * @param {() => object|null} [o.receiptProbe] 提前结算探针：进程还在跑时定期调用，
  *   返回非空（回执已合法落盘）就按成功提前收工并终止进程。实测 agent 写完
  *   回执后进程可能挂住几十秒到分钟级，硬等进程退出会占满阶段超时。
+ * @param {number} [o.finalGraceMs] final 事件后的宽限期（默认 10s）：收到 final
+ *   说明 agent 已答完，进程还不退就视为挂住，探一次回执后强杀收工。
  * @returns {Promise<{sessionId: string|null, finalText: string, exitCode: number|null, timedOut: boolean}>}
  */
+/**
+ * 拼 Windows 下交给 cmd.exe 的命令串。
+ *
+ * 为什么 dshBin 只在含路径分隔符时才加引号：cmd 对 `"dsh" ...` 会把带引号的
+ * 第一个词当路径解析，在项目目录里向上找，结果找到的是 DeepSeek Harness.exe，
+ * 报「不是内部或外部命令」。裸命令名 dsh 不加引号才能走 PATH 找到 dsh.cmd。
+ * 带空格的绝对路径（...\DeepSeek Harness\...）则必须加引号，否则会被拆开。
+ */
+export function buildWinCommand(dshBin, args) {
+  const bin = /[\\/]/.test(dshBin) ? `"${dshBin}"` : dshBin
+  const quoteArg = (a) => (/\s/.test(a) ? `"${a}"` : a)
+  return `${bin} ${args.map(quoteArg).join(' ')}`
+}
+
 export function runTurn({
   dshBin,
   profile,
@@ -57,11 +73,13 @@ export function runTurn({
   env,
   timeoutMs,
   approvalPolicy,
+  permissionMode,
   onEvent,
   signal,
   onChild,
   receiptProbe,
   receiptProbeMs,
+  finalGraceMs,
 }) {
   const args = ['--profile', profile, '--json']
   if (sessionId) args.push('--session-id', sessionId)
@@ -69,15 +87,17 @@ export function runTurn({
   // 回合用 never，不然沙箱的默认审批会把 flutter test / gradle 全挡掉。
   // ask 是 dsh 默认值，不传参数行为不变。
   if (approvalPolicy === 'never') args.push('--approval-policy', 'never')
+  // approval-policy 只管「要不要弹审批」，沙箱预设是另一层：默认预设下 agent
+  // 会话派生子进程会被拒（CreateFile failed 5），flutter/java/git 全跑不了。
+  // 无人值守的构建回合必须显式给宽预设，否则只能交出没验证过的代码。
+  if (permissionMode) args.push('--permission-mode', permissionMode)
   // 用 "-" 从 stdin 读 prompt，避免超长需求被命令行长度限制截断
   args.push('-')
 
-  // Windows 上 dsh 是 .cmd，必须经 cmd.exe；而且 DeepSeek Harness 的安装路径
-  // 通常含空格（...\DeepSeek Harness\...），命令必须加引号，否则会被拆开。
-  // 参数拼进命令字符串、args 传空数组，顺带避开 shell:true + args 的 DEP0190。
+  // Windows 上 dsh 是 .cmd，必须经 cmd.exe；参数拼进命令字符串、args 传空数组，
+  // 顺带避开 shell:true + args 的 DEP0190。
   const isWin = process.platform === 'win32'
-  const quoteArg = (a) => (/\s/.test(a) ? `"${a}"` : a)
-  const spawnTarget = isWin ? `"${dshBin}" ${args.map(quoteArg).join(' ')}` : dshBin
+  const spawnTarget = isWin ? buildWinCommand(dshBin, args) : dshBin
 
   const child = spawn(spawnTarget, isWin ? [] : args, {
     cwd: projectDir,
@@ -106,6 +126,8 @@ export function runTurn({
   let stderrTail = ''
   let turnError = null
   let runnerClassify = null
+  // final 事件是否已到（决定要不要启动宽限计时器）
+  let sawFinal = false
 
   const timer = setTimeout(() => {
     timedOut = true
@@ -146,7 +168,11 @@ export function runTurn({
       return
     }
     if (ev.type === 'session' && ev.sessionId) sid = ev.sessionId
-    if (ev.type === 'final' && typeof ev.text === 'string') finalText = ev.text
+    if (ev.type === 'final' && typeof ev.text === 'string') {
+      finalText = ev.text
+      // final 到了就允许宽限计时器接管：它只对「final 之后还挂住」生效
+      sawFinal = true
+    }
 
     // turn_end 带 error 时（429 限流、凭证失效等），把关键信息提出来。
     // 这类错误 Agent 自己不会说，bridge 必须能识别并在群里讲人话。
@@ -161,12 +187,14 @@ export function runTurn({
     if (!msg) return null
     if (/429|rate.?limit|频率限制|限流|quota/i.test(msg)) {
       const reset = msg.match(/(\d{4}-\d{2}-\d{2}[^，,]*?重置)/)?.[1]
+      // 群里必须 @ bot 才会进引擎（im/router.js routeMessage 只认 @），
+      // 提示不带 @ 的话用户照着发纯文本「继续」，消息落库但引擎根本收不到。
       return reset
-        ? `模型额度用完了（429 限流），${reset}重置。期间可以先做别的，稍后发「继续」。`
-        : '模型额度用完了（429 限流），稍后发「继续」重试。'
+        ? `模型额度用完了（429 限流），${reset}重置。期间可以先做别的，稍后 @我 发「继续」。`
+        : '模型额度用完了（429 限流），稍后 @我 发「继续」重试。'
     }
     if (/Insufficient Balance|余额不足|QUOTA|402/i.test(msg)) {
-      return '模型账号余额不足（402），充值或换 API key 后发「继续」。'
+      return '模型账号余额不足（402），充值或换 API key 后 @我 发「继续」。'
     }
     if (/already owned by an active write handle/i.test(msg)) {
       return '会话被上一个未退出的进程占用（session 写锁未释放）。'
@@ -175,7 +203,7 @@ export function runTurn({
       return '模型凭证失效或缺失（API key 问题），检查 DEEPSEEK_API_KEY 后再试。'
     }
     if (/ECONNREFUSED|ETIMEDOUT|network/i.test(msg)) {
-      return '网络错误，连不上模型服务，稍后发「继续」重试。'
+      return '网络错误，连不上模型服务，稍后 @我 发「继续」重试。'
     }
     if (/EPERM|EACCES|operation not permitted/i.test(msg)) {
       return '文件权限不足（EPERM）：dsh 进程被沙箱限制，写不了 ~/.dsh。' +
@@ -207,6 +235,7 @@ export function runTurn({
         clearInterval(probeTimer)
         probeTimer = null
       }
+      clearInterval(graceTimer)
       signal?.removeEventListener('abort', abortHandler)
       resolve(payload)
     }
@@ -250,6 +279,44 @@ export function runTurn({
       }, receiptProbeMs ?? 15000)
       probeTimer.unref?.()
     }
+
+    // final 宽限杀：final 事件到达 = agent 已经把答案说完（回执在这前后
+    // 一两秒内落盘）。实测 headless 模式下 dsh 写完 final 后经常不退出
+    // （真实需求 11 个成功回合 10 个挂住），硬等 close 会白耗到探针周期
+    // 或阶段超时。宽限几秒还没退就杀：先探一次回执——有回执按
+    // settledByReceipt 收工（和探针同款结算），没有也照杀（final 都说完
+    // 还挂着就是挂住），后续由 close 事件正常结算。
+    const graceMs = finalGraceMs ?? 10000
+    const graceTimer = setInterval(() => {
+      if (!sawFinal || child.exitCode !== null) return
+      let found = null
+      try {
+        found = receiptProbe?.() ?? null
+      } catch {
+        /* 同探针：竞态不当回事 */
+      }
+      killChildTree(child)
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          if (process.platform === 'win32') killChildTree(child)
+          else child.kill('SIGKILL')
+        }
+      }, 5000).unref?.()
+      clearInterval(graceTimer)
+      done({
+        sessionId: sid,
+        finalText,
+        exitCode: null,
+        timedOut: false,
+        settledByReceipt: found != null,
+        stderr: stderrTail,
+        turnError: null,
+        errorSummary: null,
+        sessionLocked: false,
+        spawnFailed: false,
+      })
+    }, graceMs)
+    graceTimer.unref?.()
 
     child.on('error', (err) => {
       done({

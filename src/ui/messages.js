@@ -80,7 +80,7 @@ export const MESSAGE_TEMPLATES = {
     group: 'v2 流程',
     label: '卡住',
     vars: ['reason'],
-    template: '卡住了：{{reason}}',
+    template: '卡住了：{{reason}}。想重试的话 @我 发「继续」。',
   },
   v2Done: {
     group: 'v2 流程',
@@ -374,7 +374,7 @@ export const MESSAGE_TEMPLATES = {
     group: '系统通知',
     label: 'bridge 重启通知',
     vars: [],
-    template: 'bridge 正在重启，当前回合的结果可能不会送达。重启后发「继续」可以接着跑。',
+    template: 'bridge 正在重启，当前回合的结果可能不会送达。重启后 @我 发「继续」可以接着跑。',
   },
 }
 
