@@ -6,6 +6,8 @@ import io.flutter.embedding.engine.FlutterEngine
 class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // 下载产物落公共目录的通道：越早注册越好，用户进详情页就能点下载
+        DownloadSaver.attach(this, flutterEngine)
         // 原生 toast 通道：Dart 侧 NativeToast.show/showLoading/hideLoading
         NativeToastHost.attach(this, flutterEngine)
     }
