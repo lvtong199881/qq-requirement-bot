@@ -36,6 +36,40 @@ import {
 } from './infra/repo.js'
 
 /**
+ * 内联进 prompt 的 diff 行数上限。
+ *
+ * 实测内联 2000 行会把评审 prompt 顶到 9 万字（90068 字、37.6s/步），
+ * 而评审要看的是改动分布和关键片段；截断后配文件清单 + 按需 git diff
+ * 更省上下文。改这个值等于改评审回合的成本，别随手调大。
+ */
+const DIFF_MAX_LINES = 600
+
+/**
+ * 把 git diff 裁成「改动文件清单 + 截断后的正文」。
+ *
+ * 单独拎出来是为了能单测：截断与否只看行数，和是谁的回合无关。
+ * 超限时附一句怎么按文件取，比只写「已截断」有用——评审要细看某处时
+ * 知道该跑 `git diff -- <文件>`，而不是试图整份重读。
+ */
+export function capDiff(raw) {
+  const text = String(raw ?? '')
+  // 从 diff 头里取目标路径：diff --git a/x b/y 里的 b/y 才是改动后的文件
+  const files = [...new Set(
+    [...text.matchAll(/^diff --git a\/\S+ b\/(\S+)$/gm)].map((m) => m[1]),
+  )]
+  const lines = text.split('\n')
+  const tooLong = lines.length > DIFF_MAX_LINES
+  return {
+    changedFiles: files.length ? files.join('、') : '（无法从 diff 解析出文件名）',
+    diff: tooLong
+      ? `${lines.slice(0, DIFF_MAX_LINES).join('\n')}\n`
+        + `（diff 超过 ${DIFF_MAX_LINES} 行已截断：先看上面的改动文件清单，`
+        + '需要细看某个文件时用 git diff -- <文件> 单独取，不要整份重读）'
+      : text,
+  }
+}
+
+/**
  * 需求唯一标识：随机 8 位。
  *
  * 以前用需求文本里提的英文词当 id，问题是两个群提相似需求就会撞车，
@@ -573,18 +607,7 @@ export function createFlowBridge(deps) {
       const dir = flow.workDir || st.projectDir
       const raw = readGitDiff(dir)
       if (!raw) return { changedFiles: '（无改动）', diff: '（无改动）' }
-      // 从 diff 头里取目标路径：diff --git a/x b/y 里的 b/y 才是改动后的文件
-      const files = [...new Set(
-        [...raw.matchAll(/^diff --git a\/\S+ b\/(\S+)$/gm)].map((m) => m[1]),
-      )]
-      const lines = raw.split('\n')
-      const tooLong = lines.length > 2000
-      return {
-        changedFiles: files.length ? files.join('、') : '（无法从 diff 解析出文件名）',
-        diff: tooLong
-          ? `${lines.slice(0, 2000).join('\n')}\n（diff 过长已截断，完整内容请自行 git diff 查看）`
-          : raw,
-      }
+      return capDiff(raw)
     }
     // 设计阶段的 <screenshots>：给实文件清单而不是目录名——
     // agent 拿目录名还得自己 ls，目录不存在时更是白跑一轮。

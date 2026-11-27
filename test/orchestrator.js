@@ -13,6 +13,7 @@ import {
   ROLE_LABEL,
   readSkill,
   resolveInputs,
+  resolveSkillText,
   buildPrompt,
   readReceipt,
   validateReceipt,
@@ -98,6 +99,51 @@ console.log('\n== buildPrompt：开发阶段不写死输入路径 ==')
   })
   check('项目结构替换成功', prompt.includes('entry/、tools/'))
   check('上游文档按名字列出', prompt.includes('- 技术方案.md'))
+}
+
+console.log('\n== resolveSkillText：角色卡里的占位符也要替换 ==')
+{
+  const out = resolveSkillText('node <skillAssets>/svggen.cjs', {
+    skillAssets: 'C:/skills/design/assets',
+  })
+  check('卡里的指路变量被替换', out === 'node C:/skills/design/assets/svggen.cjs', out)
+  check(
+    '空字符串不替换（否则剩下空括号）',
+    resolveSkillText('判定结果（<diff>）', { diff: '' }) === '判定结果（<diff>）',
+  )
+  check('没有同名变量的 HTML 标记原样留着', resolveSkillText('换行<br>继续', {}) === '换行<br>继续')
+  check(
+    '同一段里的多个占位符都替换',
+    resolveSkillText('<reqId>/<id>', { reqId: 'abc', id: 'abc' }) === 'abc/abc',
+  )
+}
+
+console.log('\n== buildPrompt：卡内的 <reqId>/<id> 自动补齐 ==')
+{
+  const cp = getCheckpoint('review')
+  const prompt = buildPrompt({
+    checkpoint: cp,
+    state: { reqId: 'q1' },
+    skillText: '写 docs/requirements/<id>/，回执用 <reqId>',
+    vars: {},
+  })
+  check('卡里的 <id> 换成需求标识', prompt.includes('写 docs/requirements/q1/'), prompt.slice(0, 300))
+  check('卡里的 <reqId> 也换掉', prompt.includes('回执用 q1'))
+  check('不再留字面占位符', !prompt.includes('<id>') && !prompt.includes('<reqId>'))
+}
+
+console.log('\n== buildPrompt：设计卡的 <skillAssets> 变成真实路径 ==')
+{
+  const cp = getCheckpoint('design')
+  const prompt = buildPrompt({
+    checkpoint: cp,
+    state: { reqId: 'demo' },
+    skillText: '渲染器在 <skillAssets>，用 node <skillAssets>/svggen.cjs 出图。',
+    vars: { skillAssets: 'C:/skills/design/assets' },
+  })
+  check('skillAssets 被替换', prompt.includes('渲染器在 C:/skills/design/assets'), prompt.slice(0, 300))
+  check('代码块里的路径也可用', prompt.includes('node C:/skills/design/assets/svggen.cjs'))
+  check('不留字面占位符', !prompt.includes('<skillAssets>'))
 }
 
 console.log('\n== validateReceipt ==')

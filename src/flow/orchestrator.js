@@ -66,6 +66,25 @@ export function resolveInputs(inputs, vars) {
 }
 
 /**
+ * 角色卡正文里的 <占位符> 也要替换。
+ *
+ * 卡里写的是「渲染器装在哪」这类指路变量（设计卡的 `<skillAssets>`），
+ * 光把卡内联进 prompt、变量放在 vars 里没人替换，agent 拿到的是一个
+ * 字面 token，只能把整个用户目录递归搜一遍去找渲染器——实测设计阶段
+ * 为此烧掉 545s（4 次全盘 Get-ChildItem，最长一条 193s）。
+ *
+ * 与 resolveInputs 的差别：空字符串不替换。否则开发卡里那句「读本轮
+ * 的判定结果（<diff>）」在非评审回合会变成一对空括号。卡里自带的
+ * HTML 标记（`<br>`）没有同名变量，自然原样留着。
+ */
+export function resolveSkillText(skillText, vars) {
+  return String(skillText ?? '').replace(/<(\w+)>/g, (m, name) => {
+    const value = vars?.[name]
+    return typeof value === 'string' && value.trim() ? value : m
+  })
+}
+
+/**
  * 组装一次回合的 prompt。
  *
  * 结构：头部指明本回合只做哪一步 → 角色卡全文 → 输入白名单 → 硬约束 → 回执要求。
@@ -73,14 +92,18 @@ export function resolveInputs(inputs, vars) {
  */
 export function buildPrompt({ checkpoint, state, skillText, vars, roleLabel }) {
   const role = roleLabel ?? ROLE_LABEL[checkpoint.role] ?? checkpoint.role
-  const inputs = resolveInputs(checkpoint.input, vars)
+  // 需求标识对所有卡通用（卡里的 <reqId> 和 <id> 指的都是同一个东西），
+  // 但 vars 是 bridge 按回合组装的业务变量，未必带它，这里补齐再统一替换。
+  const allVars = { ...vars, reqId: state.reqId, id: state.reqId }
+  const inputs = resolveInputs(checkpoint.input, allVars)
+  const skill = resolveSkillText(skillText, allVars)
 
   const lines = [
     `${role}｜${state.reqId}`,
     '',
     `【本回合只做这一步】${checkpoint.label}（${checkpoint.id}）`,
     '',
-    skillText,
+    skill,
     '',
     '---',
     '',

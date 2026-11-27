@@ -10,7 +10,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
-import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor, withToolPaths, warmupAndLease, preflightGit } from '../src/flow-bridge.js'
+import { createFlowBridge, makeReqId, makeReqName, formatDecisions, uniqueReqId, buildAnswerBlock, askPayloadFor, withToolPaths, warmupAndLease, preflightGit, capDiff } from '../src/flow-bridge.js'
 import { getCheckpoint } from '../src/flow/flow.js'
 import { receiptFile } from '../src/flow/orchestrator.js'
 
@@ -628,11 +628,39 @@ console.log('\n== B3：设备预热（warmupAndLease）==')
   }
 }
 
+console.log('\n== capDiff：短 diff 原样、长 diff 截到 600 行 ==')
+{
+  const small = [
+    'diff --git a/a.js b/a.js',
+    '+++ b/a.js',
+    '+x',
+  ].join('\n')
+  const s = capDiff(small)
+  check('短 diff 原样返回', s.diff === small, s.diff)
+  check('短 diff 不带截断提示', !s.diff.includes('已截断'))
+  check('文件名从 diff 头解析出来', s.changedFiles === 'a.js', s.changedFiles)
+
+  const big = [
+    'diff --git a/a.js b/a.js',
+    '+++ b/a.js',
+    ...Array.from({ length: 800 }, (_, i) => `+line ${i}`),
+    '+TAIL_MARKER',
+  ].join('\n')
+  const b = capDiff(big)
+  check('长 diff 尾部被切掉', !b.diff.includes('TAIL_MARKER'))
+  check('保留前 600 行', b.diff.includes('+line 596') && !b.diff.includes('+line 600'))
+  check('明说已截断', /超过 600 行已截断/.test(b.diff), b.diff.slice(-120))
+  check('给出按文件取的办法', /git diff -- <文件>/.test(b.diff))
+  check('空 diff 不抛错', capDiff('').changedFiles.includes('无法'), capDiff('').changedFiles)
+}
+
 console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不受影响 ==')
 {
   // gitDiff mock 返回带标准头的 diff：要能从里面解出文件名
   const { deps, saved, agentCalls } = makeDeps({ approval: 'manual' })
-  deps.gitDiff = () => [
+  // 前 7 行是标准头，后面追加 700 行填充 + 一行尾部标记：
+  // 用来验证「超过 600 行就截断、尾部内容不再进 prompt」。
+  const diffHeader = [
     'diff --git a/app/lib/old.dart b/app/lib/new.dart',
     'index 1111..2222 100644',
     '--- a/app/lib/old.dart',
@@ -640,6 +668,11 @@ console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不�
     '@@ -1 +1 @@',
     '-a',
     '+b',
+  ]
+  deps.gitDiff = () => [
+    ...diffHeader,
+    ...Array.from({ length: 700 }, (_, i) => `+filler line ${i}`),
+    '+TAIL_SHOULD_NOT_APPEAR',
   ].join('\n')
   const innerRunTurn = deps.runTurn
   const prompts = []
@@ -680,6 +713,8 @@ console.log('\n== diff 预注入：评审链拿到真实 diff，其他阶段不�
       check('review prompt 含 diff 内容', prompts[reviewIdx].includes('diff --git a/app/lib/old.dart'), prompts[reviewIdx].slice(0, 300))
       check('review prompt 含改动文件名', prompts[reviewIdx].includes('app/lib/new.dart'), prompts[reviewIdx].slice(0, 300))
       check('review prompt 无残留占位符', !prompts[reviewIdx].includes('<changedFiles>') && !prompts[reviewIdx].includes('<diff>'))
+      check('超长 diff 被截断（600 行后的内容不再内联）', !prompts[reviewIdx].includes('TAIL_SHOULD_NOT_APPEAR'))
+      check('截断时告诉它按文件单独取', /git diff -- <文件>/.test(prompts[reviewIdx]), prompts[reviewIdx].slice(-300))
     }
   }
 }
