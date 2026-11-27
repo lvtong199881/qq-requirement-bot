@@ -8,6 +8,7 @@
  * 格式是 bridge 的私有格式，改版式不影响任何逻辑（不像 v1，改一列就可能解析错位）。
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { optionLabel } from './labels.js'
 import { join } from 'node:path'
 import { CHECKPOINTS } from './flow.js'
 
@@ -73,7 +74,7 @@ export function renderBoard(flow, opts = {}) {
     for (const d of flow.waiting.decisions) {
       lines.push(`- ${d.q}`)
       for (const [i, o] of (d.options ?? []).entries()) {
-        lines.push(`  - ${String.fromCharCode(65 + i)}. ${o.text}${o.recommended ? '（推荐）' : ''}`)
+        lines.push(`  - ${String.fromCharCode(65 + i)}. ${optionLabel(o.text, o.recommended)}`)
       }
     }
     lines.push('')

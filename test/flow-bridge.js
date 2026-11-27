@@ -340,6 +340,13 @@ console.log('\n== agent 要用户拍板：把它做成提问卡片 ==')
   check('群里看到了问题', Boolean(ask?.questions?.[0]?.title?.includes('弹窗时机')), JSON.stringify(ask))
   check('选项带推荐标记', ask?.questions?.[0]?.options?.[0]?.label === '首次启动（推荐）', JSON.stringify(ask?.questions?.[0]?.options))
   check('留了自由输入的口子', ask?.questions?.[0]?.allowInput === true)
+  // agent 有时自己就在选项文字里写了「（推荐）」，服务端再拼一次会变成
+  // 「（推荐）（推荐）」（真机卡上出现过），这里锁住去重行为。
+  const dupAsk = askPayloadFor([{ q: '时机', options: [{ text: '首次启动（推荐）', recommended: true }, { text: '每次启动', recommended: false }] }])
+  check('推荐标记不重复拼接', dupAsk.questions[0].options[0].label === '首次启动（推荐）', dupAsk.questions[0].options[0].label)
+  check('没标推荐的文字原样保留', dupAsk.questions[0].options[1].label === '每次启动', dupAsk.questions[0].options[1].label)
+  const looseAsk = askPayloadFor([{ q: '时机', options: [{ text: '首次启动（推荐）' }] }])
+  check('文字里的推荐不被吞掉', looseAsk.questions[0].options[0].label === '首次启动（推荐）', looseAsk.questions[0].options[0].label)
   check('不再发纯文本列表', !sent.some((t) => t.includes('A. 首次启动')), sent.join(' / '))
 }
 

@@ -11,6 +11,8 @@
  * 副作用（发消息、起进程、写盘）都通过 deps 注入，方便单测。
  */
 import { join, basename, dirname } from 'node:path'
+import { optionLabel } from './flow/labels.js'
+export { optionLabel }
 import { existsSync, mkdirSync, readdirSync, statSync, readFileSync, writeFileSync, rmSync, cpSync, copyFileSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
@@ -167,7 +169,7 @@ export function formatDecisions(decisions) {
     .map((d, i) => {
       const opts = (d.options ?? []).map((o, j) => {
         const key = String.fromCharCode(65 + j)
-        return `   ${key}. ${o.text}${o.recommended ? '（推荐）' : ''}`
+        return `   ${key}. ${optionLabel(o.text, o.recommended)}`
       })
       return [`${i + 1}. ${d.q}`, ...opts].join('\n')
     })
@@ -207,7 +209,7 @@ export function askPayloadFor(decisions = [], confirmTitle = '', decisionsTitle 
           .filter((o) => o && String(o.text ?? '').trim())
           .map((o, j) => ({
             id: String.fromCharCode(97 + j),
-            label: `${String(o.text).trim()}${o.recommended ? '（推荐）' : ''}`,
+            label: optionLabel(o.text, o.recommended),
           })),
       })),
     }
