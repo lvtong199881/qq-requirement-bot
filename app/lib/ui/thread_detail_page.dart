@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,6 +7,7 @@ import 'package:network/network.dart';
 
 import 'package:login/login.dart';
 import '../state/detail.dart';
+import '../download_saver.dart';
 import 'format.dart';
 import 'group_settings_page.dart';
 import 'package:base/base.dart';
@@ -775,16 +775,11 @@ class _FileContent extends StatelessWidget {
       final bytes = await auth.client.artifactBytes(url);
       final name = message.fileName ?? 'artifact.bin';
 
-      // 不引 share_plus / path_provider：两者都只为了「把字节落地」，
-      // 而 systemTemp 在所有平台上都是本 App 可写的临时目录。
-      // 落地后把路径复制到剪贴板，用户自己去文件 App 里找——
-      // 团队内部场景这点摩擦可以接受，换掉两个插件的原生配置成本。
-      final file = File('${Directory.systemTemp.path}/$name');
-      await file.writeAsBytes(bytes, flush: true);
-
-      await Clipboard.setData(ClipboardData(text: file.path));
+      // 落到公共下载目录（Download/qqbot/），文件管理器里能直接看到；
+      // 非 Android 平台（通道未注册）自动退回私有临时目录。
+      final where = await DownloadSaver.save(name, bytes);
       if (context.mounted) {
-        NativeToast.show('已保存到 ${file.path}（路径已复制）');
+        NativeToast.show('已保存到 $where');
       }
     } catch (e) {
       if (context.mounted) NativeToast.show('下载失败：$e', type: ToastType.error);
