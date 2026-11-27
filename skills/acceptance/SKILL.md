@@ -24,6 +24,18 @@ description: 验收 agent —— 相当于产品经理，代表需求方验收�
 
 ## 关键规则
 
+- **等状态用轮询，不要固定 sleep**：`Start-Sleep -Seconds 40` 等冷启动，实测 8~12s 就好——
+  35 条命令带固定 sleep 累计白等 528s。改成循环读到目标文字/界面出现为止：
+
+  ```powershell
+  $deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Date) -lt $deadline) {
+    if (adb -s $d shell dumpsys window | Select-String 'mCurrentFocus.*<包名>') { break }
+    Start-Sleep -Milliseconds 500
+  }
+  ```
+
+- **一个验收项一条命令**：点开 → 截图 → 读界面文字串进同一次 shell 调用，只回一次结果。
 - **逐条核对**：对照需求卡片和 PRD 的验收标准逐条判定，不用「基本符合」这类模糊结论。
 - **追溯矩阵**：每条验收标准都能追到实现位置和测试用例。
 - **无界面需求**：验证由测试报告兜底，复核一节写「不适用（无用户可见界面变化）」及原因。
