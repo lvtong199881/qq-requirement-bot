@@ -644,7 +644,12 @@ class _Bubble extends StatelessWidget {
               decoration: BoxDecoration(
                 // 回答卡自带完整卡片外壳（边框+底色），不再套消息气泡：
                 // 自己消息的蓝气泡底色会从卡片边缘漏出来，看着像双层皮。
-                color: _isAnsweredCard ? Colors.transparent : null,
+                // 其他消息维持原样：自己发的蓝底、别人的灰底。
+                color: _isAnsweredCard
+                    ? Colors.transparent
+                    : (mine
+                          ? theme.colorScheme.primaryContainer
+                          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.65)),
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(AppRadius.medium),
                   topRight: const Radius.circular(AppRadius.medium),
