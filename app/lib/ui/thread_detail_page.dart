@@ -602,6 +602,9 @@ class _Bubble extends StatelessWidget {
   /// 这条消息是在回答哪张卡片；有值且答了题时，正文按结构化排版
   final AskCard? answeredCard;
 
+  /// 回答卡消息（带 answers 且命中卡片）：气泡外壳让位给卡片自带的外壳
+  bool get _isAnsweredCard => answeredCard != null && message.answers.isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -639,9 +642,9 @@ class _Bubble extends StatelessWidget {
                 vertical: message.kind == 'image' ? AppSpace.xs : AppSpace.xs,
               ),
               decoration: BoxDecoration(
-                color: mine
-                    ? theme.colorScheme.primaryContainer
-                    : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                // 回答卡自带完整卡片外壳（边框+底色），不再套消息气泡：
+                // 自己消息的蓝气泡底色会从卡片边缘漏出来，看着像双层皮。
+                color: _isAnsweredCard ? Colors.transparent : null,
                 borderRadius: BorderRadius.only(
                   topLeft: const Radius.circular(AppRadius.medium),
                   topRight: const Radius.circular(AppRadius.medium),
@@ -665,8 +668,7 @@ class _Bubble extends StatelessWidget {
         return _FileContent(message: message, auth: auth);
       default:
         final card = answeredCard;
-        if (card != null && message.answers.isNotEmpty) {
-          // 确认卡（本轮是否通过）的回答也用卡片回显：纯文本「通过」两个字
+        if (card != null && message.answers.isNotEmpty) {          // 确认卡（本轮是否通过）的回答也用卡片回显：纯文本「通过」两个字
           // 丢掉了上下文——是哪一轮的通过、有没有附理由，卡片里看得一清二楚。
           return AnsweredCardView(card: card, answers: message.answers);
         }
