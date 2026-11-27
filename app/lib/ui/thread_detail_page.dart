@@ -13,6 +13,8 @@ import 'group_settings_page.dart';
 import 'package:base/base.dart';
 import 'widgets/ask_card.dart';
 import 'widgets/mentions.dart';
+import 'widgets/new_requirement_dialog.dart';
+import 'widgets/requirement_card.dart';
 import '../platform/toast.dart';
 
 /// 群详情：阶段进度 + 对话 + 拍板。
@@ -129,6 +131,23 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     _input.text = head.isEmpty || head.endsWith(' ') ? '$head$token' : '$head $token';
     _input.selection = TextSelection.collapsed(offset: _input.text.length);
     _focus.requestFocus();
+  }
+
+  /// 打开「发起新需求」弹窗。
+  ///
+  /// 起完需求清掉输入框草稿：那段话已经变成卡片落在消息流里了，
+  /// 输入框还留着同样的字，用户会以为没发出去。
+  Future<void> _openNewRequirement() async {
+    // 先收键盘：弹窗自己有输入框，两层输入法叠着会顶掉弹窗的按钮
+    _focus.unfocus();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => NewRequirementDialog(controller: _c),
+    );
+    if (ok == true && mounted) {
+      _input.clear();
+      NativeToast.show('需求已提交，等它开工');
+    }
   }
 
   // 通过/打回不再走这里：它们已经是消息流里的提问卡片，提交时和普通消息
@@ -261,9 +280,12 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
       final t = _c.thread;
       final empty = (t?.mode ?? 'chat') == 'chat'
           ? (t?.pending == true
-              ? '群建好了。想聊天就直接说，要干活就 @$_botName 说一句。'
+              // 起需求已经改成底部按钮了，这里再说「@ 一下」会把人带偏
+              ? (t?.canNewRequirement == true
+                  ? '群建好了。点下面的「发起新需求」交代要做什么；想聊天就直接说。'
+                  : '群建好了。想聊天就直接说；要提需求得找群主或管理员。')
               : '群里还没有消息，说第一句吧。')
-          : '群里还没有消息。要它动手，就 @$_botName 说一句。';
+          : '群里还没有消息。';
       return Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(AppSpace.xxl),
@@ -302,6 +324,14 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
         final older = i + 1 < items.length ? items[i + 1] : null;
         // 同一个人连续说话时不重复显示头像/时间，读起来更像对话
         final showMeta = older == null || older.role != m.role || m.at - older.at > 3 * 60 * 1000;
+        final req = m.requirement;
+        if (req != null) {
+          // 需求卡片和气泡之间要留间隔：贴在一起会当成同一条消息里的两截
+          return Padding(
+            padding: const EdgeInsets.only(top: AppSpace.sm),
+            child: RequirementCardView(key: ValueKey('req-${m.seq}'), card: req),
+          );
+        }
         final card = m.ask;
         if (card != null) {
           // 卡片和气泡是两条消息，头顶必须留出间隔：贴在一起会让人以为
@@ -345,6 +375,9 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     // 用群级权限：同一个人在 A 群是群主能提需求，在 B 群是普通成员就不能。
     // perms.startRequirement 是账号层面的，拿它锁这里会把群主误判成没权限。
     final canStart = t?.canStart == true || widget.auth.perms.startRequirement;
+    // 开新需求 = 有权限 且 这个群现在开得起来（没有正在跑/等你确认的需求）。
+    // 两者都不满足时按钮不出现：留一颗灰按钮在底下最显眼的位置，只会招人反复点。
+    final canNew = t?.canNewRequirement == true && canStart;
 
     return SafeArea(
       top: false,
@@ -360,11 +393,24 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
           border: Border(top: BorderSide(color: theme.dividerColor)),
         ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // 只剩一个「@名字」标签：聊天本身不需要解释，需要解释的是
-            // 「怎么让它动手」——所以标签就是入口，点一下把「@名字 」填进输入框。
-            // 没权限时标签变灰带锁，点不动但还在，用户看得到「还能这样」。
-            Align(
+            if (canNew) ...[
+              // 起需求的主入口。放底部（拇指区）、整宽、一屏只有这一个主操作。
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: busy || _c.starting ? null : _openNewRequirement,
+                  icon: const Icon(Icons.add_task, size: 18),
+                  label: const Text('发起新需求'),
+                ),
+              ),
+              const SizedBox(height: AppSpace.xs),
+            ],
+            // 「@名字」标签：这个群还没到能开新需求的时候（有人在跑、或者你没权限），
+            // 才留着它当提示——v2 里 @ 已经不起需求了，但 @ 还能把 agent 叫起来
+            // 继续一段聊天，所以不能全删。
+            if (!canNew) Align(
               alignment: Alignment.centerLeft,
               child: Padding(
                 padding: const EdgeInsets.only(bottom: AppSpace.xs),
@@ -666,34 +712,78 @@ class _Bubble extends StatelessWidget {
   }
 
   Widget _content(BuildContext context) {
+    // 回答了卡片的消息一律按卡片回显，不看 kind：这些消息历史上落的是 kind=text，
+    // 现在也还是 text（正文是卡片提交时拼的摘要）。按 kind 判会让它们退回纯文本，
+    // 上下文（哪一轮、选了什么）就丢了。
+    final card = answeredCard;
+    if (card != null && message.answers.isNotEmpty) {
+      return AnsweredCardView(card: card, answers: message.answers);
+    }
     switch (message.kind) {
       case 'image':
         return _ImageContent(message: message, auth: auth);
       case 'file':
         return _FileContent(message: message, auth: auth);
+      case 'text':
+      case 'stage':
+      case 'decision':
+        return _text(context);
       default:
         final card = answeredCard;
         if (card != null && message.answers.isNotEmpty) {          // 确认卡（本轮是否通过）的回答也用卡片回显：纯文本「通过」两个字
           // 丢掉了上下文——是哪一轮的通过、有没有附理由，卡片里看得一清二楚。
           return AnsweredCardView(card: card, answers: message.answers);
         }
-        // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
-        // 想摘一段发出去是常态，不能丢。
-        final scheme = Theme.of(context).colorScheme;
-        return SelectionArea(
-          child: Text.rich(
-            mentionRich(
-              message.text,
-              AppText.body.copyWith(color: scheme.onSurface),
-              // 叫了谁就在正文里标出来，跟输入框里的颜色一致
-              AppText.body.copyWith(
-                color: scheme.primary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        );
+        // 服务端加了新 kind 而 App 还没升级：不能让气泡变成空白。
+        // 空白的消息比一句「看不了」更难懂——用户以为是自己网卡了。
+        return _unknown(context);
     }
+  }
+
+  Widget _text(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
+    // 想摘一段发出去是常态，不能丢。
+    return SelectionArea(
+      child: Text.rich(
+        mentionRich(
+          message.text,
+          AppText.body.copyWith(color: scheme.onSurface),
+          // 叫了谁就在正文里标出来，跟输入框里的颜色一致
+          AppText.body.copyWith(
+            color: scheme.primary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _unknown(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final kind = message.kind.trim().isEmpty ? '未知' : message.kind;
+    // 老消息里可能有正文，带了就先显示正文，只是提示一下格式不支持
+    final inner = message.text.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.info_outline, size: 14, color: scheme.onSurfaceVariant),
+            const SizedBox(width: AppSpace.xxs),
+            Text(
+              '这条消息当前版本看不了（$kind）',
+              style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+        if (inner.isNotEmpty) ...[
+          const SizedBox(height: AppSpace.xxs),
+          Text(inner, style: AppText.bodyS.copyWith(color: scheme.onSurface)),
+        ],
+      ],
+    );
   }
 }
 

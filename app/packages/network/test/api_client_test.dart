@@ -191,15 +191,59 @@ void main() {
       expect(seen.path, '/api/threads/a%2Fb');
     });
 
-    test('reject 把原因放进 body', () async {
+    test('startRequirement 的参数全在 body，路径只放资源', () async {
       late http.Request seen;
       final c = clientWith((req) async {
         seen = req;
-        return jsonOk({});
+        return jsonOk({'ok': true, 'reqId': 'r1', 'name': '首页改版'});
       });
-      await c.reject('t1', '按钮颜色不对');
-      expect(seen.url.path, '/api/threads/t1/reject');
-      expect(jsonDecode(seen.body), {'reason': '按钮颜色不对'});
+      await c.startRequirement(
+        threadId: 't1',
+        text: '加一个返回顶部的按钮',
+        name: '返回顶部',
+        repoId: 'app',
+      );
+      // 路径不带任何参数：新接口的约定是「路径只放资源标识」
+      expect(seen.url.path, '/api/requirements');
+      expect(jsonDecode(seen.body), {
+        'threadId': 't1',
+        'text': '加一个返回顶部的按钮',
+        'name': '返回顶部',
+        'repoId': 'app',
+      });
+    });
+
+    test('startRequirement 没填名称时 body 里不带 name 字段', () async {
+      late http.Request seen;
+      final c = clientWith((req) async {
+        seen = req;
+        return jsonOk({'ok': true});
+      });
+      await c.startRequirement(threadId: 't1', text: '随便做点什么', repoId: 'app');
+      expect(jsonDecode(seen.body), {
+        'threadId': 't1',
+        'text': '随便做点什么',
+        'repoId': 'app',
+      });
+    });
+
+    test('listRepos 读 GET /api/repos，容错缺字段', () async {
+      late http.Request seen;
+      final c = clientWith((req) async {
+        seen = req;
+        return jsonOk({
+          'repos': [
+            {'id': 'app', 'name': 'DoDroidAI', 'platform': 'android'},
+            {'id': 'hm'},
+          ],
+        });
+      });
+      final repos = await c.listRepos();
+      expect(seen.url.path, '/api/repos');
+      expect(repos.map((r) => r.id), ['app', 'hm']);
+      expect(repos.first.name, 'DoDroidAI');
+      // 缺字段退回默认平台，界面上不至于显示空白
+      expect(repos.last.platform, 'android');
     });
 
     test('createGroup 发 name，返回空群形状', () async {
@@ -244,7 +288,7 @@ void main() {
           jsonFail(403, '通过和打回只有系统管理员能操作', errCode: 'forbidden', roleLabel: '普通成员'));
 
       await expectLater(
-        c.approve('t1'),
+        c.startRequirement(threadId: 't1', text: '加个按钮', repoId: 'app'),
         throwsA(isA<ApiException>()
             .having((e) => e.message, 'message', '通过和打回只有系统管理员能操作')
             .having((e) => e.code, 'code', 'forbidden')
@@ -262,9 +306,9 @@ void main() {
     });
 
     test('400 不算认证失败', () async {
-      final c = clientWith((req) async => jsonFail(400, '打回要写一句意见'));
+      final c = clientWith((req) async => jsonFail(400, '需求内容是空的'));
       await expectLater(
-        c.reject('t1', ''),
+        c.startRequirement(threadId: 't1', text: '', repoId: 'app'),
         throwsA(isA<ApiException>().having((e) => e.isAuth, 'isAuth', isFalse)),
       );
     });

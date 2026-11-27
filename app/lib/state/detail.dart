@@ -30,6 +30,9 @@ class ThreadDetailController extends ChangeNotifier {
 
   bool loading = true;
   bool sending = false;
+
+  /// 正在起需求（弹窗里点了提交）。弹窗据此禁用按钮，避免连点开出两单。
+  bool starting = false;
   String? error;
 
   /// 操作失败（通过/打回/发送）的提示，界面用 toast 显示后清掉。
@@ -167,28 +170,44 @@ class ThreadDetailController extends ChangeNotifier {
     }
   }
 
-  Future<bool> approve() => _decide(() => auth.runWithFailover((c) => c.approve(threadId)));
+  /// 弹窗在提交前自己要拉的仓库列表。失败原样抛出，让弹窗显示错误和重试，
+  /// 而不是塞进 actionError —— 那是整页的提示条，为了弹窗里一次加载失败
+  /// 把页面顶上也刷一条出来，太吵。
+  Future<List<Repo>> loadRepos() =>
+      auth.runWithFailover((c) => c.listRepos());
 
-  Future<bool> reject(String reason) =>
-      _decide(() => auth.runWithFailover((c) => c.reject(threadId, reason)));
-
-  Future<bool> _decide(Future<void> Function() run) async {
-    sending = true;
-    actionError = null;
+  /// 发起一条新需求。成功返回 null，失败返回可直接显示的错误文案。
+  ///
+  /// 不写 actionError：调用方是弹窗，错误要留在弹窗里让人改；写进页面状态
+  /// 会导致「弹窗关掉之后页面顶上还挂着一条报错」。
+  Future<String?> startRequirement({
+    required String text,
+    required String repoId,
+    String name = '',
+  }) async {
+    final body = text.trim();
+    if (body.isEmpty) return '需求内容不能为空';
+    if (repoId.trim().isEmpty) return '先选一个目标 APP';
+    starting = true;
     notifyListeners();
     try {
-      await run();
+      await auth.runWithFailover(
+        (c) => c.startRequirement(
+          threadId: threadId,
+          text: body,
+          name: name,
+          repoId: repoId.trim(),
+        ),
+      );
+      // 服务端先落库再返回，紧跟着的拉取一定能看到需求卡片
       _inFlight = false;
       await _load();
-      return true;
+      return null;
     } on ApiException catch (e) {
-      // 权限不足是这里最常见的失败（普通成员能看到按钮）。
-      // 后端已经把「只有系统管理员能操作」写好了，直接透传，
-      // 不要自己再拼一句「操作失败」把有用信息盖掉。
-      actionError = e.message;
-      return false;
+      // 权限不足、群里有需求在跑、仓库被删了……后端都说得很具体，直接透传
+      return e.message;
     } finally {
-      sending = false;
+      starting = false;
       if (!_disposed) notifyListeners();
     }
   }

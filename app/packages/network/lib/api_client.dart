@@ -297,15 +297,36 @@ class ApiClient {
     }
   }
 
-  Future<void> approve(String threadId) => _send(
-    'POST',
-    '/api/threads/${Uri.encodeComponent(threadId)}/approve',
-  );
+  // 通过/打回不再有独立接口：它们现在就是确认卡上的两个选项，
+  // 走 sendMessage 把 answers 带回去（见 thread_detail_page 的卡片提交）。
 
-  Future<void> reject(String threadId, String reason) => _send(
+  /// 面板里配过的项目仓库，发起新需求时给用户选。
+  Future<List<Repo>> listRepos() async {
+    final m = await _send('GET', '/api/repos');
+    return (m['repos'] as List? ?? const [])
+        .whereType<Map>()
+        .map((e) => Repo.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  /// 发起一条新需求。
+  ///
+  /// 参数全在 body 里：路径只放资源标识是这一层的约定（见仓库 AGENTS.md），
+  /// threadId 也是参数，所以跟着一起进 body。
+  Future<void> startRequirement({
+    required String threadId,
+    required String text,
+    String name = '',
+    required String repoId,
+  }) => _send(
     'POST',
-    '/api/threads/${Uri.encodeComponent(threadId)}/reject',
-    body: {'reason': reason},
+    '/api/requirements',
+    body: {
+      'threadId': threadId,
+      'text': text,
+      if (name.trim().isNotEmpty) 'name': name.trim(),
+      'repoId': repoId,
+    },
   );
 
   // ── 账号管理（只有系统管理员能调，后端会拒其他人） ──

@@ -65,20 +65,25 @@ Future<void> main(List<String> args) async {
         check('普通成员建群被拒', e.statusCode == 403, e.message);
       }
 
-      // m00102 的明确要求：普通成员看得见通过/打回，点了才告诉他不行。
-      // 所以这里要验的是「拒绝文案能原样透传到界面」，不是「按钮藏起来」。
+      // 起需求的入口收到 App 的弹窗接口上了：这里验的是普通成员照样被拦，
+      // 且拒绝文案能原样透传到界面（不是「按钮藏起来」）
       final first = threads.isEmpty ? null : threads.first;
-      if (first != null && (first.needsMe || first.blocked)) {
+      final repos0 = await c.listRepos();
+      if (first != null && repos0.isNotEmpty) {
         try {
-          await c.approve(first.threadId);
-          check('普通成员点通过应当被拒', false, '后端没拦');
+          await c.startRequirement(
+            threadId: first.threadId,
+            text: '普通成员不该能提需求',
+            repoId: repos0.first.id,
+          );
+          check('普通成员提需求应当被拒', false, '后端没拦');
         } on ApiException catch (e) {
-          check('普通成员点通过被拒且文案可展示', e.statusCode == 403 &&
-              e.message.contains('系统管理员') && (e.roleLabel ?? '').isNotEmpty,
+          check('普通成员提需求被拒且文案可展示', e.statusCode == 403 &&
+              e.message.contains('权限') && (e.roleLabel ?? '').isNotEmpty,
               '${e.message}（role=${e.roleLabel}）');
         }
       } else {
-        check('普通成员点通过被拒且文案可展示', true, '当前没有待我确认的需求，跳过');
+        check('普通成员提需求被拒且文案可展示', true, '当前没有群或项目，跳过');
       }
       stdout.writeln(failed == 0 ? '\n全部通过' : '\n\$failed 项失败');
       c.close();
@@ -92,8 +97,15 @@ Future<void> main(List<String> args) async {
     check('新建的群还没有需求', created.pending && created.name == null,
         'pending=${created.pending} name=${created.name}');
 
-    // 需求是群里的第一句话：发出去之后编排层才开始建 flow
-    await c.sendMessage(created.threadId, '冒烟测试：加一个返回顶部的按钮');
+    // 起需求走弹窗接口：目标 APP 是必填项，先去读面板配了哪些项目
+    final repos = await c.listRepos();
+    check('GET /api/repos（项目列表）', repos.isNotEmpty,
+        '共 ${repos.length} 个：${repos.map((r) => '${r.name}(${r.platform})').join('、')}');
+    await c.startRequirement(
+      threadId: created.threadId,
+      text: '冒烟测试：加一个返回顶部的按钮',
+      repoId: repos.first.id,
+    );
     Thread one = created;
     for (var i = 0; i < 20; i++) {
       one = await c.thread(created.threadId);
@@ -118,19 +130,25 @@ Future<void> main(List<String> args) async {
     check('POST 消息 + since 增量', after.messages.isNotEmpty && after.messages.first.isMine,
         '新消息 ${after.messages.length} 条，首条=${after.messages.first.text}');
 
-    // 权限：普通成员点通过要被后端拒，且文案能透传到界面
+    // 通过/打回没有独立接口了：它们是确认卡上的选项，提交时把 answers 带回去。
+    // 这里验的是「普通成员点提交被后端拒」，文案要能原样透传到界面。
     try {
-      await c.approve(created.threadId);
-      check('approve 通过', true);
+      await c.sendMessage(
+        created.threadId,
+        '本轮是否通过？ → 通过',
+        answers: const [MessageAnswer(qid: 'confirm', optionIds: ['approve'], input: '')],
+        askSeq: 0,
+      );
+      check('普通成员点确认卡提交被拒（管理员账号下会成功）', true);
     } on ApiException catch (e) {
-      check('approve 被拒（预期在非管理员账号下出现）', e.statusCode == 403, e.message);
+      check('普通成员点确认卡提交被拒', e.statusCode == 403, e.message);
     }
 
     try {
-      await c.reject(created.threadId, '');
-      check('空原因打回应当被拒', false, '后端没拦');
+      await c.startRequirement(threadId: created.threadId, text: '', repoId: repos.first.id);
+      check('空需求内容应当被拒', false, '后端没拦');
     } on ApiException catch (e) {
-      check('空原因打回被拒', e.statusCode == 400, e.message);
+      check('空需求内容被拒', e.statusCode == 400, e.message);
     }
   } on ApiException catch (e) {
     stderr.writeln('❌ 请求失败: ${e.message} (status=${e.statusCode} code=${e.code})');

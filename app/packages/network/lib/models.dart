@@ -147,6 +147,7 @@ class Thread {
     this.lastSeq = 0,
     this.canAct = false,
     this.canStart = false,
+    this.canNewRequirement = false,
     this.botName,
     this.memberCount = 0,
     this.myRole,
@@ -199,6 +200,13 @@ class Thread {
   /// 我能不能在这个群里提需求（@ 需求 bot）。群主/群管理员和系统管理员为 true。
   /// 和 [Perms.startRequirement] 的区别：那个是账号层面的，这个是**这个群**层面的。
   final bool canStart;
+
+  /// 能不能在这个群里真的开一单新需求（点「发起新需求」按钮）。
+  ///
+  /// 和 [canStart] 分开：canStart 只说「你有这个权限」，这里还要看「现在开得起来吗」——
+  /// 群里有需求在跑或者在等你确认时是 false。界面按这个决定**按钮出不出现**，
+  /// 不出灰按钮：灰的那颗只会让人反复点，还占着底部最显眼的位置。
+  final bool canNewRequirement;
 
   /// agent 在群里的显示名（服务端给，默认「AI员工」）。
   /// 名字可配置，所以界面上所有「@名字」都要用它拼，不能在代码里写死。
@@ -262,6 +270,7 @@ class Thread {
     lastSeq: (j['lastSeq'] as num?)?.toInt() ?? 0,
     canAct: j['canAct'] == true,
     canStart: j['canStart'] == true,
+    canNewRequirement: j['canNewRequirement'] == true,
     botName: j['botName']?.toString(),
     memberCount: (j['memberCount'] as num?)?.toInt() ?? 0,
     myRole: j['myRole']?.toString(),
@@ -449,6 +458,13 @@ class Message {
   bool get isAsk => kind == 'ask';
   AskCard? get ask => isAsk ? AskCard.fromPayload(payload) : null;
 
+  /// 需求卡片：App 里「发起新需求」之后，把填的东西落成一条结构化消息。
+  /// 走卡片而不是纯文本，是为了让后来进群的人也一眼看出「这一单是什么、
+  /// 打到哪个 APP」，而不是在聊天记录里翻一段长文。
+  bool get isRequirement => kind == 'requirement';
+  RequirementCard? get requirement =>
+      isRequirement ? RequirementCard.fromPayload(payload) : null;
+
   /// 用户回答的是哪张卡片（卡片消息的 seq）。没回答过是 null。
   int? get askSeq => (payload['askSeq'] as num?)?.toInt();
 
@@ -561,4 +577,77 @@ class MessageAnswer {
     optionIds: ((j['optionIds'] as List?) ?? const []).map((e) => e.toString()).toList(),
     input: (j['input'] ?? '').toString(),
   );
+}
+
+/// 一个项目仓库（面板「项目」页配的那些）。发起新需求时要选它。
+class Repo {
+  const Repo({required this.id, required this.name, this.platform = 'android'});
+
+  final String id;
+  final String name;
+
+  /// android / harmony / ios
+  final String platform;
+
+  factory Repo.fromJson(Map<String, dynamic> j) => Repo(
+    id: (j['id'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    platform: (j['platform'] ?? 'android').toString(),
+  );
+}
+
+/// 需求卡片的内容：只放用户在弹窗里填的东西。
+///
+/// 刻意不带发起人和时间——气泡顶上已经写着「谁 · 什么时候」了，
+/// 卡片里再写一遍是同一行字出现两次。
+class RequirementCard {
+  const RequirementCard({
+    required this.reqId,
+    required this.name,
+    required this.text,
+    this.repoId,
+    this.repoName,
+    this.platform,
+  });
+
+  final String reqId;
+
+  /// 需求名，用户没填时服务端会用需求正文起一个。
+  final String name;
+
+  /// 需求正文。
+  final String text;
+
+  final String? repoId;
+  final String? repoName;
+  final String? platform;
+
+  /// 容错读：字段缺了就当空串，卡片照常显示别炸。
+  factory RequirementCard.fromPayload(Map<String, dynamic> j) {
+    final repo = (j['repo'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return RequirementCard(
+      reqId: (j['reqId'] ?? '').toString(),
+      name: (j['name'] ?? '').toString(),
+      text: (j['text'] ?? '').toString(),
+      repoId: repo['id']?.toString(),
+      repoName: repo['name']?.toString(),
+      platform: repo['platform']?.toString(),
+    );
+  }
+}
+
+/// 平台的中文名。界面上不写字面量 harmony —— 这个字符串到处拼会散。
+String platformLabel(String? p) {
+  switch ((p ?? '').trim().toLowerCase()) {
+    case 'harmony':
+    case 'harmonyos':
+      return '鸿蒙';
+    case 'android':
+      return 'Android';
+    case 'ios':
+      return 'iOS';
+    default:
+      final v = (p ?? '').trim();
+      return v.isEmpty ? '未知平台' : v;
+  }
 }
