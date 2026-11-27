@@ -108,7 +108,9 @@ class AnsweredCardView extends StatelessWidget {
   }
 }
 
-/// 已回答卡片里的一道题：勾过的选项亮着、其余置灰，不可再点。
+/// 已回答卡片里的一道题：只展示用户选中的选项，不铺完整选项列表——
+/// 这条消息是「结果回显」，不是让人再核对一遍全选项；没选中的项
+/// 置灰排一片反而让人怀疑自己是不是漏选了。
 class _AnsweredQuestion extends StatelessWidget {
   const _AnsweredQuestion({required this.question, required this.answer, required this.index});
 
@@ -121,6 +123,15 @@ class _AnsweredQuestion extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final picked = answer?.optionIds ?? const <String>[];
     final typed = answer?.input.trim() ?? '';
+    // 选项按卡片上的顺序列，只留选中的；选项 id 可能和卡片对不上
+    // （老数据 / 引擎改过选项），找不到就按选择顺序兜底
+    final chosen = <String>[];
+    for (final o in question.options) {
+      if (picked.contains(o.id)) chosen.add(o.label);
+    }
+    for (final id in picked) {
+      if (!question.options.any((o) => o.id == id)) chosen.add(id);
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -130,25 +141,38 @@ class _AnsweredQuestion extends StatelessWidget {
           style: AppText.bodyS.copyWith(fontSize: 15, height: 1.3, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 6),
-        for (var i = 0; i < question.options.length; i++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: AppSpace.xxs),
-            child: _OptionRow(
-              label: question.options[i].label,
-              selected: picked.contains(question.options[i].id),
-              multi: question.isMulti,
-              enabled: false,
-              onTap: () {},
+        if (chosen.isEmpty && typed.isEmpty)
+          Text(
+            '（未作答）',
+            style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+          )
+        else ...[
+          for (final label in chosen)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpace.xxs),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.check, size: 18, color: scheme.primary),
+                  const SizedBox(width: AppSpace.xs),
+                  Expanded(
+                    child: Text(
+                      label,
+                      style: AppText.bodyS.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        if (typed.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: AppSpace.xxs),
-            child: Text(
-              '补充：$typed',
-              style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+          if (typed.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpace.xxs),
+              child: Text(
+                '补充：$typed',
+                style: AppText.bodyS.copyWith(color: scheme.onSurfaceVariant),
+              ),
             ),
-          ),
+        ],
       ],
     );
   }

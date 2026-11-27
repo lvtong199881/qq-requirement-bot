@@ -11,8 +11,12 @@ import 'ui/scan_page.dart';
 /// 隧道换址的发现通道：一个比隧道本身稳的静态 JSON（服务器换域名时
 /// 会自动更新它）。App 里所有自动换址都从这里拿候选地址。
 /// 放编译期常量：地址变了的补救手段不能再依赖会变的东西。
+///
+/// 必须带 access_token：gitee 对匿名访问这个接口限流（手机网络实测 403，
+/// 带 token 200），不带 token 时 App 永远拿不到新地址，只能手动换服务器。
+/// token 是只读的仓库 token，编译进客户端可接受。
 const _kDiscoveryUrl =
-    'https://gitee.com/api/v5/repos/mohanshang1/qq-requirement-bot/contents/endpoint.json';
+    'https://gitee.com/api/v5/repos/mohanshang1/qq-requirement-bot/contents/endpoint.json?access_token=7432e5f82a96882b09f4095b6c2ce095';
 
 void main() {
   runApp(const QqbotApp());

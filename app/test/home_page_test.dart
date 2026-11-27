@@ -774,14 +774,96 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     // 回答消息不再走普通气泡：改用和提问卡片同一外壳的 AnsweredCardView
-    // 回显——题干一行、勾过的选项亮着、其余置灰，确认卡也一样。
+    // 回显——题干一行、只列选中的选项，确认卡也一样走卡片。
     expect(find.byType(AnsweredCardView), findsOneWidget);
     expect(find.text('已回答'), findsOneWidget);
     expect(find.text('是否埋曝光？'), findsNWidgets(2)); // 卡片上 + 回答卡上
-    // 提问卡片和回答卡上各写一遍选项；没选的也铺开（置灰），一眼看出没选哪个
+    // 回答卡只展示选中的选项：提问卡片一份 + 回答卡一份（回答卡不再铺全选项）
     expect(find.text('先只埋点击'), findsNWidgets(2));
-    expect(find.text('先不做'), findsNWidgets(2));
+    expect(find.text('先不做'), findsOneWidget); // 只在提问卡片上，回答卡不铺
     expect(find.text('A. 先只埋点击'), findsNothing); // 不再用字母前缀排版
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  // 确认卡（本轮是否通过）的回答消息也要走卡片回显：纯文本「通过」两个字
+  // 丢上下文——是哪一轮的通过、有没有附打回理由，卡片里看得一清二楚。
+  testWidgets('确认卡的回答也用卡片回显', (tester) async {
+    final auth = await _readyAuth((req) async {
+      if (req.url.path == '/api/threads/t1') {
+        return _ok({
+          'thread': {
+            'threadId': 't1',
+            'groupName': '产品讨论',
+            'mode': 'requirement',
+            'pending': false,
+            'stage': '设计',
+            'stageStatus': '进行中',
+            'stages': [],
+          },
+        });
+      }
+      if (req.url.path == '/api/threads/t1/messages') {
+        final at = DateTime.now().millisecondsSinceEpoch;
+        return _ok({
+          'messages': [
+            {
+              'seq': 1,
+              'at': at,
+              'role': 'bot',
+              'kind': 'ask',
+              'payload': {
+                'title': '「设计」做完了，确认一下',
+                'submitLabel': '提交',
+                'questions': [
+                  {
+                    'id': 'confirm',
+                    'title': '本轮是否通过？',
+                    'kind': 'single',
+                    'allowInput': true,
+                    'inputLabel': '打回理由',
+                    'options': [
+                      {'id': 'approve', 'label': '通过'},
+                      {'id': 'reject', 'label': '打回'},
+                    ],
+                  },
+                ],
+              },
+            },
+            {
+              'seq': 2,
+              'at': at + 1000,
+              'role': 'user',
+              'kind': 'text',
+              'payload': {
+                'text': '通过',
+                'askSeq': 1,
+                'answers': [
+                  {'qid': 'confirm', 'optionIds': ['approve'], 'input': ''},
+                ],
+              },
+            },
+          ],
+          'lastSeq': 2,
+        });
+      }
+      return _ok({});
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(home: ThreadDetailPage(auth: auth, threadId: 't1')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // 确认卡的回答不再是纯文本气泡，走同一套卡片回显
+    expect(find.byType(AnsweredCardView), findsOneWidget);
+    expect(find.text('已回答'), findsOneWidget);
+    // 问题 + 选中的选项都在卡片里，只有一个「通过」（回答卡的），
+    // 提问卡片上的「通过」选项是另一份
+    expect(find.text('本轮是否通过？'), findsNWidgets(2));
+    expect(find.text('通过'), findsNWidgets(2));
+    expect(find.text('打回'), findsOneWidget); // 只在提问卡片上，回答卡不铺
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

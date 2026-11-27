@@ -665,7 +665,9 @@ class _Bubble extends StatelessWidget {
         return _FileContent(message: message, auth: auth);
       default:
         final card = answeredCard;
-        if (card != null && !card.isConfirm && message.answers.isNotEmpty) {
+        if (card != null && message.answers.isNotEmpty) {
+          // 确认卡（本轮是否通过）的回答也用卡片回显：纯文本「通过」两个字
+          // 丢掉了上下文——是哪一轮的通过、有没有附理由，卡片里看得一清二楚。
           return AnsweredCardView(card: card, answers: message.answers);
         }
         // 文本。SelectionArea 让长报告能长按复制——评审批次一屏看不完，
