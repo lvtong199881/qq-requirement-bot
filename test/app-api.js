@@ -379,6 +379,25 @@ let threadId = ''
   )
 }
 
+console.log('\n== 建群不填名字：默认拿群 id 当群名 ==')
+{
+  // 空名字放行后，服务端兜底不再叫「新群」而用群 id——好几个没起名的
+  // 群排在一起，重复的「新群」没法认，id 天然唯一。
+  const blank = await api('POST', '/api/threads', {
+    token: adminToken,
+    body: { name: '' },
+  })
+  check('空名字也能建群', blank.status === 200 && blank.data?.ok === true, JSON.stringify(blank.data).slice(0, 200))
+  const blankId = blank.data?.threadId
+  check('空名字建群返回了 threadId', typeof blankId === 'string' && blankId.startsWith('t'), blankId)
+  check(
+    '默认群名就是群 id',
+    blank.data?.thread?.groupName === blankId,
+    `groupName=${blank.data?.thread?.groupName} threadId=${blankId}`,
+  )
+  check('空字符串和完全不传一个效果', (await api('POST', '/api/threads', { token: adminToken, body: {} })).data?.thread?.groupName?.startsWith('t') === true)
+}
+
 console.log('\n== 群是私有的：没加入看不见，加进来才聊得上 ==')
 {
   // 群是私有的：系统管理员建了群，不代表别人能在列表里看到它。

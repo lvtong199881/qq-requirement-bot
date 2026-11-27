@@ -236,7 +236,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       nickname: user.nickname || user.username,
       at: Date.now(),
     }
-    const groupName = String(name ?? '').trim() || '新群'
+    // 空名字不拦也不叫「新群」：默认直接用群 id 当群名——群里好几个
+    // 默认群时「新群」重复一片没法认，id 天然唯一。
+    const groupName = String(name ?? '').trim() || threadId
     // 显式写全字段，不依赖 machine.peek 的默认值：拆分形态下没有编排层，
     // 这里存的形状就是 IM 看到的全部。
     groups.save(threadId, {
