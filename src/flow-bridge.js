@@ -1055,6 +1055,9 @@ export function createFlowBridge(deps) {
             if (!rr.ok) return null
             return ['done', 'needs_input', 'blocked'].includes(rr.receipt?.status) ? rr.receipt : null
           },
+          // 探针盯着哪个目录：runner 用它挂 fs.watch，回执一落地就结算，
+          // 不用等 5s 的兜底轮询（实测尾巴能省十几秒一个回合）。
+          receiptDir: () => reqDirOf(st.flow),
         })
         // spawn 失败是环境/配置问题，不是 agent 的错。抛出去让 runFromState 报明确错误，
         // 不要走返工——重试三次也不会好，只会把「dsh 找不到」说成「agent 做不出来」。

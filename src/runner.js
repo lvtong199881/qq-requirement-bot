@@ -6,6 +6,7 @@
  * 卡死可直接杀，且不需要碰 Web GUI 的鉴权链路。
  */
 import { spawn, execFileSync } from 'node:child_process'
+import { watch } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 /**
@@ -48,6 +49,9 @@ function killChildTree(child) {
  *   回执后进程可能挂住几十秒到分钟级，硬等进程退出会占满阶段超时。
  * @param {number} [o.finalGraceMs] final 事件后的宽限期（默认 10s）：收到 final
  *   说明 agent 已答完，进程还不退就视为挂住，探一次回执后强杀收工。
+ * @param {() => string|null} [o.receiptDir] 回执所在目录（每轮重新取，dev 起会
+ *   从暂存区换到工作区）。给了就用 fs.watch 盯着它，回执一落地立刻结算，
+ *   不用等轮询周期——实测成功回合的尾巴有 4~15s 全花在「等下一次轮询」上。
  * @returns {Promise<{sessionId: string|null, finalText: string, exitCode: number|null, timedOut: boolean}>}
  */
 /**
@@ -80,6 +84,7 @@ export function runTurn({
   receiptProbe,
   receiptProbeMs,
   finalGraceMs,
+  receiptDir,
 }) {
   const args = ['--profile', profile, '--json']
   if (sessionId) args.push('--session-id', sessionId)
@@ -236,47 +241,97 @@ export function runTurn({
         probeTimer = null
       }
       clearInterval(graceTimer)
+      closeWatch()
       signal?.removeEventListener('abort', abortHandler)
       resolve(payload)
     }
 
     // 提前结算：agent 写完回执后进程可能挂住（实测会白耗到阶段超时）。
-    // 进程还活着时定期探回执，回执合法落盘就按成功收工、终止进程树。
-    // 默认 15s 一次足够快——首次命中也要等一个周期，相对挂住的分钟级
-    // 损耗可忽略；测试用 receiptProbeMs 调快。
-    if (receiptProbe) {
-      probeTimer = setInterval(() => {
-        if (child.exitCode !== null) return // 进程自己退了，交给 close 事件
-        let found = null
-        try {
-          found = receiptProbe()
-        } catch {
-          /* 探针失败（文件竞态等）不当回事，下轮再探 */
+    // 进程还活着时探回执，回执合法落盘就按成功收工、终止进程树。
+    //
+    // 触发有两路，判定只有一份（trySettle）：
+    //   1) fs.watch 盯回执目录，文件一变立刻来看——成功回合的尾巴原来要等
+    //      一个轮询周期（15s），实测 9 个回合光这个尾巴就吃掉 91s；
+    //   2) 5s 兜底轮询。Windows 上 watch 会漏事件（先写临时名再改名、
+    //      目录刚建），漏了最多晚 5s，比原来的 15s 还是快，也不会漏判。
+    // 测试用 receiptProbeMs 调快。
+    const trySettle = () => {
+      if (settled || child.exitCode !== null) return false // 进程自己退了，交给 close 事件
+      let found = null
+      try {
+        found = receiptProbe()
+      } catch {
+        /* 探针失败（文件竞态等）不当回事，下次再探 */
+        return false
+      }
+      if (!found) return false
+      killChildTree(child)
+      setTimeout(() => {
+        if (child.exitCode === null) {
+          if (process.platform === 'win32') killChildTree(child)
+          else child.kill('SIGKILL')
         }
-        if (!found) return
-        killChildTree(child)
-        setTimeout(() => {
-          if (child.exitCode === null) {
-            if (process.platform === 'win32') killChildTree(child)
-            else child.kill('SIGKILL')
-          }
-        }, 5000).unref?.()
-        probeTimer = null
-        done({
-          sessionId: sid,
-          finalText,
-          exitCode: null,
-          timedOut: false,
-          // 标记「按回执收工」：进程是被杀的，exitCode 不可作准，
-          // 上层要按成功处理，不能拿 exitCode 判失败。
-          settledByReceipt: true,
-          stderr: stderrTail,
-          turnError: null,
-          errorSummary: null,
-          sessionLocked: false,
-          spawnFailed: false,
+      }, 5000).unref?.()
+      probeTimer = null
+      done({
+        sessionId: sid,
+        finalText,
+        exitCode: null,
+        timedOut: false,
+        // 标记「按回执收工」：进程是被杀的，exitCode 不可作准，
+        // 上层要按成功处理，不能拿 exitCode 判失败。
+        settledByReceipt: true,
+        stderr: stderrTail,
+        turnError: null,
+        errorSummary: null,
+        sessionLocked: false,
+        spawnFailed: false,
+      })
+      return true
+    }
+
+    // 回执目录会变（dev 起从暂存区换到工作区），每轮重新问一次；
+    // 变了就换一个 watch。目录还不存在时 watch 会抛，等下次兜底轮询再试。
+    let watcher = null
+    let watchedDir = null
+    const closeWatch = () => {
+      if (watcher) {
+        try { watcher.close() } catch { /* 已关掉 */ }
+        watcher = null
+      }
+      watchedDir = null
+    }
+    const armWatch = () => {
+      if (!receiptProbe || !receiptDir) return
+      let dir = null
+      try { dir = receiptDir() } catch { return }
+      if (!dir || dir === watchedDir) return
+      closeWatch()
+      try {
+        // 不过滤文件名：探针接口是「目录里有没有合法回执」，runner 不知道
+        // 回执叫什么（bridge 的命名、测试的自定义名都算数）。一次写盘会连发
+        // 好几个事件，200ms 节流够用；漏掉的那次由兜底轮询补。
+        let lastProbeAt = 0
+        watcher = watch(dir, { persistent: false }, () => {
+          const now = Date.now()
+          if (now - lastProbeAt < 200) return
+          lastProbeAt = now
+          trySettle()
         })
-      }, receiptProbeMs ?? 15000)
+        watcher.on?.('error', closeWatch)
+        watchedDir = dir
+      } catch {
+        watcher = null
+        watchedDir = null
+      }
+    }
+
+    if (receiptProbe) {
+      armWatch()
+      probeTimer = setInterval(() => {
+        armWatch()
+        trySettle()
+      }, receiptProbeMs ?? 5000)
       probeTimer.unref?.()
     }
 

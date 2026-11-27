@@ -61,6 +61,25 @@ check('没等满超时（<20s，而不是 120s）', elapsed < 20_000, `${Math.ro
 check('没被记成 timedOut', r.timedOut === false)
 check('探针发现前回执确实写了', existsSync(receiptFile))
 
+// fs.watch 比轮询快：兜底轮询故意设成 8s，回执 1s 就落地，
+// 靠目录事件该在 4s 内收工；没有 watch 的话要等到 8s 那一次轮询
+const t3start = Date.now()
+const r3 = await runTurn({
+  dshBin,
+  profile: 'test',
+  projectDir,
+  prompt: 'x',
+  env: { ...env, EARLY_RECEIPT: join(work, 'watched.json') },
+  timeoutMs: 120_000,
+  receiptProbe: () => (existsSync(join(work, 'watched.json')) ? { status: 'done' } : null),
+  receiptProbeMs: 8_000,
+  receiptDir: () => work,
+  onChild: () => {},
+})
+const t3 = Date.now() - t3start
+check('目录事件触发的收工也被标记', r3.settledByReceipt === true, JSON.stringify({ settled: r3.settledByReceipt, timedOut: r3.timedOut }))
+check('不用等 8s 的兜底轮询（<4s 收工）', t3 < 4_000, `${Math.round(t3 / 100) / 10}s`)
+
 // 对照组：没有探针时同一假 dsh 会白等满超时——证明探针是起作用的那个开关
 const t2start = Date.now()
 const r2 = await runTurn({
