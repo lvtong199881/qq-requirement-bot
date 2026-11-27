@@ -42,6 +42,47 @@ function makeRemote() {
   return dir
 }
 
+console.log('\n== 远端地址缺失/半成品裸仓库 ==')
+{
+  const remote = makeRemote()
+  const root = mkdtempSync(join(tmpdir(), 'bot-'))
+  const repoDir = join(root, 'repo.git')
+
+  // 配置里漏了 url：不能造出一个 origin 为空的裸仓库，否则之后每次 fetch 都报
+  // 「'origin' does not appear to be a git repository」（多仓库首次跑需求踩过）
+  const noUrl = ensureBareRepo({ repoDir, remoteUrl: '', mainBranch: 'main' })
+  check('没 url 直接报错', noUrl.ok === false && /url/.test(noUrl.error ?? ''), JSON.stringify(noUrl))
+  check('没 url 时不留垃圾目录', !isRepoReady(repoDir))
+
+  // 复现坏状态：裸仓库建好了，但 origin 地址是空的
+  mkdirSync(repoDir, { recursive: true })
+  g(repoDir, ['init', '--bare', '-q'])
+  g(repoDir, ['remote', 'add', 'origin', ''])
+  const healed = ensureBareRepo({ repoDir, remoteUrl: remote, mainBranch: 'main' })
+  check('半成品裸仓库能自愈', healed.ok, healed.error)
+  check('自愈后 origin 地址正确', gitRun(repoDir, ['config', '--get', 'remote.origin.url']).out.trim() === remote)
+  check('自愈后拉到 origin/main', gitRun(repoDir, ['rev-parse', '--verify', 'origin/main']).ok)
+  // 这个仓库的 HEAD 还是 init 默认的 master，远端只有 main —— 不能把 master
+  // 当成主分支返回，否则建工作区会去 fetch 一个不存在的 origin/master
+  check('主分支按远端实际分支纠偏', healed.mainBranch === 'main', healed.mainBranch)
+}
+
+console.log('\n== 主分支只认远端真实存在的 ==')
+{
+  const remote = makeRemote()
+  const root = mkdtempSync(join(tmpdir(), 'bot-'))
+  const repoDir = join(root, 'repo.git')
+  mkdirSync(repoDir, { recursive: true })
+  g(repoDir, ['init', '--bare', '-q'])
+  g(repoDir, ['remote', 'add', 'origin', remote])
+  g(repoDir, ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'])
+  g(repoDir, ['fetch', 'origin'])
+  // HEAD 写死成远端没有的 master
+  g(repoDir, ['symbolic-ref', 'HEAD', 'refs/heads/master'])
+  const r = ensureBareRepo({ repoDir, remoteUrl: remote, mainBranch: 'master' })
+  check('HEAD 指向不存在的分支时改用 main', r.ok && r.mainBranch === 'main', JSON.stringify(r))
+}
+
 console.log('\n== bare 仓库初始化 ==')
 {
   const remote = makeRemote()

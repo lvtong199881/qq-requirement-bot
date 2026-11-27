@@ -795,7 +795,7 @@ export function createFlowBridge(deps) {
             // 远端地址优先级：仓库自己配的 > 全局 remoteUrl（单仓库场景）> 从仓库路径的 origin 推断
             const repo = ensureBareRepo({
               repoDir: repoCfg.repoDir,
-              remoteUrl: repoCfg.remoteUrl || config.remoteUrl || remoteUrlOf(repoCfg.path),
+              remoteUrl: repoCfg.remoteUrl || repoCfg.url || config.remoteUrl || remoteUrlOf(repoCfg.path),
               mainBranch,
             })
             if (!repo.ok) throw new Error(`初始化裸仓库失败（${repoId}）：${repo.error}`)

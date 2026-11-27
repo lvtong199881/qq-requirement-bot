@@ -24,9 +24,29 @@ export function isRepoReady(repoDir) {
  * @returns {{ok: true, created: boolean, mainBranch: string} | {ok: false, error: string}}
  */
 export function ensureBareRepo({ repoDir, remoteUrl, mainBranch = 'main' }) {
+  const url = String(remoteUrl ?? '').trim()
+
   if (isRepoReady(repoDir)) {
-    return { ok: true, created: false, mainBranch: detectMainBranch(repoDir) ?? mainBranch }
+    // 只看 HEAD 在不在会漏一种坏状态：上次初始化到一半（配置里没写 url）留下
+    // 一个 origin 地址为空的裸仓库，之后每次 fetch 都报「origin 不是仓库」。
+    // 用 config 读而不是 remote get-url：后者对空 url 会打印 「origin」，
+    // 看起来像有地址，坏状态就藏过去了（实测踩过）。
+    const current = gitRun(repoDir, ['config', '--get', 'remote.origin.url'])
+    if (!current.ok || !current.out.trim()) {
+      if (!url) return { ok: false, error: '裸仓库没有远端地址，配置里也没有可用的 url' }
+      gitRun(repoDir, ['config', 'remote.origin.url', url])
+      gitRun(repoDir, ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'])
+      const healed = gitRun(repoDir, ['fetch', 'origin'])
+      if (!healed.ok) return { ok: false, error: `fetch 失败：${healed.error}` }
+      const fixed = pickExistingBranch(repoDir, detectMainBranch(repoDir) ?? mainBranch)
+      gitRun(repoDir, ['symbolic-ref', 'HEAD', `refs/heads/${fixed}`])
+      return { ok: true, created: false, mainBranch: fixed }
+    }
+    return { ok: true, created: false, mainBranch: pickExistingBranch(repoDir, detectMainBranch(repoDir) ?? mainBranch) }
   }
+
+  // 没 url 就早早报错，别造出一个注定 fetch 失败的空仓库
+  if (!url) return { ok: false, error: '没有可用的远端地址（仓库配置里缺 url）' }
 
   try {
     mkdirSync(repoDir, { recursive: true })
@@ -36,7 +56,7 @@ export function ensureBareRepo({ repoDir, remoteUrl, mainBranch = 'main' }) {
 
   const steps = [
     ['init', '--bare', '-q'],
-    ['remote', 'add', 'origin', remoteUrl],
+    ['remote', 'add', 'origin', url],
     // 关键：没有这行就不会有 origin/<branch>，worktree 无法基于远端最新创建
     ['config', 'remote.origin.fetch', '+refs/heads/*:refs/remotes/origin/*'],
     ['config', 'remote.origin.prune', 'true'],
@@ -49,8 +69,31 @@ export function ensureBareRepo({ repoDir, remoteUrl, mainBranch = 'main' }) {
   const fetched = gitRun(repoDir, ['fetch', 'origin'])
   if (!fetched.ok) return { ok: false, error: `fetch 失败：${fetched.error}` }
 
-  gitRun(repoDir, ['symbolic-ref', 'HEAD', `refs/heads/${mainBranch}`])
-  return { ok: true, created: true, mainBranch }
+  const branch = pickExistingBranch(repoDir, mainBranch)
+  gitRun(repoDir, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
+  return { ok: true, created: true, mainBranch: branch }
+}
+
+/**
+ * 从远端已经拉下来的 refs 里挑一个真实存在的分支。
+ *
+ * 裸仓库的 HEAD 只是 symbolic-ref，init --bare 默认指向 master；远端主分支叫
+ * main 时两者不一致，照着 HEAD 去 `git fetch origin master` 会直接失败
+ * （实测：多仓库首次跑需求卡在「无法确定起点分支」）。
+ */
+function pickExistingBranch(repoDir, wanted) {
+  const exists = (b) =>
+    Boolean(b) && gitRun(repoDir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${b}`]).ok
+  if (exists(wanted)) return wanted
+  const refs = (gitRun(repoDir, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin']).out ?? '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((s) => s && s !== 'origin/HEAD')
+  for (const pref of ['origin/main', 'origin/master']) {
+    if (refs.includes(pref)) return pref.slice('origin/'.length)
+  }
+  const first = refs[0]
+  return first ? first.replace(/^origin\//, '') : wanted
 }
 
 /**
