@@ -392,11 +392,10 @@ export function createFlowBridge(deps) {
    * 返回 {ok, reqId, name} 让调用方立刻回执；回合本身异步跑，建完就不占着请求。
    */
   async function createRequirement({ groupId, text, name, repoId, replyTo, st, initiator }) {
-    // 一个群同时只跑一单：覆盖掉在跑的 flow，上一单的产物就成了没人认领的孤儿。
-    // 已交付（done）的群允许再开新的一单——同一个群接着提第二个需求是正常用法。
-    if (st.flow && st.flow.status !== 'done') {
-      const busy = st.flow.status === 'waiting_user' ? '等你确认' : '还在执行'
-      return { ok: false, error: `这个群的需求 ${st.flow.reqId} ${busy}，跑完再发新的` }
+    // 一个群只服务一条需求：交付完也不在同一个群里再开一单，否则群消息里
+    // 会并排躺着两张需求卡片，追问和拍板都不知道挂在谁身上。
+    if (st.flow?.reqId) {
+      return { ok: false, error: `这个群已经有需求了（${st.flow.reqId}），换一个群发起新需求` }
     }
 
     const repos = config.repos ?? []

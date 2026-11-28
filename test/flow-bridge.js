@@ -443,6 +443,26 @@ console.log('\n== dsh 找不到：报配置错误，不返工 ==')
   check('没有走三次返工', !sent.some((t) => t.includes('连续 3 轮')))
 }
 
+console.log('\n== 一个群只服务一条需求 ==')
+{
+  const { deps } = makeDeps()
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  const first = await startReq(bridge, { text: '首页加个弹窗', st })
+  check('第一个需求能建', first.ok === true && Boolean(first.reqId), JSON.stringify(first).slice(0, 160))
+
+  // 上面这个群的 flow 还在跑：不许再开一单
+  const busy = await bridge.createRequirement({ groupId: 'g1', text: '再来一个', replyTo: 2, st, repoId: 'app' })
+  check('跑着的时候拒绝', busy.ok === false, JSON.stringify(busy).slice(0, 160))
+  check('提示里带上了上一单的 reqId', String(busy.error ?? '').includes(first.reqId), busy.error)
+
+  // 交付完也不给再开：一个群只服务一条需求
+  st.flow.status = 'done'
+  const afterDone = await bridge.createRequirement({ groupId: 'g1', text: '再来一个', replyTo: 3, st, repoId: 'app' })
+  check('交付完了仍然拒绝', afterDone.ok === false, JSON.stringify(afterDone).slice(0, 160))
+  check('提示换一个群', /换一个群/.test(afterDone.error ?? ''), afterDone.error)
+}
+
 console.log('\n== 群消息不再起需求：只回提示 ==')
 {
   // v2 起需求只走 App 的「新需求」弹窗（POST /api/requirements → createRequirement），

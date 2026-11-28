@@ -124,7 +124,9 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     const pending = !en.reqId && !saved?.reqId
     // 「新需求」按钮：群是空的（还没需求）或上一单已交付时才有入口。
     // 跑着/等确认/卡住都不给——点进去只会被服务端拒一次，白问一遍。
-    const canNewRequirement = pending || saved?.flow?.status === 'done'
+    // 一个群只服务一条需求：起过需求（不管交付没交付）就不再给入口，
+  // 否则同一个群里会并排躺着两张需求卡片，谁也说不清在说哪一单。
+  const canNewRequirement = pending
     const stageStatus = pending
       ? '待提需求'
       : (en.stageStatus ?? (saved?.reqId ? '旧版需求' : '进行中'))
@@ -170,7 +172,7 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
     lastActiveAt: g.lastActiveAt ?? null,
     // 快照路径拿不到 flow 状态，但 stageStatus 是编排层翻译过的：只有
     // 「已完成」代表这一单交付了，可以再开新的一单。
-    canNewRequirement: !g.reqId || g.stageStatus === '已完成',
+    canNewRequirement: !g.reqId,
     running: Boolean(g.activeTurn),
     needsMe: g.stageStatus === '等你确认',
     stages: g.stages ?? [],
@@ -541,11 +543,11 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       }
     }
 
-    // 起新需求前先看群里有没有在跑的：否则用户消息落了库、引擎又拒建，
-    // 群里会多出一条没人接管的需求原文。权限检查已经过，这里查状态。
+    // 一个群只服务一条需求：起过就不再接新的，哪怕上一单已经交付完。
+    // 先查状态再落库，被拒时群里不会多出一条没人接管的需求原文。
     const st = typeof machine?.peek === 'function' ? machine.peek(threadId) : null
-    if (st?.flow && st.flow.status !== 'done') {
-      return { ok: false, error: `这个群的需求 ${st.flow.reqId} 还没跑完，等交付后再发新的` }
+    if (st?.flow?.reqId) {
+      return { ok: false, error: `这个群已经有需求了（${st.flow.reqId}），换一个群发起新需求` }
     }
 
     const body = String(text ?? '').trim()
@@ -565,19 +567,6 @@ export function createThreadService({ machine, store, messages, buildSnapshot, d
       nickname: user.nickname || user.username,
       at: Date.now(),
     }
-
-    // 用户填的需求原文先落库：它是这次需求的「用户说了什么」，
-    // 后面 agent 提问、拍板都挂在它下面
-    messages.append(threadId, {
-      role: 'user',
-      kind: 'text',
-      payload: {
-        text: body,
-        userId: initiator.userId,
-        nickname: initiator.nickname,
-      },
-      at: initiator.at,
-    })
 
     groups.save(threadId, {
       ...saved,

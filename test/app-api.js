@@ -652,6 +652,25 @@ console.log('\n== 起需求只走「新需求」弹窗的接口 ==')
   check('群变成需求模式', detail.data?.thread?.mode === 'requirement', detail.data?.thread?.mode)
   check('不再是待提需求', detail.data?.thread?.pending === false)
   check('跑着的时候不给「新需求」入口', detail.data?.thread?.canNewRequirement === false, String(detail.data?.thread?.canNewRequirement))
+
+  // 需求原文只由发起卡片承载。以前这里还会先落一条用户纯文本，
+  // 结果群里同一件事出现两遍：一个气泡 + 一张卡片。
+  const rows = messages.list(threadId, { limit: 100 }).messages
+  const dupText = rows.filter((m) => m.role === 'user' && m.kind === 'text' && m.payload?.text === '给首页加个欢迎弹窗')
+  check('需求原文不另落一条用户气泡', dupText.length === 0, String(dupText.length))
+  check('只落了一张发起卡片', rows.filter((m) => m.kind === 'requirement').length === 1, String(rows.filter((m) => m.kind === 'requirement').length))
+
+  // 交付完了也不给入口：一个群只服务一条需求
+  const st = machines.get(threadId)
+  st.flow.status = 'done'
+  const after = await api('GET', `/api/threads/${threadId}`, { token: adminToken })
+  check('交付完成后仍然不给「新需求」入口', after.data?.thread?.canNewRequirement === false, String(after.data?.thread?.canNewRequirement))
+  const again = await api('POST', '/api/requirements', {
+    token: adminToken,
+    body: { threadId, text: '再提一个', repoId },
+  })
+  check('同一个群再提被拒 400', again.status === 400, String(again.status))
+  check('提示这个群已经有需求', /已经有需求/.test(again.data?.error ?? ''), again.data?.error)
 }
 
 console.log('\n== 建群的人在群里就是群主，能提需求 ==')
