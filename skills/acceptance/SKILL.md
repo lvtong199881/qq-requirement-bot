@@ -24,8 +24,30 @@ description: 验收 agent —— 相当于产品经理，代表需求方验收�
 
 ## 关键规则
 
+- **命令自带超时，不要把超时留给回合**：`adb`、`am start -W`、`uiautomator dump`、装包这类命令
+  都可能永久卡住。实测这一阶段 35 条命令带固定 `Start-Sleep -Seconds 40`，累计白等 528s，
+  其中就有几条是挂住而不是真在启动。所有这类命令必须包一层超时，到点就按失败处理并带出
+  当前界面状态：
+
+  ```powershell
+  . "<skillAssets>/with-timeout.ps1"
+
+  $r = Invoke-WithTimeout -Seconds 20 -What "打开设置页并等配置列表" -Vars @{ d = $d } -Script {
+    adb -s $d shell input tap 540 1200
+    adb -s $d shell dumpsys window | Select-String mCurrentFocus
+  }
+  if (-not $r.ok) {
+    # $r.timedOut = $true 时 $r.state 是现场（前台窗口；连取证都超时说明设备失联）
+    # 这一条验收项判「未验证」并写原因，不要原地重试第二遍
+  }
+  ```
+
+  `-Seconds` 取「正常耗时的 3 倍左右」：点按/切换 15s、启动应用 30s、装包 120s。
+  超时即失败，同一项不重试第二遍；连续两条超时说明设备已失联，写 `blocked` 回执。
+
 - **等状态用轮询，不要固定 sleep**：`Start-Sleep -Seconds 40` 等冷启动，实测 8~12s 就好——
-  35 条命令带固定 sleep 累计白等 528s。改成循环读到目标文字/界面出现为止：
+  35 条命令带固定 sleep 累计白等 528s。改成循环读到目标文字/界面出现为止（循环要有次数
+  上限，别把固定 sleep 换成永久循环）：
 
   ```powershell
   $deadline = (Get-Date).AddSeconds(90)
@@ -48,6 +70,7 @@ description: 验收 agent —— 相当于产品经理，代表需求方验收�
 - [ ] 追溯矩阵完整，每条验收标准能追到实现位置和测试用例
 - [ ] 有界面变化时亲手跑过，结论留在文档里；无界面写明「不适用」及原因
 - [ ] 没看源码、没构建、没评价代码风格
+- [ ] 所有可能卡住的命令都自带超时，没有一条靠回合总超时收尸
 - [ ] 设计实现偏差已逐状态对照并判定（设计变更 / 实现偏差）
 - [ ] 每条验收标准有明确结论
 - [ ] 截图库中该页面各状态的图已更新

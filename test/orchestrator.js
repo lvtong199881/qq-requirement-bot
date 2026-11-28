@@ -147,26 +147,28 @@ console.log('\n== buildPrompt：设计卡的 <skillAssets> 变成真实路径 ==
   check('不留字面占位符', !prompt.includes('<skillAssets>'))
 }
 
-console.log('\n== 测试卡：卡住的命令自带超时 ==')
+console.log('\n== 设备阶段的角色卡：卡住的命令自带超时 ==')
 {
   const skillsRoot = fileURLToPath(new URL('../skills', import.meta.url))
-  const helper = join(skillsRoot, 'test', 'assets', 'with-timeout.ps1')
-  check('带超时的包装脚本在仓库里', existsSync(helper), helper)
-  if (existsSync(helper)) {
-    const helperText = readFileSync(helper, 'utf8')
-    check('用 Wait-Job -Timeout 卡时间', /Wait-Job\s+-Timeout/.test(helperText))
-    check('超时后 Stop-Job 收掉子进程', /Stop-Job/.test(helperText))
-    check('超时带出现场（读 mCurrentFocus）', /mCurrentFocus/.test(helperText))
-  }
+  // 测试和验收都要亲手在设备上跑，两边的包装脚本各放一份（角色卡只看自己的 assets）
+  for (const role of ['test', 'acceptance']) {
+    const helper = join(skillsRoot, role, 'assets', 'with-timeout.ps1')
+    check(`[${role}] 带超时的包装脚本在仓库里`, existsSync(helper), helper)
+    if (existsSync(helper)) {
+      const helperText = readFileSync(helper, 'utf8')
+      check(`[${role}] 用 Wait-Job -Timeout 卡时间`, /Wait-Job\s+-Timeout/.test(helperText))
+      check(`[${role}] 超时后 Stop-Job 收掉子进程`, /Stop-Job/.test(helperText))
+      check(`[${role}] 超时带出现场（读 mCurrentFocus）`, /mCurrentFocus/.test(helperText))
+    }
 
-  const testSkill = readSkill(skillsRoot, 'test')
-  check('测试卡读取成功', testSkill.ok, testSkill.reason)
-  if (testSkill.ok) {
-    check('测试卡指向这个脚本', testSkill.text.includes('with-timeout.ps1'))
-    const resolved = resolveSkillText(testSkill.text, { skillAssets: join(skillsRoot, 'test', 'assets') })
-    check('指向路径被换成绝对路径', resolved.includes(join(skillsRoot, 'test', 'assets')))
-    check('不留字面占位符', !resolved.includes('<skillAssets>'))
-    check('准出清单点了超时这条', resolved.includes('没有一条靠回合总超时收尸'))
+    const skill = readSkill(skillsRoot, role)
+    check(`[${role}] 角色卡读取成功`, skill.ok, skill.reason)
+    if (!skill.ok) continue
+    check(`[${role}] 角色卡指向这个脚本`, skill.text.includes('with-timeout.ps1'))
+    const resolved = resolveSkillText(skill.text, { skillAssets: join(skillsRoot, role, 'assets') })
+    check(`[${role}] 指向路径被换成绝对路径`, resolved.includes(join(skillsRoot, role, 'assets')))
+    check(`[${role}] 不留字面占位符`, !resolved.includes('<skillAssets>'))
+    check(`[${role}] 准出清单点了超时这条`, resolved.includes('没有一条靠回合总超时收尸'))
   }
 }
 
