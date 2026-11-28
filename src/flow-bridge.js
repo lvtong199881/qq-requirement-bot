@@ -23,6 +23,7 @@ import { runFlow } from './flow/flow-runner.js'
 import { readReceipt, receiptFile } from './flow/orchestrator.js'
 import { writeBoard } from './flow/board.js'
 import { gitRun, detectMainBranch } from './infra/git.js'
+import { runMergeScript } from './flow/merge-script.js'
 import { acquireLock, SlotPool } from './infra/lock.js'
 import { createEmulatorClient } from './infra/emulator-client.js'
 import { platformOf, renderCommand } from './infra/platform.js'
@@ -273,6 +274,10 @@ export function createFlowBridge(deps) {
     return repos.find((r) => r.id === id) ?? config.primaryRepo ?? null
   }
   const platformFor = (flow) => platformOf(repoFor(flow))
+  // 合并脚本可替换：单测里真跑 git 会把夹具仓库推歪（跨用例串味），
+  // 所以生产默认真实现、测试显式换桩或整个关掉。
+  const mergeScriptImpl = deps.runMergeScript ?? runMergeScript
+  const scriptedMerge = deps.scriptedMerge !== false
   const skillsDir = join(repoRoot, 'skills')
   const templates = config.messageTemplates
   // 测试可以注入假 diff；生产环境读真 git
@@ -943,6 +948,36 @@ export function createFlowBridge(deps) {
         await bridgeAction({ groupId, cp, flow, st, replyTo })
       },
       runAgent: async ({ role, checkpoint, prompt, sessionId }) => {
+        // 合并是纯确定性搬运（fetch / merge --no-ff / 归档文档 / push / 写回执），
+        // 快进场景（main 自分支切出后没动过）不需要模型插手：上两单这一阶段花了
+        // 326s、748s，其中工具时间只有 83s，其余全是模型在来回打同样的 git 命令。
+        // main 有新提交时三方合并会得到没人测过的新树，那种情况仍派 agent（它会
+        // 重跑编译单测），判据由回合开始前的 mergeFastForward 决定。
+        if (scriptedMerge && checkpoint.id === 'merge' && st.flow?.vars?.mergeFastForward === true) {
+          const mergeWorkDir = st.flow.vars.mergeWorkDir
+          const devDir = st.flow.workDir ?? st.flow.vars?.workDir ?? ''
+          const reqId = st.flow.reqId
+          const mainBranch = st.flow.vars?.mainBranch ?? 'main'
+          log(`[${groupId}] 合并走脚本（快进场景，main 无新提交）：${mergeWorkDir}`)
+          const r = mergeScriptImpl({
+            workDir: mergeWorkDir,
+            devDir,
+            docsSourceDir: join(devDir, 'docs', 'requirements', reqId),
+            reqDir: join(mergeWorkDir, 'docs', 'requirements', reqId),
+            repoDir: config.repoDir,
+            reqId,
+            name: st.flow.name ?? '',
+            mainBranch,
+            log,
+          })
+          if (!r.ok) {
+            log(`[${groupId}] 脚本化合并失败：${r.error}`)
+            return { ok: false, error: r.error }
+          }
+          log(`[${groupId}] 脚本化合并完成：${r.receipt.summary}`)
+          return { ok: true }
+        }
+
         // 每个回合占一个执行槽。这是内存和 token 的真实成本所在：
         // 一个回合就是一个 dsh 子进程，加上可能触发的构建。
         const slot = await turnPool.acquire({

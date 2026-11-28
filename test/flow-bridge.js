@@ -54,7 +54,7 @@ for (const role of ['req', 'design', 'tech-plan', 'dev', 'review', 'test', 'acce
 }
 
 /** 内存版 store + machine，行为对齐真实实现里 v2 用到的部分 */
-function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
+function makeDeps({ replyPlan = {}, approval = 'manual', scriptedMerge = false } = {}) {
   const saved = new Map()
   const sent = []
   const logs = []
@@ -83,6 +83,7 @@ function makeDeps({ replyPlan = {}, approval = 'manual' } = {}) {
   }
 
   const deps = {
+    scriptedMerge,
     config: {
       orchestrator: 'v2',
       messageTemplates: {},
@@ -777,6 +778,34 @@ console.log('\n== merge 验证判据：fast-forward 免编译单测，main 动�
   // 夹具里 feature 分支从 main 直接开出、agent 不动 main → fast-forward
   check('merge prompt 写明跳过编译单测', prompts[mergeIdx]?.includes('跳过编译和单元测试'), prompts[mergeIdx]?.slice(-400))
   check('判据日志可见', logs.some((l) => l.includes('合并验证判据') && l.includes('没有新提交')), logs.filter((l) => l.includes('判据')).join(' | '))
+}
+
+console.log('\n== 合并脚本化：快进场景不派 agent，交给脚本 ==')
+{
+  const calls = []
+  const { deps, saved, agentCalls } = makeDeps({ approval: 'auto', scriptedMerge: true })
+  deps.runMergeScript = ({ workDir, reqDir, devDir, reqId, mainBranch }) => {
+    calls.push({ workDir, reqDir, devDir, reqId, mainBranch })
+    // 脚本自己会写回执；桩也必须写，否则引擎读不到回执按失败处理。
+    // 回执目录在真实流程里是脚本自己建的（合并工作区里原本没有），桩也照做。
+    mkdirSync(reqDir, { recursive: true })
+    writeFileSync(join(reqDir, receiptFile('merge')), JSON.stringify({ status: 'done', summary: '脚本合并' }))
+    return { ok: true, receipt: { status: 'done', summary: '脚本合并' } }
+  }
+  const bridge = createFlowBridge(deps)
+  const st = newState()
+  await startReq(bridge, { text: 'welcome modal 首页加个欢迎弹窗', replyTo: 1, st })
+  const afterFirst = saved.get('g1')
+  await bridge.handleMessage({ groupId: 'g1', text: '1. 首次启动 2. 记住关闭 3. 用这句文案', replyTo: 2, st: afterFirst, initiator: null })
+
+  check('merge 没有派 agent', agentCalls.every((c) => c.id !== 'merge'), agentCalls.map((c) => c.id).join(','))
+  check('脚本被调用一次', calls.length === 1, String(calls.length))
+  check('合并工作区传给脚本', String(calls[0]?.workDir ?? '').includes('_merge'), String(calls[0]?.workDir))
+  check('回执目录指到合并工作区的需求目录',
+    String(calls[0]?.reqDir ?? '').replace(/\\/g, '/').endsWith(`docs/requirements/${calls[0]?.reqId}`),
+    String(calls[0]?.reqDir))
+  check('开发工作区传给脚本', String(calls[0]?.devDir ?? '').length > 0, String(calls[0]?.devDir))
+  check('流程最终完成', saved.get('g1').flow.status === 'done', saved.get('g1').flow.status)
 }
 
 console.log('\n== 回执读不到时，校验失败要随播报发到群里，不能只进日志 ==')
