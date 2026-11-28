@@ -82,6 +82,12 @@ export async function runFlow({ flow, ctx }) {
   let steps = 0
 
   while (steps++ < MAX_STEPS) {
+    // 已经停在 blocked 就别再往下跑：current 还指着那个 checkpoint，
+    // 任何一次多余的 runFromState 都会把它当成「还没做」重跑一遍
+    // （实测：打回超限本该停下等人，结果又派了一个回合出去）。
+    if (state.status === 'blocked') {
+      return { flow: state, done: false, stoppedAt: currentCheckpoint(state)?.id ?? null }
+    }
     const cp = currentCheckpoint(state)
     if (!cp) return { flow: state, done: true, stoppedAt: null }
 

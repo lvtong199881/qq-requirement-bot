@@ -524,6 +524,36 @@ export function resumeFromUser(state) {
   return next
 }
 
+/**
+ * 确认卡上点「打回」：这一阶段重做，而不是继续往下走。
+ *
+ * 之前任何回答都按 waiting.advanceTo 推进——用户点打回，流程照样进下一阶段，
+ * 这道闸门等于没设（实测：技术方案被打回，开发照常开跑）。返工计数跟着涨，
+ * 超过 MAX_RETRY 就停下等用户决定，和产物不达标走同一套上限。
+ */
+export function reworkFromUser(state, reason = '') {
+  if (state.status !== 'waiting_user') return { state, action: 'none', reason: '' }
+  const cpId = state.waiting?.checkpointId ?? state.current
+  const cp = typeof cpId === 'string' ? getCheckpoint(cpId) : null
+  const round = (state.rounds?.[cpId] ?? 0) + 1
+  const next = {
+    // 停在原地：current 不动，waiting 清空，回合重跑同一个 checkpoint
+    ...state,
+    status: 'running',
+    waiting: null,
+    rounds: { ...state.rounds, [cpId]: round },
+  }
+  if (round > MAX_RETRY) {
+    const why = `「${cp?.label ?? cpId}」被打回 ${round - 1} 轮，停在这里等你的指示`
+    return {
+      state: { ...next, status: 'blocked', waiting: { checkpointId: cpId, decisions: [], reason: why } },
+      action: 'blocked',
+      reason: why,
+    }
+  }
+  return { state: next, action: 'rework', reason: String(reason ?? '').trim() }
+}
+
 // resumeFromUser 的 advanceTo 在并行 wave 中不会有：等待（确认卡/提问卡）
 // 只发生在单节点上；wave 里的分支 blocked 走 retryBlocked（清轮次重跑整个 wave），
 // 不走 resumeFromUser——所以这里不需要处理数组 current。

@@ -13,6 +13,7 @@ import {
   currentCheckpoint,
   advance,
   resumeFromUser,
+  reworkFromUser,
   needsAgent,
   FIRST_CHECKPOINT,
 } from '../src/flow/flow.js'
@@ -251,6 +252,30 @@ console.log('\n== 全流程走通 ==')
   check('主链顺序正确', seen.join(' → ') === MAIN.join(' → '), seen.join(' → '))
   check('评审在开发之后、测试之前',
     seen.indexOf('review') > seen.indexOf('dev') && seen.indexOf('review') < seen.indexOf('test'))
+}
+
+console.log('\n== 确认卡打回：原地重做，超上限才停 ==')
+{
+  const base = {
+    ...initialState({ reqId: 'rw1', name: '打回', projectDir: '/tmp/rw1', dataDir: '/tmp/rw1/data', repoDir: '/tmp/rw1/repo.git' }),
+    current: 'design',
+    status: 'waiting_user',
+    // 手动批准模式下「设计 → 技术方案」这道闸门
+    waiting: { checkpointId: 'design', decisions: [], advanceTo: 'tech-plan', approve: true },
+  }
+  const r1 = reworkFromUser(base, '字号不对')
+  check('打回后停在同一阶段', r1.state.current === 'design', r1.state.current)
+  check('打回后重新跑', r1.state.status === 'running' && r1.state.waiting === null, r1.state.status)
+  check('返工计数 +1', r1.state.rounds.design === 1, JSON.stringify(r1.state.rounds))
+  check('动作是 rework', r1.action === 'rework', r1.action)
+
+  const r2 = reworkFromUser({ ...base, rounds: { design: MAX_RETRY } }, '还是不达标')
+  check('超上限就阻塞', r2.state.status === 'blocked' && r2.action === 'blocked', r2.state.status)
+  check('阻塞带原因', /打回/.test(r2.state.waiting?.reason ?? ''), r2.state.waiting?.reason)
+  check('阻塞不清掉阶段', r2.state.current === 'design', r2.state.current)
+
+  const r3 = reworkFromUser({ ...base, status: 'running', waiting: null })
+  check('不在等确认时打回是空操作', r3.action === 'none' && r3.state.status === 'running', r3.action)
 }
 
 console.log(`\n${fail ? '❌' : '✅'} ${pass} 通过，${fail} 失败\n`)

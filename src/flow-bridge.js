@@ -18,7 +18,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { renderMessage } from './ui/messages.js'
 import { formatDuration } from './ui/format.js'
 import { parseCommand } from './commands.js'
-import { initialState, resumeFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
+import { initialState, resumeFromUser, reworkFromUser, currentCheckpoint, needsAgent, getCheckpoint } from './flow/flow.js'
 import { runFlow } from './flow/flow-runner.js'
 import { readReceipt, receiptFile } from './flow/orchestrator.js'
 import { writeBoard } from './flow/board.js'
@@ -460,6 +460,20 @@ export function createFlowBridge(deps) {
     return { ok: true, reqId, name: reqName, started }
   }
 
+  /**
+   * 这条回答是不是确认卡上的「打回」。
+   *
+   * 结构化答案优先（App 会把选中的 optionIds 带上来）；纯文本兜底是因为
+   * 确认卡只有一题时用户可能直接打字「打回：xxx」，不能让两种入口语义不同。
+   */
+  function isRejectAnswer(waiting, text, cards) {
+    if (!waiting?.approve) return false
+    const picked = (Array.isArray(cards) ? cards : []).flatMap((a) => a?.optionIds ?? [])
+    if (picked.includes('reject')) return true
+    if (picked.includes('approve')) return false
+    return /打回/.test(String(text ?? ''))
+  }
+
   async function answerWaiting({ groupId, text, replyTo, st, initiator, answers = null }) {
     const flow = st.flow
     // 用户这句话既是「对等待事项的回答」，也可能是修改意见；先原样存进 vars，
@@ -470,13 +484,20 @@ export function createFlowBridge(deps) {
     // 卡片上勾选的结果也一起留着：只有它能无歧义地还原「第 2 题选了 B」，
     // 纯文本那句「我要的是第三个」agent 常常理解偏。
     const cards = (Array.isArray(answers) ? answers : []).filter((a) => a && a.qid)
+    // 打回不等于放行：闸门上点了打回，就重跑这一阶段，把理由交给它自己改
+    const rejected = isRejectAnswer(flow.waiting, text, cards)
+    const decided = rejected ? reworkFromUser(flow, text) : { state: resumeFromUser(flow), action: 'advance' }
+    if (decided.action === 'blocked') log(`[${groupId}] ${decided.reason}`)
     const answered = {
-      ...resumeFromUser(flow),
+      ...decided.state,
       vars: {
         ...flow.vars,
         userAnswer: text,
         lastDecisions: prevDecisions,
         answerCards: cards.length ? cards : null,
+        ...(decided.action === 'rework'
+          ? { rework: { checkpointId: flow.waiting?.checkpointId ?? null, reason: String(text ?? '').trim(), at: Date.now() } }
+          : {}),
       },
       // 审计：谁在哪个阶段点的确认。发起人可能不是确认人，
       // 团队里需要能追「这一步是谁放行的」。
@@ -491,6 +512,11 @@ export function createFlowBridge(deps) {
     }
     st.flow = answered
     store.save(groupId, st)
+    // 打回到上限就停在 blocked：这时候再 runFromState 会把同一个阶段又跑一遍
+    if (decided.action === 'blocked') {
+      await sendPlain(groupId, renderMessage('v2Blocked', { reason: decided.reason }, templates), { replyTo }).catch(() => {})
+      return
+    }
     await runFromState({ groupId, st, replyTo })
   }
 

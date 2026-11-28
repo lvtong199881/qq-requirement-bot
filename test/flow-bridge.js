@@ -443,6 +443,70 @@ console.log('\n== dsh 找不到：报配置错误，不返工 ==')
   check('没有走三次返工', !sent.some((t) => t.includes('连续 3 轮')))
 }
 
+console.log('\n== 确认卡上点「打回」：重做这一阶段，不是继续往下走 ==')
+{
+  const { deps, saved, agentCalls } = makeDeps()
+  const bridge = createFlowBridge(deps)
+
+  const mk = () => {
+    const st = newState()
+    st.reqId = 'rw000001'
+    st.flow = {
+      reqId: 'rw000001',
+      name: '打回测试',
+      projectDir,
+      dataDir: join(projectDir, '.qq-bot-scratch', 'rw000001'),
+      workDir: join(projectDir, '.qq-bot-scratch', 'rw000001'),
+      repoDir: join(repoRoot, 'origin.git'),
+      current: 'design',
+      status: 'waiting_user',
+      rounds: {},
+      history: [],
+      vars: {},
+      roleSessions: {},
+      // 手动批准模式下停在「设计→技术方案」这道闸门上
+      waiting: { checkpointId: 'design', decisions: [], advanceTo: 'tech-plan', approve: true },
+    }
+    return st
+  }
+
+  // 打回：重跑 design，不许摸到 tech-plan
+  const st1 = mk()
+  agentCalls.length = 0
+  await bridge.handleMessage({ groupId: 'g1', text: '打回', replyTo: 1, st: st1, initiator: { userId: 'u1' }, answers: [{ qid: 'confirm', optionIds: ['reject'], input: '字号不对' }] })
+  const f1 = saved.get('g1').flow
+  check('打回后仍在设计阶段', f1.current === 'design', f1.current)
+  check('打回不算放行，没进技术方案', f1.current !== 'tech-plan', f1.current)
+  check('返工计数 +1', f1.rounds.design === 1, JSON.stringify(f1.rounds))
+  check('重跑了设计阶段', agentCalls.some((c) => c.id === 'design'), JSON.stringify(agentCalls))
+  check('没有跑技术方案', !agentCalls.some((c) => c.id === 'tech-plan'), JSON.stringify(agentCalls))
+  check('打回理由进了 vars 交给 agent', f1.vars?.rework?.reason === '打回', JSON.stringify(f1.vars?.rework))
+
+  // 通过：照旧推进到下一阶段
+  const st2 = mk()
+  agentCalls.length = 0
+  await bridge.handleMessage({ groupId: 'g1', text: '通过', replyTo: 2, st: st2, initiator: { userId: 'u1' }, answers: [{ qid: 'confirm', optionIds: ['approve'], input: '' }] })
+  const f2 = saved.get('g1').flow
+  check('通过就进技术方案', f2.current === 'tech-plan', f2.current)
+  check('通过不涨返工计数', (f2.rounds.design ?? 0) === 0, JSON.stringify(f2.rounds))
+
+  // 不打结构化答案、纯文本「打回：xxx」也算打回
+  const st3 = mk()
+  agentCalls.length = 0
+  await bridge.handleMessage({ groupId: 'g1', text: '打回：间距要 16', replyTo: 3, st: st3, initiator: { userId: 'u1' } })
+  check('纯文本打回也重做', saved.get('g1').flow.current === 'design', saved.get('g1').flow.current)
+
+  // 打回到上限就停下等用户决策，不再无限重跑
+  const st4 = mk()
+  st4.flow.rounds = { design: 3 }
+  agentCalls.length = 0
+  await bridge.handleMessage({ groupId: 'g1', text: '打回', replyTo: 4, st: st4, initiator: { userId: 'u1' }, answers: [{ qid: 'confirm', optionIds: ['reject'] }] })
+  const f4 = saved.get('g1').flow
+  check('打回超上限就阻塞', f4.status === 'blocked', f4.status)
+  check('阻塞时说明是打回超限', /打回/.test(f4.waiting?.reason ?? ''), f4.waiting?.reason)
+  check('超限后不再重跑', agentCalls.length === 0, JSON.stringify(agentCalls))
+}
+
 console.log('\n== 一个群只服务一条需求 ==')
 {
   const { deps } = makeDeps()

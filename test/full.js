@@ -116,7 +116,8 @@ try {
     )
 
     const first = await b.messages(threadId)
-    check('第一条是用户说的话', first.messages?.[0]?.role === 'user', JSON.stringify(first.messages?.[0]))
+    // 需求原文只由发起卡片承载：群里第一屏就是那张卡片，不再先垫一条用户气泡
+    check('第一条是发起卡片', first.messages?.[0]?.kind === 'requirement', JSON.stringify(first.messages?.[0]))
     check('第一条内容是需求原话', String(first.messages?.[0]?.payload?.text).includes('欢迎弹窗'))
     check('seq 从 1 起连续', first.messages.every((m, i) => m.seq === i + 1))
 
