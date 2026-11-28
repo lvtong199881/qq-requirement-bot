@@ -369,6 +369,16 @@ console.log('\n== 提问卡片：通过/打回 + 结构化回答 ==')
   const blankTitle = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }], 'x', '   ')
   check('空白标题也算没传', blankTitle.title === '需要你拍板', blankTitle.title)
 
+  // 闸门上带决策项的卡片：agent 问完之后还得让用户决定「这一轮过不过」。
+  // 少了这道题，用户只能一路「提交」往下走，想打回都没入口（真机踩过：
+  // 验收阶段卡片只剩 4 个选填题，卡上根本没有通过/打回）。
+  const gateAsk = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }], 'x', '选个先做的页面', true)
+  check('闸门卡片在决策题后补一道确认题', gateAsk.questions.length === 2 && gateAsk.questions[1].id === 'confirm', JSON.stringify(gateAsk.questions.map((q) => q.id)))
+  check('确认题就是通过/打回', gateAsk.questions[1].options.map((o) => o.id).join(',') === 'approve,reject', JSON.stringify(gateAsk.questions[1].options))
+  check('决策题还在最前面', gateAsk.questions[0].id === 'q1' && gateAsk.questions[0].title === '先做哪个', gateAsk.questions[0].title)
+  const midAsk = askPayloadFor([{ q: '先做哪个', options: [{ text: '登录' }] }], 'x', '选个先做的页面')
+  check('过程里的提问卡不补确认题', midAsk.questions.length === 1 && midAsk.questions[0].id === 'q1', JSON.stringify(midAsk.questions.map((q) => q.id)))
+
   const dec = [{ q: '弹窗时机？', options: [{ text: '首次启动' }, { text: '每次启动' }] }]
   const block = buildAnswerBlock(repoRoot, '', dec, [{ qid: 'q1', optionIds: ['b'], input: '再补一句：能关掉' }])
   check('回答块按勾选还原成文字', block.includes('弹窗时机？ → 每次启动') && block.includes('能关掉'), block)

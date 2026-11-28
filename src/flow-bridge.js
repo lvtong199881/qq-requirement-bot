@@ -178,6 +178,24 @@ export function formatDecisions(decisions) {
 }
 
 /**
+ * 「本轮是否通过？」这道题单独抽出来：闸门上的卡片和没有决策项的卡片
+ * 都要拼它，抄两遍迟早改漏一个。
+ */
+function confirmQuestion() {
+  return {
+    id: 'confirm',
+    title: '本轮是否通过？',
+    kind: 'single',
+    allowInput: true,
+    inputLabel: '打回理由（选「打回」时填）',
+    options: [
+      { id: 'approve', label: '通过' },
+      { id: 'reject', label: '打回' },
+    ],
+  }
+}
+
+/**
  * 把「等用户拍板」变成一张提问卡片，直接进消息流。
  *
  * 以前是发一段「1. xx  A. yy」的纯文本，用户得在输入框里手打字母，
@@ -187,51 +205,43 @@ export function formatDecisions(decisions) {
  * @param {Array} decisions agent 回执里的待决策项（没有就退化成「通过/打回」）
  * @param {string} confirmTitle 通过/打回卡片的标题
  * @param {string} [decisionsTitle] agent 这次调用自己起的总标题；没给就沿用固定文案
+ * @param {boolean} [withConfirm] 停在闸门上时要不要再补一道「通过/打回」：
+ *   有决策项又不补这道题，用户就只能一路「提交」，想打回都没入口
+ *   （实测：验收阶段卡片只剩 agent 的 4 个选填题，闸门形同虚设）。
  */
-export function askPayloadFor(decisions = [], confirmTitle = '', decisionsTitle = '') {
+export function askPayloadFor(decisions = [], confirmTitle = '', decisionsTitle = '', withConfirm = false) {
   const list = (Array.isArray(decisions) ? decisions : [])
     .filter((d) => d && String(d.q ?? '').trim())
 
   if (list.length) {
+    const questions = list.map((d, i) => ({
+      id: `q${i + 1}`,
+      title: String(d.q).trim(),
+      kind: 'single',
+      // 选项之外常常还有「都不是，我要的是…」。不给这个口子，用户只能
+      // 挑一个将就的，agent 拿到的是错的需求，还以为是用户本意。
+      allowInput: true,
+      inputLabel: '都不是？自己写',
+      options: (d.options ?? [])
+        .filter((o) => o && String(o.text ?? '').trim())
+        .map((o, j) => ({
+          id: String.fromCharCode(97 + j),
+          label: optionLabel(o.text, o.recommended),
+        })),
+    }))
     return {
       // 标题跟着每次调用走：不同阶段问的事不一样，「需要你拍板」这种
       // 万金油文案让人分不清这是哪一轮的问题，agent 报了就用 agent 的。
       title: String(decisionsTitle ?? '').trim() || '需要你拍板',
       submitLabel: '提交',
-      questions: list.map((d, i) => ({
-        id: `q${i + 1}`,
-        title: String(d.q).trim(),
-        kind: 'single',
-        // 选项之外常常还有「都不是，我要的是…」。不给这个口子，用户只能
-        // 挑一个将就的，agent 拿到的是错的需求，还以为是用户本意。
-        allowInput: true,
-        inputLabel: '都不是？自己写',
-        options: (d.options ?? [])
-          .filter((o) => o && String(o.text ?? '').trim())
-          .map((o, j) => ({
-            id: String.fromCharCode(97 + j),
-            label: optionLabel(o.text, o.recommended),
-          })),
-      })),
+      questions: withConfirm ? [...questions, confirmQuestion()] : questions,
     }
   }
 
   return {
     title: confirmTitle || '确认一下',
     submitLabel: '提交',
-    questions: [
-      {
-        id: 'confirm',
-        title: '本轮是否通过？',
-        kind: 'single',
-        allowInput: true,
-        inputLabel: '打回理由（选「打回」时填）',
-        options: [
-          { id: 'approve', label: '通过' },
-          { id: 'reject', label: '打回' },
-        ],
-      },
-    ],
+    questions: [confirmQuestion()],
   }
 }
 
@@ -1355,6 +1365,9 @@ async function doMerge({ groupId, flow, st, log, config }) {
         flow.waiting?.decisions ?? [],
         `「${cp?.label ?? '这一步'}」做完了，确认一下`,
         flow.waiting?.decisionsTitle,
+        // 只有闸门上的卡片才需要这道题：mid-flow 的提问卡（clarify 之类）
+        // 本来就该一路往前，补「通过/打回」反而让人以为可以打回提问。
+        flow.waiting?.approve === true,
       )
       tx.event(groupId, 'ask', ask)
       return
