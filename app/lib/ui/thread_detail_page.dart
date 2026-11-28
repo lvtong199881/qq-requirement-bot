@@ -9,6 +9,7 @@ import 'package:login/login.dart';
 import '../state/detail.dart';
 import '../download_saver.dart';
 import 'format.dart';
+import 'scroll_rule.dart';
 import 'group_settings_page.dart';
 import 'package:base/base.dart';
 import 'widgets/ask_card.dart';
@@ -94,11 +95,11 @@ class _ThreadDetailPageState extends State<ThreadDetailPage> {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scroll.hasClients) return;
-      // 只在已经接近底部时才自动跟随。用户往上翻历史时强行拽回去
-      // 是最招人烦的交互之一。
+      // 只在已经接近最新那条时才自动跟随。用户往上翻历史时强行拽回去
+      // 是最招人烦的交互之一。reverse 列表里 0 才是最新，见 scroll_rule.dart。
       final pos = _scroll.position;
-      if (pos.maxScrollExtent - pos.pixels > 220) return;
-      _scroll.jumpTo(pos.maxScrollExtent);
+      if (!shouldFollowNewest(pos.pixels)) return;
+      _scroll.jumpTo(0);
     });
   }
 
