@@ -5,7 +5,8 @@
  * 是重构后最容易悄悄坏掉的地方（坏了不会报错，只会让群里的消息变得不对）。
  *   node test/orchestrator.js
  */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
@@ -144,6 +145,29 @@ console.log('\n== buildPrompt：设计卡的 <skillAssets> 变成真实路径 ==
   check('skillAssets 被替换', prompt.includes('渲染器在 C:/skills/design/assets'), prompt.slice(0, 300))
   check('代码块里的路径也可用', prompt.includes('node C:/skills/design/assets/svggen.cjs'))
   check('不留字面占位符', !prompt.includes('<skillAssets>'))
+}
+
+console.log('\n== 测试卡：卡住的命令自带超时 ==')
+{
+  const skillsRoot = fileURLToPath(new URL('../skills', import.meta.url))
+  const helper = join(skillsRoot, 'test', 'assets', 'with-timeout.ps1')
+  check('带超时的包装脚本在仓库里', existsSync(helper), helper)
+  if (existsSync(helper)) {
+    const helperText = readFileSync(helper, 'utf8')
+    check('用 Wait-Job -Timeout 卡时间', /Wait-Job\s+-Timeout/.test(helperText))
+    check('超时后 Stop-Job 收掉子进程', /Stop-Job/.test(helperText))
+    check('超时带出现场（读 mCurrentFocus）', /mCurrentFocus/.test(helperText))
+  }
+
+  const testSkill = readSkill(skillsRoot, 'test')
+  check('测试卡读取成功', testSkill.ok, testSkill.reason)
+  if (testSkill.ok) {
+    check('测试卡指向这个脚本', testSkill.text.includes('with-timeout.ps1'))
+    const resolved = resolveSkillText(testSkill.text, { skillAssets: join(skillsRoot, 'test', 'assets') })
+    check('指向路径被换成绝对路径', resolved.includes(join(skillsRoot, 'test', 'assets')))
+    check('不留字面占位符', !resolved.includes('<skillAssets>'))
+    check('准出清单点了超时这条', resolved.includes('没有一条靠回合总超时收尸'))
+  }
 }
 
 console.log('\n== validateReceipt ==')
